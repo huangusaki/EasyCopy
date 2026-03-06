@@ -43,6 +43,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   bool _preservePageOnNextLoad = false;
   bool _isFailingOver = false;
   int _consecutiveFrameFailures = 0;
+  bool _isDiscoverThemeExpanded = false;
 
   @override
   void initState() {
@@ -502,6 +503,18 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     await _loadUri(appDestinations.first.uri);
   }
 
+  void _navigateDiscoverFilter(String href) {
+    if (href.trim().isEmpty) {
+      return;
+    }
+    unawaited(
+      _loadUri(
+        AppConfig.resolveNavigationUri(href, currentUri: _currentUri),
+        preserveVisiblePage: true,
+      ),
+    );
+  }
+
   void _navigateToHref(String href) {
     if (href.trim().isEmpty) {
       return;
@@ -745,6 +758,29 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     return uri.path.startsWith('/person/home');
   }
 
+  bool _isDiscoverMoreCategoryOption(LinkAction option) {
+    return option.label.contains('查看全部分類') ||
+        option.href.contains('/filter?point=');
+  }
+
+  List<LinkAction> _visibleDiscoverThemeOptions(List<LinkAction> options) {
+    if (_isDiscoverThemeExpanded || options.length <= 16) {
+      return options;
+    }
+    const int previewCount = 15;
+    final List<LinkAction> visible = options
+        .take(previewCount)
+        .toList(growable: true);
+    final int activeIndex = options.indexWhere(
+      (LinkAction option) => option.active,
+    );
+    if (activeIndex >= previewCount) {
+      visible.removeLast();
+      visible.add(options[activeIndex]);
+    }
+    return visible;
+  }
+
   String _fingerprintForPage(EasyCopyPage page) {
     switch (page) {
       case HomePageData homePage:
@@ -967,146 +1003,99 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
 
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[Color(0xFF0E8B84), Color(0xFF2D6CF4)],
-        ),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
       ),
-      child: Stack(
-        children: <Widget>[
-          Positioned(
-            top: -20,
-            right: -12,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.12),
-                shape: BoxShape.circle,
-              ),
-              child: const SizedBox(width: 132, height: 132),
-            ),
-          ),
-          Positioned(
-            bottom: -24,
-            left: -16,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.10),
-                shape: BoxShape.circle,
-              ),
-              child: const SizedBox(width: 108, height: 108),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
               children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    if (showBackButton)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: IconButton.filledTonal(
-                          onPressed: _handleBackNavigation,
-                          style: IconButton.styleFrom(
-                            backgroundColor: Colors.white.withValues(
-                              alpha: 0.16,
-                            ),
-                            foregroundColor: Colors.white,
-                          ),
-                          icon: const Icon(Icons.arrow_back_rounded),
+                if (showBackButton)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: IconButton.filledTonal(
+                      onPressed: _handleBackNavigation,
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xFFF2F5F8),
+                        foregroundColor: const Color(0xFF202733),
+                      ),
+                      icon: const Icon(Icons.arrow_back_rounded),
+                    ),
+                  ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          height: 1.1,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF18202A),
                         ),
                       ),
+                      const SizedBox(height: 6),
+                      Text(
+                        subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton.filledTonal(
+                  onPressed: _retryCurrentPage,
+                  style: IconButton.styleFrom(
+                    backgroundColor: const Color(0xFFF2F5F8),
+                    foregroundColor: colorScheme.primary,
+                  ),
+                  icon: const Icon(Icons.refresh_rounded),
+                ),
+              ],
+            ),
+            if (showSearchBar) ...<Widget>[
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF7F8FA),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFE4E8EE)),
+                ),
+                child: Row(
+                  children: <Widget>[
+                    Icon(Icons.search_rounded, color: colorScheme.primary),
+                    const SizedBox(width: 10),
                     Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.16),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: const Text(
-                              'EasyCopy',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          Text(
-                            title,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 28,
-                              height: 1.05,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            subtitle,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.86),
-                              fontSize: 13,
-                              height: 1.4,
-                            ),
-                          ),
-                        ],
+                      child: TextField(
+                        controller: _searchController,
+                        onSubmitted: _submitSearch,
+                        textInputAction: TextInputAction.search,
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          hintText: '搜尋漫畫、作者或題材',
+                        ),
                       ),
                     ),
-                    IconButton.filledTonal(
-                      onPressed: _retryCurrentPage,
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.white.withValues(alpha: 0.16),
-                        foregroundColor: Colors.white,
-                      ),
-                      icon: const Icon(Icons.refresh_rounded),
+                    IconButton(
+                      onPressed: () => _submitSearch(_searchController.text),
+                      icon: const Icon(Icons.arrow_forward_rounded),
                     ),
                   ],
                 ),
-                if (showSearchBar) ...<Widget>[
-                  const SizedBox(height: 18),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      children: <Widget>[
-                        Icon(Icons.search_rounded, color: colorScheme.primary),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: TextField(
-                            controller: _searchController,
-                            onSubmitted: _submitSearch,
-                            textInputAction: TextInputAction.search,
-                            decoration: const InputDecoration(
-                              border: InputBorder.none,
-                              hintText: '搜尋漫畫、作者或題材',
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => _submitSearch(_searchController.text),
-                          icon: const Icon(Icons.arrow_forward_rounded),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -1214,22 +1203,26 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       sections.add(
         _SurfaceBlock(
           title: '推薦焦點',
-          child: SizedBox(
-            height: 220,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: page.heroBanners.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 14),
-              itemBuilder: (BuildContext context, int index) {
-                final HeroBannerData banner = page.heroBanners[index];
-                return SizedBox(
-                  width: 300,
-                  child: _HeroBannerCard(
-                    banner: banner,
-                    onTap: () => _navigateToHref(banner.href),
-                  ),
-                );
-              },
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: SizedBox(
+              height: 220,
+              child: ListView.separated(
+                padding: EdgeInsets.zero,
+                scrollDirection: Axis.horizontal,
+                itemCount: page.heroBanners.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 14),
+                itemBuilder: (BuildContext context, int index) {
+                  final HeroBannerData banner = page.heroBanners[index];
+                  return SizedBox(
+                    width: 300,
+                    child: _HeroBannerCard(
+                      banner: banner,
+                      onTap: () => _navigateToHref(banner.href),
+                    ),
+                  );
+                },
+              ),
             ),
           ),
         ),
@@ -1268,45 +1261,49 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     final List<Widget> sections = <Widget>[];
 
     if (page.filters.isNotEmpty) {
+      final FilterGroupData primaryGroup = page.filters.first;
+      final List<LinkAction> themeOptions = primaryGroup.options
+          .where((LinkAction option) => !_isDiscoverMoreCategoryOption(option))
+          .toList(growable: false);
+      final List<FilterGroupData> secondaryGroups = page.filters
+          .skip(1)
+          .toList(growable: false);
+
       sections.add(
         _SurfaceBlock(
           title: '篩選器',
           child: Column(
-            children: page.filters
-                .map(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              _FilterGroup(
+                group: FilterGroupData(
+                  label: primaryGroup.label,
+                  options: _visibleDiscoverThemeOptions(themeOptions),
+                ),
+                onTap: _navigateDiscoverFilter,
+                actionLabel:
+                    _isDiscoverThemeExpanded ? '收起分類' : '查看全部分類',
+                onActionTap: () {
+                  setState(() {
+                    _isDiscoverThemeExpanded = !_isDiscoverThemeExpanded;
+                  });
+                },
+              ),
+              if (secondaryGroups.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 18),
+                Container(height: 1, color: const Color(0xFFE7EBEF)),
+                const SizedBox(height: 18),
+                ...secondaryGroups.map(
                   (FilterGroupData group) => Padding(
-                    padding: const EdgeInsets.only(bottom: 14),
-                    child: _FilterGroup(group: group, onTap: _navigateToHref),
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: _FilterGroup(
+                      group: group,
+                      onTap: _navigateDiscoverFilter,
+                    ),
                   ),
-                )
-                .toList(growable: false),
-          ),
-        ),
-      );
-      sections.add(const SizedBox(height: 18));
-    }
-
-    if (page.spotlight.isNotEmpty) {
-      sections.add(
-        _SurfaceBlock(
-          title: '今日推荐',
-          child: SizedBox(
-            height: 228,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: page.spotlight.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
-              itemBuilder: (BuildContext context, int index) {
-                final ComicCardData item = page.spotlight[index];
-                return SizedBox(
-                  width: 148,
-                  child: _CompactComicCard(
-                    item: item,
-                    onTap: () => _navigateToHref(item.href),
-                  ),
-                );
-              },
-            ),
+                ),
+              ],
+            ],
           ),
         ),
       );
@@ -1682,33 +1679,34 @@ class _SurfaceBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(24),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ),
-              ),
-              if (actionLabel != null && onActionTap != null)
-                TextButton(onPressed: onActionTap, child: Text(actionLabel!)),
-            ],
-          ),
-          const SizedBox(height: 14),
-          child,
-        ],
+                if (actionLabel != null && onActionTap != null)
+                  TextButton(onPressed: onActionTap, child: Text(actionLabel!)),
+              ],
+            ),
+            const SizedBox(height: 14),
+            child,
+          ],
+        ),
       ),
     );
   }
@@ -1722,28 +1720,22 @@ class _HeroBannerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
+    return Material(
+      color: const Color(0xFF102038),
       borderRadius: BorderRadius.circular(24),
-      child: Ink(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          color: const Color(0xFF102038),
-        ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
         child: Stack(
           fit: StackFit.expand,
           children: <Widget>[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(24),
-              child: _NetworkImageBox(
-                imageUrl: banner.imageUrl,
-                aspectRatio: 1,
-              ),
+            _NetworkImageBox(
+              imageUrl: banner.imageUrl,
+              aspectRatio: 1,
             ),
-            DecoratedBox(
+            const DecoratedBox(
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24),
-                gradient: const LinearGradient(
+                gradient: LinearGradient(
                   begin: Alignment.bottomCenter,
                   end: Alignment.topCenter,
                   colors: <Color>[Color(0xCC0F1320), Color(0x330F1320)],
@@ -1881,7 +1873,7 @@ class _ComicGrid extends StatelessWidget {
         crossAxisCount: 3,
         crossAxisSpacing: 12,
         mainAxisSpacing: 14,
-        childAspectRatio: 0.52,
+        childAspectRatio: 0.50,
       ),
       itemBuilder: (BuildContext context, int index) {
         final ComicCardData item = items[index];
@@ -1902,129 +1894,147 @@ class _ComicCard extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Expanded(
-            child: Stack(
-              children: <Widget>[
-                Positioned.fill(
-                  child: _NetworkImageBox(
-                    imageUrl: item.coverUrl,
-                    aspectRatio: 0.72,
-                  ),
-                ),
-                if (item.badge.isNotEmpty)
-                  Positioned(
-                    left: 8,
-                    top: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF7B54),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        item.badge,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                        ),
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final double coverHeight = constraints.maxHeight * 0.64;
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              SizedBox(
+                height: coverHeight,
+                child: Stack(
+                  children: <Widget>[
+                    Positioned.fill(
+                      child: _NetworkImageBox(
+                        imageUrl: item.coverUrl,
+                        aspectRatio: 0.72,
                       ),
                     ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            item.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 14,
-              height: 1.2,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          if (item.subtitle.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 4),
-            Text(
-              item.subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Colors.grey.shade700, fontSize: 11),
-            ),
-          ],
-          if (item.secondaryText.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 3),
-            Text(
-              item.secondaryText,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 10),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _CompactComicCard extends StatelessWidget {
-  const _CompactComicCard({required this.item, required this.onTap});
-
-  final ComicCardData item;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Expanded(
-            child: _NetworkImageBox(imageUrl: item.coverUrl, aspectRatio: 0.72),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            item.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            item.subtitle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-          ),
-        ],
+                    if (item.badge.isNotEmpty)
+                      Positioned(
+                        left: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF7B54),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            item.badge,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      item.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        height: 1.2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (item.subtitle.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 4),
+                      Text(
+                        item.subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                    if (item.secondaryText.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 3),
+                      Text(
+                        item.secondaryText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 }
 
 class _FilterGroup extends StatelessWidget {
-  const _FilterGroup({required this.group, required this.onTap});
+  const _FilterGroup({
+    required this.group,
+    required this.onTap,
+    this.actionLabel,
+    this.onActionTap,
+  });
 
   final FilterGroupData group;
   final ValueChanged<String> onTap;
+  final String? actionLabel;
+  final VoidCallback? onActionTap;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(group.label, style: const TextStyle(fontWeight: FontWeight.w800)),
-        const SizedBox(height: 10),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  group.label,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              if (actionLabel != null && onActionTap != null)
+                TextButton(
+                  onPressed: onActionTap,
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF0E8B84),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(actionLabel!),
+                ),
+            ],
+          ),
+        ),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -2081,23 +2091,42 @@ class _LinkChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Color backgroundColor = active
-        ? const Color(0xFF0E8B84)
-        : const Color(0xFFF2F3F5);
+        ? const Color(0x660E8B84)
+        : const Color(0xFFF7F8FA);
+    final Color borderColor = active
+        ? const Color(0xCC0E8B84)
+        : const Color(0xFFE2E6EB);
+    final Color textColor = active
+        ? const Color(0xFF17312E)
+        : const Color(0xFF313742);
 
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
-      child: Ink(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
         decoration: BoxDecoration(
           color: backgroundColor,
+          border: Border.all(color: borderColor),
           borderRadius: BorderRadius.circular(999),
+          boxShadow: active
+              ? const <BoxShadow>[
+                  BoxShadow(
+                    color: Color(0x330E8B84),
+                    blurRadius: 12,
+                    offset: Offset(0, 3),
+                  ),
+                ]
+              : null,
         ),
         child: Text(
           label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: active ? Colors.white : const Color(0xFF313742),
-            fontWeight: FontWeight.w700,
+            color: textColor,
+            fontWeight: active ? FontWeight.w800 : FontWeight.w700,
             fontSize: 12,
           ),
         ),
