@@ -1,3 +1,4 @@
+import 'package:easy_copy/services/host_manager.dart';
 import 'package:flutter/material.dart';
 
 class AppConfig {
@@ -6,36 +7,43 @@ class AppConfig {
   static const String appName = 'EasyCopy';
   static const String appDescription =
       'Hide the original desktop page and render a mobile-first reading UI.';
-  static const String baseUrl = 'https://www.2026copy.com/';
-  static const Set<String> allowedHosts = <String>{
-    'www.2026copy.com',
-    '2026copy.com',
-  };
-  static const String desktopUserAgent =
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  static const String profilePath = '/person/home';
+  static const String profileRouteKey = '__profile__';
 
-  static final Uri baseUri = Uri.parse(baseUrl);
+  static HostManager get hostManager => HostManager.instance;
 
-  static Uri resolvePath(String path) {
-    final String normalizedPath = path.startsWith('/')
-        ? path.substring(1)
-        : path;
-    return baseUri.resolve(normalizedPath);
-  }
+  static String get desktopUserAgent => defaultDesktopUserAgent;
+
+  static Uri get baseUri => hostManager.baseUri;
+
+  static Uri resolvePath(String path) => hostManager.resolvePath(path);
 
   static Uri resolveNavigationUri(String href, {Uri? currentUri}) {
-    final String trimmedHref = href.trim();
-    if (trimmedHref.isEmpty) {
-      return currentUri ?? baseUri;
-    }
+    return hostManager.resolveNavigationUri(href, currentUri: currentUri);
+  }
 
-    final Uri? parsed = Uri.tryParse(trimmedHref);
-    if (parsed != null && parsed.hasScheme) {
-      return parsed;
-    }
+  static Uri rewriteToCurrentHost(Uri uri) => hostManager.rewriteToCurrentHost(uri);
 
-    return (currentUri ?? baseUri).resolve(trimmedHref);
+  static Uri get profileUri => resolvePath(profilePath);
+
+  static List<AppDestination> buildDestinations() {
+    return <AppDestination>[
+      const AppDestination(label: '首頁', icon: Icons.home, path: '/'),
+      const AppDestination(label: '發現', icon: Icons.explore, path: '/comics'),
+      const AppDestination(label: '排行', icon: Icons.bar_chart, path: '/rank'),
+      const AppDestination(label: '我的', icon: Icons.person, path: profilePath),
+    ];
+  }
+
+  static bool isPrimaryDestination(Uri uri) {
+    return buildDestinations().any((AppDestination destination) {
+      return destination.uri.path == uri.path &&
+          destination.uri.query == uri.query;
+    });
+  }
+
+  static bool isAllowedNavigationUri(Uri? uri) {
+    return hostManager.isAllowedNavigationUri(uri);
   }
 
   static Uri buildSearchUri(String query) {
@@ -48,27 +56,18 @@ class AppConfig {
     );
   }
 
-  static bool isPrimaryDestination(Uri uri) {
-    return appDestinations.any((AppDestination destination) {
-      return destination.uri.path == uri.path &&
-          destination.uri.query == uri.query;
-    });
-  }
-
-  static bool isAllowedNavigationUri(Uri? uri) {
-    if (uri == null || !uri.hasScheme) {
-      return true;
-    }
-
-    if (uri.scheme == 'about' || uri.scheme == 'data') {
-      return true;
-    }
-
-    if (uri.scheme != 'http' && uri.scheme != 'https') {
-      return false;
-    }
-
-    return allowedHosts.contains(uri.host);
+  static String routeKeyForUri(Uri uri) {
+    final Map<String, String> sortedQuery = Map<String, String>.fromEntries(
+      uri.queryParameters.entries.toList()
+        ..sort((MapEntry<String, String> left, MapEntry<String, String> right) {
+          return left.key.compareTo(right.key);
+        }),
+    );
+    final Uri normalized = Uri(
+      path: uri.path.isEmpty ? '/' : uri.path,
+      queryParameters: sortedQuery.isEmpty ? null : sortedQuery,
+    );
+    return normalized.toString();
   }
 }
 
@@ -86,16 +85,7 @@ class AppDestination {
   Uri get uri => AppConfig.resolvePath(path);
 }
 
-const List<AppDestination> appDestinations = <AppDestination>[
-  AppDestination(label: '首頁', icon: Icons.home, path: '/'),
-  AppDestination(label: '發現', icon: Icons.explore, path: '/comics'),
-  AppDestination(label: '排行', icon: Icons.bar_chart, path: '/rank'),
-  AppDestination(
-    label: '我的',
-    icon: Icons.person,
-    path: '/web/login?url=person/home',
-  ),
-];
+List<AppDestination> get appDestinations => AppConfig.buildDestinations();
 
 int tabIndexForUri(Uri? uri) {
   if (uri == null) {

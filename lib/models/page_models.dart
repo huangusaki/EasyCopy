@@ -90,6 +90,14 @@ class LinkAction {
   final bool active;
 
   bool get isNavigable => href.isNotEmpty;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'label': label,
+      'href': href,
+      'active': active,
+    };
+  }
 }
 
 @immutable
@@ -114,6 +122,15 @@ class HeroBannerData {
   final String subtitle;
   final String imageUrl;
   final String href;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'title': title,
+      'subtitle': subtitle,
+      'imageUrl': imageUrl,
+      'href': href,
+    };
+  }
 }
 
 @immutable
@@ -144,6 +161,17 @@ class ComicCardData {
   final String coverUrl;
   final String href;
   final String badge;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'title': title,
+      'subtitle': subtitle,
+      'secondaryText': secondaryText,
+      'coverUrl': coverUrl,
+      'href': href,
+      'badge': badge,
+    };
+  }
 }
 
 @immutable
@@ -168,6 +196,15 @@ class ComicSectionData {
   final String subtitle;
   final String href;
   final List<ComicCardData> items;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'title': title,
+      'subtitle': subtitle,
+      'href': href,
+      'items': items.map((ComicCardData item) => item.toJson()).toList(),
+    };
+  }
 }
 
 @immutable
@@ -183,6 +220,13 @@ class FilterGroupData {
 
   final String label;
   final List<LinkAction> options;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'label': label,
+      'options': options.map((LinkAction item) => item.toJson()).toList(),
+    };
+  }
 }
 
 @immutable
@@ -210,6 +254,15 @@ class PagerData {
 
   bool get hasPrev => prevHref.isNotEmpty;
   bool get hasNext => nextHref.isNotEmpty;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'currentLabel': currentLabel,
+      'totalLabel': totalLabel,
+      'prevHref': prevHref,
+      'nextHref': nextHref,
+    };
+  }
 }
 
 @immutable
@@ -243,6 +296,18 @@ class RankEntryData {
   final String trend;
   final String coverUrl;
   final String href;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'rankLabel': rankLabel,
+      'title': title,
+      'authors': authors,
+      'heat': heat,
+      'trend': trend,
+      'coverUrl': coverUrl,
+      'href': href,
+    };
+  }
 }
 
 @immutable
@@ -264,6 +329,14 @@ class ChapterData {
   final String label;
   final String href;
   final String subtitle;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'label': label,
+      'href': href,
+      'subtitle': subtitle,
+    };
+  }
 }
 
 @immutable
@@ -279,6 +352,136 @@ class ChapterGroupData {
 
   final String label;
   final List<ChapterData> chapters;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'label': label,
+      'chapters': chapters
+          .map((ChapterData chapter) => chapter.toJson())
+          .toList(),
+    };
+  }
+}
+
+@immutable
+class ProfileUserData {
+  const ProfileUserData({
+    required this.userId,
+    required this.username,
+    this.nickname = '',
+    this.avatarUrl = '',
+    this.createdAt = '',
+    this.membershipLabel = '',
+  });
+
+  factory ProfileUserData.fromJson(Map<String, Object?> json) {
+    return ProfileUserData(
+      userId: _stringValue(json['userId']),
+      username: _stringValue(json['username']),
+      nickname: _stringValue(json['nickname']),
+      avatarUrl: _stringValue(json['avatarUrl']),
+      createdAt: _stringValue(json['createdAt']),
+      membershipLabel: _stringValue(json['membershipLabel']),
+    );
+  }
+
+  final String userId;
+  final String username;
+  final String nickname;
+  final String avatarUrl;
+  final String createdAt;
+  final String membershipLabel;
+
+  String get displayName => nickname.isNotEmpty ? nickname : username;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'userId': userId,
+      'username': username,
+      'nickname': nickname,
+      'avatarUrl': avatarUrl,
+      'createdAt': createdAt,
+      'membershipLabel': membershipLabel,
+    };
+  }
+}
+
+@immutable
+class ProfileLibraryItem {
+  const ProfileLibraryItem({
+    required this.title,
+    required this.coverUrl,
+    required this.href,
+    this.subtitle = '',
+    this.secondaryText = '',
+  });
+
+  factory ProfileLibraryItem.fromJson(Map<String, Object?> json) {
+    return ProfileLibraryItem(
+      title: _stringValue(json['title']),
+      coverUrl: _stringValue(json['coverUrl']),
+      href: _stringValue(json['href']),
+      subtitle: _stringValue(json['subtitle']),
+      secondaryText: _stringValue(json['secondaryText']),
+    );
+  }
+
+  final String title;
+  final String coverUrl;
+  final String href;
+  final String subtitle;
+  final String secondaryText;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'title': title,
+      'coverUrl': coverUrl,
+      'href': href,
+      'subtitle': subtitle,
+      'secondaryText': secondaryText,
+    };
+  }
+}
+
+@immutable
+class ProfileHistoryItem {
+  const ProfileHistoryItem({
+    required this.title,
+    required this.coverUrl,
+    required this.comicHref,
+    this.chapterLabel = '',
+    this.chapterHref = '',
+    this.visitedAt = '',
+  });
+
+  factory ProfileHistoryItem.fromJson(Map<String, Object?> json) {
+    return ProfileHistoryItem(
+      title: _stringValue(json['title']),
+      coverUrl: _stringValue(json['coverUrl']),
+      comicHref: _stringValue(json['comicHref']),
+      chapterLabel: _stringValue(json['chapterLabel']),
+      chapterHref: _stringValue(json['chapterHref']),
+      visitedAt: _stringValue(json['visitedAt']),
+    );
+  }
+
+  final String title;
+  final String coverUrl;
+  final String comicHref;
+  final String chapterLabel;
+  final String chapterHref;
+  final String visitedAt;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'title': title,
+      'coverUrl': coverUrl,
+      'comicHref': comicHref,
+      'chapterLabel': chapterLabel,
+      'chapterHref': chapterHref,
+      'visitedAt': visitedAt,
+    };
+  }
 }
 
 sealed class EasyCopyPage {
@@ -311,6 +514,8 @@ sealed class EasyCopyPage {
   final EasyCopyPageType type;
   final String title;
   final String uri;
+
+  Map<String, Object?> toJson();
 }
 
 class HomePageData extends EasyCopyPage {
@@ -345,6 +550,22 @@ class HomePageData extends EasyCopyPage {
   final List<HeroBannerData> heroBanners;
   final List<ComicSectionData> sections;
   final HeroBannerData? feature;
+
+  @override
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'type': 'home',
+      'title': title,
+      'uri': uri,
+      'heroBanners': heroBanners
+          .map((HeroBannerData banner) => banner.toJson())
+          .toList(),
+      'sections': sections
+          .map((ComicSectionData section) => section.toJson())
+          .toList(),
+      'feature': feature?.toJson(),
+    };
+  }
 }
 
 class DiscoverPageData extends EasyCopyPage {
@@ -380,6 +601,23 @@ class DiscoverPageData extends EasyCopyPage {
   final List<ComicCardData> items;
   final PagerData pager;
   final List<ComicCardData> spotlight;
+
+  @override
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'type': 'discover',
+      'title': title,
+      'uri': uri,
+      'filters': filters
+          .map((FilterGroupData group) => group.toJson())
+          .toList(),
+      'items': items.map((ComicCardData item) => item.toJson()).toList(),
+      'pager': pager.toJson(),
+      'spotlight': spotlight
+          .map((ComicCardData item) => item.toJson())
+          .toList(),
+    };
+  }
 }
 
 class RankPageData extends EasyCopyPage {
@@ -408,6 +646,20 @@ class RankPageData extends EasyCopyPage {
   final List<LinkAction> categories;
   final List<LinkAction> periods;
   final List<RankEntryData> items;
+
+  @override
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'type': 'rank',
+      'title': title,
+      'uri': uri,
+      'categories': categories
+          .map((LinkAction item) => item.toJson())
+          .toList(),
+      'periods': periods.map((LinkAction item) => item.toJson()).toList(),
+      'items': items.map((RankEntryData item) => item.toJson()).toList(),
+    };
+  }
 }
 
 class DetailPageData extends EasyCopyPage {
@@ -460,6 +712,30 @@ class DetailPageData extends EasyCopyPage {
   final String startReadingHref;
   final List<ChapterGroupData> chapterGroups;
   final List<ChapterData> chapters;
+
+  @override
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'type': 'detail',
+      'title': title,
+      'uri': uri,
+      'coverUrl': coverUrl,
+      'aliases': aliases,
+      'authors': authors,
+      'heat': heat,
+      'updatedAt': updatedAt,
+      'status': status,
+      'summary': summary,
+      'tags': tags.map((LinkAction item) => item.toJson()).toList(),
+      'startReadingHref': startReadingHref,
+      'chapterGroups': chapterGroups
+          .map((ChapterGroupData group) => group.toJson())
+          .toList(),
+      'chapters': chapters
+          .map((ChapterData chapter) => chapter.toJson())
+          .toList(),
+    };
+  }
 }
 
 class ReaderPageData extends EasyCopyPage {
@@ -473,6 +749,7 @@ class ReaderPageData extends EasyCopyPage {
     required this.prevHref,
     required this.nextHref,
     required this.catalogHref,
+    this.contentKey = '',
   }) : super(type: EasyCopyPageType.reader);
 
   factory ReaderPageData.fromJson(Map<String, Object?> json) {
@@ -489,6 +766,7 @@ class ReaderPageData extends EasyCopyPage {
       prevHref: _stringValue(json['prevHref']),
       nextHref: _stringValue(json['nextHref']),
       catalogHref: _stringValue(json['catalogHref']),
+      contentKey: _stringValue(json['contentKey']),
     );
   }
 
@@ -499,27 +777,101 @@ class ReaderPageData extends EasyCopyPage {
   final String prevHref;
   final String nextHref;
   final String catalogHref;
+  final String contentKey;
+
+  @override
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'type': 'reader',
+      'title': title,
+      'uri': uri,
+      'comicTitle': comicTitle,
+      'chapterTitle': chapterTitle,
+      'progressLabel': progressLabel,
+      'imageUrls': imageUrls,
+      'prevHref': prevHref,
+      'nextHref': nextHref,
+      'catalogHref': catalogHref,
+      'contentKey': contentKey,
+    };
+  }
 }
 
 class ProfilePageData extends EasyCopyPage {
   ProfilePageData({
     required super.title,
     required super.uri,
-    required this.message,
+    required this.isLoggedIn,
+    this.user,
+    this.continueReading,
+    this.collections = const <ProfileLibraryItem>[],
+    this.history = const <ProfileHistoryItem>[],
+    this.message = '',
   }) : super(type: EasyCopyPageType.profile);
 
   factory ProfilePageData.fromJson(Map<String, Object?> json) {
     return ProfilePageData(
       title: _stringValue(json['title'], fallback: '我的'),
       uri: _stringValue(json['uri']),
-      message: _stringValue(
-        json['message'],
-        fallback: '個人中心正在重構，當前版本專注於首頁、發現、排行與閱讀體驗。',
+      isLoggedIn: _boolValue(json['isLoggedIn']),
+      user: _mapValue(json['user']).isEmpty
+          ? null
+          : ProfileUserData.fromJson(_mapValue(json['user'])),
+      continueReading: _mapValue(json['continueReading']).isEmpty
+          ? null
+          : ProfileHistoryItem.fromJson(_mapValue(json['continueReading'])),
+      collections: _readList<ProfileLibraryItem>(
+        json,
+        'collections',
+        ProfileLibraryItem.fromJson,
       ),
+      history: _readList<ProfileHistoryItem>(
+        json,
+        'history',
+        ProfileHistoryItem.fromJson,
+      ),
+      message: _stringValue(json['message']),
     );
   }
 
+  factory ProfilePageData.loggedOut({
+    required String uri,
+    String title = '我的',
+    String message = '登录后可查看收藏、历史和继续阅读。',
+  }) {
+    return ProfilePageData(
+      title: title,
+      uri: uri,
+      isLoggedIn: false,
+      message: message,
+    );
+  }
+
+  final bool isLoggedIn;
+  final ProfileUserData? user;
+  final ProfileHistoryItem? continueReading;
+  final List<ProfileLibraryItem> collections;
+  final List<ProfileHistoryItem> history;
   final String message;
+
+  @override
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'type': 'profile',
+      'title': title,
+      'uri': uri,
+      'isLoggedIn': isLoggedIn,
+      'user': user?.toJson(),
+      'continueReading': continueReading?.toJson(),
+      'collections': collections
+          .map((ProfileLibraryItem item) => item.toJson())
+          .toList(),
+      'history': history
+          .map((ProfileHistoryItem item) => item.toJson())
+          .toList(),
+      'message': message,
+    };
+  }
 }
 
 class UnknownPageData extends EasyCopyPage {
@@ -538,4 +890,14 @@ class UnknownPageData extends EasyCopyPage {
   }
 
   final String message;
+
+  @override
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'type': 'unknown',
+      'title': title,
+      'uri': uri,
+      'message': message,
+    };
+  }
 }

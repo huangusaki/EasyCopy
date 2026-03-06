@@ -1,9 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/page_models.dart';
+import 'package:easy_copy/services/host_manager.dart';
+import 'package:easy_copy/services/image_cache.dart';
+import 'package:easy_copy/services/page_cache_store.dart';
+import 'package:easy_copy/services/page_probe_service.dart';
+import 'package:easy_copy/services/site_api_client.dart';
+import 'package:easy_copy/services/site_session.dart';
 import 'package:easy_copy/webview/page_extractor_script.dart';
+import 'package:easy_copy/widgets/auth_webview_screen.dart';
+import 'package:easy_copy/widgets/profile_page_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -17,21 +26,29 @@ class EasyCopyScreen extends StatefulWidget {
 
 class _EasyCopyScreenState extends State<EasyCopyScreen> {
   late final WebViewController _controller;
+  final WebViewCookieManager _cookieManager = WebViewCookieManager();
   final TextEditingController _searchController = TextEditingController();
+  final HostManager _hostManager = HostManager.instance;
+  final SiteSession _session = SiteSession.instance;
+  final PageCacheStore _cacheStore = PageCacheStore.instance;
+  final PageProbeService _probeService = PageProbeService.instance;
+  final SiteApiClient _apiClient = SiteApiClient.instance;
 
-  Uri _currentUri = appDestinations.first.uri;
+  Uri _currentUri = AppConfig.resolvePath('/');
   EasyCopyPage? _page;
   String? _errorMessage;
   bool _isLoading = true;
   int _selectedIndex = 0;
   int _activeLoadId = 0;
+  bool _preservePageOnNextLoad = false;
+  bool _isFailingOver = false;
+  int _consecutiveFrameFailures = 0;
 
   @override
   void initState() {
     super.initState();
-    _selectedIndex = tabIndexForUri(_currentUri);
     _controller = _buildController();
-    _controller.loadRequest(_currentUri);
+    unawaited(_bootstrap());
     _syncSearchController();
   }
 
@@ -39,6 +56,24 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _bootstrap() async {
+    await Future.wait(<Future<void>>[
+      _hostManager.ensureInitialized(),
+      _session.ensureInitialized(),
+      _cacheStore.ensureInitialized(),
+    ]);
+    final Uri homeUri = appDestinations.first.uri;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _currentUri = homeUri;
+      _selectedIndex = tabIndexForUri(homeUri);
+    });
+    _syncSearchController();
+    await _loadUri(homeUri);
   }
 
   WebViewController _buildController() {
@@ -53,6 +88,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         NavigationDelegate(
           onNavigationRequest: (NavigationRequest request) {
             final Uri? nextUri = Uri.tryParse(request.url);
+            if (_isLoginUri(nextUri)) {
+              unawaited(_openAuthFlow());
+              return NavigationDecision.prevent;
+            }
             if (!AppConfig.isAllowedNavigationUri(nextUri)) {
               _showSnackBar('已阻止跳转到站外页面');
               return NavigationDecision.prevent;
@@ -62,7 +101,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
             return NavigationDecision.navigate;
           },
           onPageStarted: (String url) {
-            _startLoading(Uri.tryParse(url) ?? _currentUri);
+            _startLoading(
+              AppConfig.rewriteToCurrentHost(Uri.tryParse(url) ?? _currentUri),
+              preserveCurrentPage: _preservePageOnNextLoad,
+            );
+            _preservePageOnNextLoad = false;
           },
           onPageFinished: (String url) async {
             final int loadId = _activeLoadId;
@@ -90,13 +133,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
             if (error.isForMainFrame == false) {
               return;
             }
-
-            setState(() {
-              _isLoading = false;
-              _errorMessage = error.description.isEmpty
-                  ? '頁面加載失敗，請稍後重試。'
-                  : error.description;
-            });
+            unawaited(
+              _handleMainFrameFailure(
+                error.description.isEmpty ? '頁面加載失敗，請稍後重試。' : error.description,
+              ),
+            );
           },
         ),
       );
@@ -118,19 +159,36 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         return;
       }
 
-      final EasyCopyPage page = EasyCopyPage.fromJson(payload);
+      payload.remove('loadId');
+      final EasyCopyPage page = PageCacheStore.restorePagePayload(payload);
       if (!mounted) {
         return;
       }
 
+      _consecutiveFrameFailures = 0;
       setState(() {
         _page = page;
         _isLoading = false;
         _errorMessage = null;
-        _currentUri = Uri.parse(page.uri);
+        _currentUri = AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
         _selectedIndex = tabIndexForUri(_currentUri);
       });
+      if (page is ReaderPageData) {
+        unawaited(EasyCopyImageCaches.prefetchReaderImages(page.imageUrls));
+      }
       _syncSearchController();
+      if (page is! UnknownPageData) {
+        unawaited(
+          _cacheStore.writeEnvelope(
+            PageCacheStore.buildEnvelope(
+              routeKey: AppConfig.routeKeyForUri(Uri.parse(page.uri)),
+              page: page,
+              fingerprint: _fingerprintForPage(page),
+              authScope: 'guest',
+            ),
+          ),
+        );
+      }
     } catch (_) {
       if (!mounted) {
         return;
@@ -143,57 +201,301 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   }
 
   void _setPendingLocation(Uri uri) {
+    final Uri rewrittenUri = AppConfig.rewriteToCurrentHost(uri);
     if (!mounted) {
-      _currentUri = uri;
-      _selectedIndex = tabIndexForUri(uri);
+      _currentUri = rewrittenUri;
+      _selectedIndex = tabIndexForUri(rewrittenUri);
       return;
     }
 
     setState(() {
-      _currentUri = uri;
-      _selectedIndex = tabIndexForUri(uri);
+      _currentUri = rewrittenUri;
+      _selectedIndex = tabIndexForUri(rewrittenUri);
     });
     _syncSearchController();
   }
 
-  void _startLoading(Uri uri) {
+  void _startLoading(Uri uri, {required bool preserveCurrentPage}) {
     _activeLoadId += 1;
+    final Uri rewrittenUri = AppConfig.rewriteToCurrentHost(uri);
     if (!mounted) {
-      _currentUri = uri;
-      _selectedIndex = tabIndexForUri(uri);
+      _currentUri = rewrittenUri;
+      _selectedIndex = tabIndexForUri(rewrittenUri);
       _isLoading = true;
       _errorMessage = null;
-      _page = null;
+      if (!preserveCurrentPage) {
+        _page = null;
+      }
       return;
     }
 
     setState(() {
-      _currentUri = uri;
-      _selectedIndex = tabIndexForUri(uri);
+      _currentUri = rewrittenUri;
+      _selectedIndex = tabIndexForUri(rewrittenUri);
       _isLoading = true;
       _errorMessage = null;
-      _page = null;
+      if (!preserveCurrentPage) {
+        _page = null;
+      }
     });
     _syncSearchController();
   }
 
-  Future<void> _loadUri(Uri uri) async {
-    if (!AppConfig.isAllowedNavigationUri(uri)) {
+  Future<void> _beginWebLoad(
+    Uri uri, {
+    bool preserveVisiblePage = false,
+  }) async {
+    final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
+    _preservePageOnNextLoad = preserveVisiblePage;
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+        _currentUri = targetUri;
+        _selectedIndex = tabIndexForUri(targetUri);
+        if (!preserveVisiblePage) {
+          _page = null;
+        }
+      });
+    }
+    await _syncSessionCookiesToCurrentHost();
+    await _controller.loadRequest(targetUri);
+  }
+
+  Future<void> _loadUri(
+    Uri uri, {
+    bool bypassCache = false,
+    bool preserveVisiblePage = false,
+  }) async {
+    await _hostManager.ensureInitialized();
+    final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
+    if (_isLoginUri(targetUri)) {
+      await _openAuthFlow();
+      return;
+    }
+    if (_isProfileUri(targetUri)) {
+      await _loadProfilePage(forceRefresh: bypassCache);
+      return;
+    }
+    if (!AppConfig.isAllowedNavigationUri(targetUri)) {
       _showSnackBar('已阻止跳转到站外页面');
       return;
     }
 
-    _setPendingLocation(uri);
+    _consecutiveFrameFailures = 0;
+    _setPendingLocation(targetUri);
+    final String routeKey = AppConfig.routeKeyForUri(targetUri);
+    if (!bypassCache) {
+      final CachedPageEnvelope? cachedEntry = await _cacheStore.read(
+        routeKey,
+        authScope: 'guest',
+      );
+      if (cachedEntry != null) {
+        final EasyCopyPage cachedPage = PageCacheStore.restorePage(cachedEntry);
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _page = cachedPage;
+          _currentUri = targetUri;
+          _selectedIndex = tabIndexForUri(targetUri);
+          _errorMessage = null;
+          _isLoading = false;
+        });
+        if (cachedPage is ReaderPageData) {
+          unawaited(
+            EasyCopyImageCaches.prefetchReaderImages(cachedPage.imageUrls),
+          );
+        }
+        if (!cachedEntry.isSoftExpired(DateTime.now())) {
+          return;
+        }
+        setState(() {
+          _isLoading = true;
+        });
+        unawaited(_revalidateCachedPage(targetUri, cachedEntry));
+        return;
+      }
+    }
+    await _beginWebLoad(
+      targetUri,
+      preserveVisiblePage: preserveVisiblePage,
+    );
+  }
+
+  Future<void> _revalidateCachedPage(
+    Uri uri,
+    CachedPageEnvelope cachedEntry,
+  ) async {
+    try {
+      final PageProbeResult probe = await _probeService.probe(uri);
+      if (!mounted || AppConfig.routeKeyForUri(_currentUri) != cachedEntry.routeKey) {
+        return;
+      }
+      if (probe.fingerprint == cachedEntry.fingerprint) {
+        await _cacheStore.refreshValidation(
+          cachedEntry.routeKey,
+          authScope: cachedEntry.authScope,
+        );
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isLoading = false;
+          _errorMessage = null;
+        });
+        return;
+      }
+      await _beginWebLoad(uri, preserveVisiblePage: true);
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadProfilePage({bool forceRefresh = false}) async {
+    final Uri profileUri = AppConfig.profileUri;
+    _setPendingLocation(profileUri);
+    if (!_session.isAuthenticated) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _page = ProfilePageData.loggedOut(uri: profileUri.toString());
+        _isLoading = false;
+        _errorMessage = null;
+      });
+      return;
+    }
+
+    final String authScope = _session.authScope;
+    if (!forceRefresh) {
+      final CachedPageEnvelope? cachedEntry = await _cacheStore.read(
+        AppConfig.profileRouteKey,
+        authScope: authScope,
+      );
+      if (cachedEntry != null) {
+        final ProfilePageData cachedPage =
+            PageCacheStore.restorePage(cachedEntry) as ProfilePageData;
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _page = cachedPage;
+          _isLoading = false;
+          _errorMessage = null;
+        });
+        if (!cachedEntry.isSoftExpired(DateTime.now())) {
+          return;
+        }
+        setState(() {
+          _isLoading = true;
+        });
+        unawaited(_refreshProfileInBackground(cachedEntry.authScope));
+        return;
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
+    try {
+      final ProfilePageData profilePage = await _fetchAndStoreProfile();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _page = profilePage;
+        _isLoading = false;
+      });
+    } catch (error) {
+      await _handleProfileLoadFailure(error);
+    }
+  }
+
+  Future<void> _refreshProfileInBackground(String authScope) async {
+    try {
+      final ProfilePageData profilePage = await _fetchAndStoreProfile();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _page = profilePage;
+        _isLoading = false;
+        _errorMessage = null;
+      });
+      await _cacheStore.refreshValidation(
+        AppConfig.profileRouteKey,
+        authScope: authScope,
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<ProfilePageData> _fetchAndStoreProfile() async {
+    final ProfilePageData profilePage = await _apiClient.loadProfile();
+    final String authScope = profilePage.isLoggedIn ? _session.authScope : 'guest';
+    await _cacheStore.writeEnvelope(
+      PageCacheStore.buildEnvelope(
+        routeKey: AppConfig.profileRouteKey,
+        page: profilePage,
+        fingerprint: _fingerprintForPage(profilePage),
+        authScope: authScope,
+      ),
+    );
+    return profilePage;
+  }
+
+  Future<void> _handleProfileLoadFailure(Object error) async {
+    final String message = error.toString();
+    if (message.contains('登录已失效')) {
+      await _logout(showFeedback: false);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _page = ProfilePageData.loggedOut(uri: AppConfig.profileUri.toString());
+        _isLoading = false;
+        _errorMessage = null;
+      });
+      _showSnackBar('登录已失效，请重新登录。');
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-      _page = null;
+      _isLoading = false;
+      _errorMessage = _page == null ? message : null;
     });
-    await _controller.loadRequest(uri);
+    if (_page != null) {
+      _showSnackBar(message);
+    }
   }
 
   Future<void> _retryCurrentPage() async {
-    await _loadUri(_currentUri);
+    if (_page is ProfilePageData || _selectedIndex == 3) {
+      await _loadProfilePage(forceRefresh: true);
+      return;
+    }
+    await _loadUri(
+      _currentUri,
+      bypassCache: true,
+      preserveVisiblePage: _page != null,
+    );
   }
 
   Future<void> _loadHome() async {
@@ -208,7 +510,60 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       href,
       currentUri: _currentUri,
     );
+    if (_isLoginUri(targetUri)) {
+      unawaited(_openAuthFlow());
+      return;
+    }
     unawaited(_loadUri(targetUri));
+  }
+
+  Future<void> _openAuthFlow() async {
+    await _hostManager.ensureInitialized();
+    if (!mounted) {
+      return;
+    }
+    final AuthSessionResult? result = await Navigator.of(context).push(
+      MaterialPageRoute<AuthSessionResult>(
+        builder: (BuildContext context) {
+          return AuthWebViewScreen(
+            loginUri: AppConfig.resolvePath('/web/login/?url=person/home'),
+            userAgent: AppConfig.desktopUserAgent,
+          );
+        },
+      ),
+    );
+    if (result == null || !mounted) {
+      return;
+    }
+    final String? token = result.cookies['token'];
+    if ((token ?? '').isEmpty) {
+      return;
+    }
+    await _session.updateFromCookieHeader(result.cookieHeader);
+    await _session.saveToken(token!, cookies: result.cookies);
+    await _hostManager.pinSessionHost(_hostManager.currentHost);
+    await _syncSessionCookiesToCurrentHost();
+    await _loadProfilePage(forceRefresh: true);
+  }
+
+  Future<void> _logout({bool showFeedback = true}) async {
+    await _cacheStore.removeAuthenticatedEntries();
+    await _session.clear();
+    await _hostManager.clearSessionPin();
+    await _cookieManager.clearCookies();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _page = ProfilePageData.loggedOut(uri: AppConfig.profileUri.toString());
+      _currentUri = AppConfig.profileUri;
+      _selectedIndex = 3;
+      _isLoading = false;
+      _errorMessage = null;
+    });
+    if (showFeedback) {
+      _showSnackBar('已退出登录');
+    }
   }
 
   void _showSnackBar(String message) {
@@ -242,10 +597,18 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     if (index < 0 || index >= appDestinations.length) {
       return;
     }
+    if (index == 3) {
+      await _loadProfilePage();
+      return;
+    }
     await _loadUri(appDestinations[index].uri);
   }
 
   Future<void> _handleBackNavigation() async {
+    if (_page is ProfilePageData && _selectedIndex == 3) {
+      await _loadHome();
+      return;
+    }
     if (await _controller.canGoBack()) {
       await _controller.goBack();
       return;
@@ -257,7 +620,69 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     await SystemNavigator.pop();
   }
 
+  Future<void> _handleMainFrameFailure(String message) async {
+    _consecutiveFrameFailures += 1;
+    if (!mounted) {
+      return;
+    }
+    if (_page == null) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = message;
+      });
+    } else {
+      setState(() {
+        _isLoading = false;
+      });
+      _showSnackBar(message);
+    }
+    if (_isFailingOver || _consecutiveFrameFailures < 2) {
+      return;
+    }
+    _isFailingOver = true;
+    try {
+      final String previousHost = _hostManager.currentHost;
+      final String nextHost = await _hostManager.failover(
+        exclude: <String>[previousHost],
+      );
+      if (nextHost == previousHost) {
+        return;
+      }
+      await _syncSessionCookiesToCurrentHost();
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar('当前入口异常，已切换到备用站点。');
+      await _loadUri(
+        AppConfig.rewriteToCurrentHost(_currentUri),
+        preserveVisiblePage: _page != null,
+      );
+      _consecutiveFrameFailures = 0;
+    } finally {
+      _isFailingOver = false;
+    }
+  }
+
+  Future<void> _syncSessionCookiesToCurrentHost() async {
+    await _session.ensureInitialized();
+    if (_session.cookies.isEmpty) {
+      return;
+    }
+    for (final MapEntry<String, String> cookie in _session.cookies.entries) {
+      await _cookieManager.setCookie(
+        WebViewCookie(
+          name: cookie.key,
+          value: cookie.value,
+          domain: _hostManager.currentHost,
+          path: '/',
+        ),
+      );
+    }
+  }
+
   bool get _isReaderMode => _page is ReaderPageData;
+
+  bool get _shouldShowSearchBar => _page is! ProfilePageData;
 
   bool get _shouldShowBackButton {
     final EasyCopyPage? page = _page;
@@ -283,7 +708,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     if (_errorMessage != null) {
       return '原网页保持隐藏，仅展示转换后的状态层。';
     }
-    if (_isLoading || page == null) {
+    if (page != null && _isLoading) {
+      return '正在后台检查内容是否有更新。';
+    }
+    if (page == null) {
       return '正在后台整理桌面页面内容，前台只保留移动端界面。';
     }
     switch (page.type) {
@@ -298,9 +726,108 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       case EasyCopyPageType.reader:
         return '阅读页已切换为原生图片流。';
       case EasyCopyPageType.profile:
-        return '个人中心仍在重构中。';
+        return page is ProfilePageData && page.isLoggedIn
+            ? '收藏、历史和继续阅读都走原生接口。'
+            : '登录后在原生界面查看收藏与浏览历史。';
       case EasyCopyPageType.unknown:
         return '当前页面还没有完成原生支持。';
+    }
+  }
+
+  bool _isLoginUri(Uri? uri) {
+    if (uri == null) {
+      return false;
+    }
+    return uri.path.startsWith('/web/login');
+  }
+
+  bool _isProfileUri(Uri uri) {
+    return uri.path.startsWith('/person/home');
+  }
+
+  String _fingerprintForPage(EasyCopyPage page) {
+    switch (page) {
+      case HomePageData homePage:
+        final List<ComicCardData> cards = homePage.sections
+            .expand((ComicSectionData section) => section.items)
+            .toList(growable: false);
+        return <String>[
+          Uri.parse(homePage.uri).path,
+          Uri.parse(homePage.uri).query,
+          '',
+          cards.isEmpty ? '' : '${cards.first.title}::${cards.first.href}',
+          cards.isEmpty ? '' : '${cards.last.title}::${cards.last.href}',
+          '${cards.length}',
+        ].join('::');
+      case DiscoverPageData discoverPage:
+        final List<String> activeFilters = discoverPage.filters
+            .expand((FilterGroupData group) => group.options)
+            .where((LinkAction option) => option.active)
+            .map((LinkAction option) => option.label)
+            .followedBy(
+              discoverPage.pager.currentLabel.isEmpty
+                  ? const Iterable<String>.empty()
+                  : <String>[discoverPage.pager.currentLabel],
+            )
+            .toList(growable: false);
+        return <String>[
+          Uri.parse(discoverPage.uri).path,
+          Uri.parse(discoverPage.uri).query,
+          activeFilters.join('|'),
+          discoverPage.items.isEmpty
+              ? ''
+              : '${discoverPage.items.first.title}::${discoverPage.items.first.href}',
+          discoverPage.items.isEmpty
+              ? ''
+              : '${discoverPage.items.last.title}::${discoverPage.items.last.href}',
+          '${discoverPage.items.length}',
+        ].join('::');
+      case RankPageData rankPage:
+        final List<LinkAction> activeTabs = <LinkAction>[
+          ...rankPage.categories.where((LinkAction item) => item.active),
+          ...rankPage.periods.where((LinkAction item) => item.active),
+        ];
+        return <String>[
+          Uri.parse(rankPage.uri).path,
+          activeTabs.map((LinkAction item) => item.label).join('|'),
+          rankPage.items.isEmpty
+              ? ''
+              : '${rankPage.items.first.title}::${rankPage.items.first.href}',
+          rankPage.items.isEmpty
+              ? ''
+              : '${rankPage.items.last.title}::${rankPage.items.last.href}',
+          '${rankPage.items.length}',
+        ].join('::');
+      case DetailPageData detailPage:
+        final List<ChapterData> chapters = detailPage.chapterGroups.isNotEmpty
+            ? detailPage.chapterGroups
+                  .expand((ChapterGroupData group) => group.chapters)
+                  .toList(growable: false)
+            : detailPage.chapters;
+        return <String>[
+          Uri.parse(detailPage.uri).path,
+          detailPage.updatedAt,
+          detailPage.status,
+          '${chapters.length}',
+          chapters.isEmpty ? '' : chapters.first.href,
+          chapters.isEmpty ? '' : chapters.last.href,
+        ].join('::');
+      case ReaderPageData readerPage:
+        return <String>[
+          Uri.parse(readerPage.uri).path,
+          readerPage.title,
+          readerPage.progressLabel,
+          readerPage.contentKey,
+        ].join('::');
+      case ProfilePageData profilePage:
+        return <String>[
+          profilePage.user?.userId ?? '',
+          '${profilePage.collections.length}',
+          '${profilePage.history.length}',
+          profilePage.continueReading?.chapterHref ?? '',
+        ].join('::');
+      case UnknownPageData unknownPage:
+        return <String>[unknownPage.uri, unknownPage.message].join('::');
     }
   }
 
@@ -355,7 +882,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
             .toList(growable: false),
       ),
       body: SafeArea(
-        child: _errorMessage != null
+        child: _errorMessage != null && _page == null
             ? _buildErrorState(context)
             : RefreshIndicator(
                 onRefresh: _retryCurrentPage,
@@ -381,11 +908,12 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         title: _pageTitle,
         subtitle: _pageSubtitle,
         showBackButton: _shouldShowBackButton,
+        showSearchBar: _shouldShowSearchBar,
       ),
       const SizedBox(height: 18),
     ];
 
-    if (_isLoading || _page == null) {
+    if (_page == null) {
       children.addAll(_buildLoadingSections());
       return children;
     }
@@ -401,7 +929,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       case DetailPageData detailPage:
         children.addAll(_buildDetailSections(detailPage));
       case ProfilePageData profilePage:
-        children.addAll(_buildMessageSections(profilePage.message));
+        children.addAll(_buildProfileSections(profilePage));
       case UnknownPageData unknownPage:
         children.addAll(_buildMessageSections(unknownPage.message));
       case ReaderPageData _:
@@ -411,11 +939,29 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     return children;
   }
 
+  List<Widget> _buildProfileSections(ProfilePageData page) {
+    return <Widget>[
+      ProfilePageView(
+        page: page,
+        onAuthenticate: _openAuthFlow,
+        onLogout: _logout,
+        onOpenComic: _navigateToHref,
+        onOpenHistory: (ProfileHistoryItem item) {
+          final String targetHref = item.chapterHref.isNotEmpty
+              ? item.chapterHref
+              : item.comicHref;
+          _navigateToHref(targetHref);
+        },
+      ),
+    ];
+  }
+
   Widget _buildHeaderCard(
     BuildContext context, {
     required String title,
     required String subtitle,
     required bool showBackButton,
+    required bool showSearchBar,
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
 
@@ -526,35 +1072,37 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 18),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    children: <Widget>[
-                      Icon(Icons.search_rounded, color: colorScheme.primary),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: TextField(
-                          controller: _searchController,
-                          onSubmitted: _submitSearch,
-                          textInputAction: TextInputAction.search,
-                          decoration: const InputDecoration(
-                            border: InputBorder.none,
-                            hintText: '搜尋漫畫、作者或題材',
+                if (showSearchBar) ...<Widget>[
+                  const SizedBox(height: 18),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        Icon(Icons.search_rounded, color: colorScheme.primary),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: _searchController,
+                            onSubmitted: _submitSearch,
+                            textInputAction: TextInputAction.search,
+                            decoration: const InputDecoration(
+                              border: InputBorder.none,
+                              hintText: '搜尋漫畫、作者或題材',
+                            ),
                           ),
                         ),
-                      ),
-                      IconButton(
-                        onPressed: () => _submitSearch(_searchController.text),
-                        icon: const Icon(Icons.arrow_forward_rounded),
-                      ),
-                    ],
+                        IconButton(
+                          onPressed: () => _submitSearch(_searchController.text),
+                          icon: const Icon(Icons.arrow_forward_rounded),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -605,6 +1153,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
           title: _pageTitle,
           subtitle: _pageSubtitle,
           showBackButton: _shouldShowBackButton,
+          showSearchBar: _shouldShowSearchBar,
         ),
         const SizedBox(height: 18),
         Container(
@@ -775,10 +1324,30 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       _PagerCard(
         pager: page.pager,
         onPrev: page.pager.hasPrev
-            ? () => _navigateToHref(page.pager.prevHref)
+            ? () {
+                unawaited(
+                  _loadUri(
+                    AppConfig.resolveNavigationUri(
+                      page.pager.prevHref,
+                      currentUri: _currentUri,
+                    ),
+                    preserveVisiblePage: true,
+                  ),
+                );
+              }
             : null,
         onNext: page.pager.hasNext
-            ? () => _navigateToHref(page.pager.nextHref)
+            ? () {
+                unawaited(
+                  _loadUri(
+                    AppConfig.resolveNavigationUri(
+                      page.pager.nextHref,
+                      currentUri: _currentUri,
+                    ),
+                    preserveVisiblePage: true,
+                  ),
+                );
+              }
             : null,
       ),
     );
@@ -1047,41 +1616,31 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
                         ),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(22),
-                          child: Image.network(
-                            page.imageUrls[index],
+                          child: CachedNetworkImage(
+                            imageUrl: page.imageUrls[index],
                             fit: BoxFit.fitWidth,
                             width: double.infinity,
-                            loadingBuilder:
+                            cacheManager: EasyCopyImageCaches.readerCache,
+                            progressIndicatorBuilder:
                                 (
                                   BuildContext context,
-                                  Widget child,
-                                  ImageChunkEvent? loadingProgress,
+                                  String url,
+                                  DownloadProgress progress,
                                 ) {
-                                  if (loadingProgress == null) {
-                                    return child;
-                                  }
                                   return SizedBox(
                                     height: 260,
                                     child: Center(
                                       child: CircularProgressIndicator(
-                                        value:
-                                            loadingProgress
-                                                    .expectedTotalBytes ==
-                                                null
-                                            ? null
-                                            : loadingProgress
-                                                      .cumulativeBytesLoaded /
-                                                  loadingProgress
-                                                      .expectedTotalBytes!,
+                                        value: progress.progress,
                                       ),
                                     ),
                                   );
                                 },
-                            errorBuilder:
+                            errorWidget:
                                 (
                                   BuildContext context,
+                                  String url,
                                   Object error,
-                                  StackTrace? stackTrace,
                                 ) {
                                   return const SizedBox(
                                     height: 220,
@@ -1925,14 +2484,15 @@ class _NetworkImageBox extends StatelessWidget {
         aspectRatio: aspectRatio,
         child: imageUrl.isEmpty
             ? const _PlaceholderImage()
-            : Image.network(
-                imageUrl,
+            : CachedNetworkImage(
+                imageUrl: imageUrl,
                 fit: BoxFit.cover,
-                errorBuilder:
+                cacheManager: EasyCopyImageCaches.coverCache,
+                errorWidget:
                     (
                       BuildContext context,
+                      String url,
                       Object error,
-                      StackTrace? stackTrace,
                     ) {
                       return const _PlaceholderImage();
                     },

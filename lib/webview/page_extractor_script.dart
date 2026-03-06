@@ -54,10 +54,11 @@ const String _pageExtractionScriptTemplate = r"""
     }
 
     const source =
-      attr(node, 'src') ||
       attr(node, 'data-src') ||
+      attr(node, 'data-original') ||
+      attr(node, 'data') ||
       cleanText(node.dataset ? node.dataset.src : '');
-    return absoluteUrl(source);
+    return absoluteUrl(source || attr(node, 'src'));
   };
   const linkUrl = (node) => absoluteUrl(attr(node, 'href'));
   const uniqueBy = (items, keyFactory) => {
@@ -188,9 +189,11 @@ const String _pageExtractionScriptTemplate = r"""
     Array.from(document.querySelectorAll('.comicContent-list img')).forEach(
       (img) => {
         const nextSource =
-          attr(img, 'src') ||
           attr(img, 'data-src') ||
-          cleanText(img.dataset ? img.dataset.src : '');
+          attr(img, 'data-original') ||
+          attr(img, 'data') ||
+          cleanText(img.dataset ? img.dataset.src : '') ||
+          attr(img, 'src');
         if (!nextSource) {
           return;
         }
@@ -200,8 +203,26 @@ const String _pageExtractionScriptTemplate = r"""
       },
     );
 
-    window.dispatchEvent(new Event('scroll'));
+    // The site lazily appends one page per scroll callback. Trigger enough
+    // synthetic scrolls to fully materialize medium-sized chapters.
+    for (let index = 0; index < 96; index += 1) {
+      window.dispatchEvent(new Event('scroll'));
+    }
     window.dispatchEvent(new Event('resize'));
+  };
+  const expectedReaderImageCount = () => {
+    const rawValue =
+      queryText(document, '.comicCount') ||
+      queryText(document, '.comicContent-footer-txt span');
+    const match = rawValue.match(/(\d+)/g);
+    if (!match || match.length === 0) {
+      return 0;
+    }
+    const numbers = match.map((value) => Number.parseInt(value, 10));
+    if (numbers.some((value) => Number.isNaN(value))) {
+      return 0;
+    }
+    return numbers[numbers.length - 1];
   };
   const detectPageType = () => {
     const path = location.pathname.toLowerCase();
@@ -433,6 +454,16 @@ const String _pageExtractionScriptTemplate = r"""
         .filter((url) => url.length > 0),
       (url) => url,
     );
+    const contentKey = (() => {
+      if (typeof window.contentKey === 'string') {
+        return cleanText(window.contentKey);
+      }
+      const allScriptText = Array.from(document.scripts)
+        .map((script) => script.textContent || '')
+        .join('\n');
+      const match = allScriptText.match(/var\s+contentKey\s*=\s*'([^']+)'/i);
+      return match ? cleanText(match[1]) : '';
+    })();
 
     return {
       type: 'reader',
@@ -449,6 +480,7 @@ const String _pageExtractionScriptTemplate = r"""
       catalogHref: linkUrl(
         document.querySelector('.comicContent-prev.list a[href]'),
       ),
+      contentKey,
     };
   };
   const buildProfilePayload = () => ({
@@ -466,9 +498,14 @@ const String _pageExtractionScriptTemplate = r"""
   const needsMoreTime = (type) => {
     if (type === 'reader') {
       materializeReaderImages();
+      const expectedCount = expectedReaderImageCount();
+      const currentCount = document.querySelectorAll('.comicContent-list img').length;
       return (
-        document.querySelectorAll('.comicContent-list img').length === 0 &&
-        state.attempts < 36
+        (
+          currentCount === 0 ||
+          (expectedCount > 0 && currentCount < expectedCount)
+        ) &&
+        state.attempts < 48
       );
     }
 
