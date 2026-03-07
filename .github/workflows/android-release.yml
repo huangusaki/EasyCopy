@@ -85,8 +85,38 @@ jobs:
       - name: Analyze
         run: flutter analyze
 
-      - name: Test
-        run: flutter test
+      - name: Test app_config
+        run: flutter test test/app_config_test.dart
+
+      - name: Test comic_download_service
+        run: flutter test test/comic_download_service_test.dart
+
+      - name: Test download_queue_store
+        run: flutter test test/download_queue_store_test.dart
+
+      - name: Test host_manager
+        run: flutter test test/host_manager_test.dart
+
+      - name: Test page_cache_store
+        run: flutter test test/page_cache_store_test.dart
+
+      - name: Test page_probe_service
+        run: flutter test test/page_probe_service_test.dart
+
+      - name: Test page_repository
+        run: flutter test test/page_repository_test.dart
+
+      - name: Test primary_tab_session_store
+        run: flutter test test/primary_tab_session_store_test.dart
+
+      - name: Test profile_page_view
+        run: flutter test test/profile_page_view_test.dart
+
+      - name: Test site_api_client
+        run: flutter test test/site_api_client_test.dart
+
+      - name: Test widget
+        run: flutter test test/widget_test.dart
 
       - name: Validate signing secrets
         shell: pwsh
