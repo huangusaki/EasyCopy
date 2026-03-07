@@ -4578,6 +4578,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     ReaderPageData page,
   ) {
     final bool showGap = _readerPreferences.showPageGap;
+    final double topPadding = _readerPreferences.fullscreen && showGap ? 0 : 8;
     return RefreshIndicator(
       onRefresh: _retryCurrentPage,
       child: ListView.builder(
@@ -4589,7 +4590,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
           parent: BouncingScrollPhysics(),
         ),
         padding: showGap
-            ? const EdgeInsets.fromLTRB(12, 8, 12, 16)
+            ? EdgeInsets.fromLTRB(12, topPadding, 12, 16)
             : const EdgeInsets.only(bottom: 16),
         itemCount: page.imageUrls.length,
         itemBuilder: (BuildContext context, int index) {
@@ -4614,6 +4615,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     final bool reverse =
         _readerPreferences.readingDirection ==
         ReaderReadingDirection.rightToLeft;
+    final double topPadding =
+        _readerPreferences.fullscreen && _readerPreferences.showPageGap ? 0 : 8;
     return PageView.builder(
       key: ValueKey<String>(
         'reader-paged-${page.uri}-${_readerPreferences.readingDirection.name}-${_readerPreferences.pageFit.name}-${_readerPreferences.showPageGap}',
@@ -4629,7 +4632,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
           builder: (BuildContext context, BoxConstraints constraints) {
             return Padding(
               padding: _readerPreferences.showPageGap
-                  ? const EdgeInsets.fromLTRB(12, 8, 12, 8)
+                  ? EdgeInsets.fromLTRB(12, topPadding, 12, 8)
                   : EdgeInsets.zero,
               child: SingleChildScrollView(
                 controller: scrollController,
