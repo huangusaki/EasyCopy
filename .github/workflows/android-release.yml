@@ -68,9 +68,18 @@ jobs:
           $appVersion = $versionLine.Split('+')[0]
           $buildNumber = $versionLine.Split('+')[-1]
           $expectedTag = "v$appVersion"
+          $notesPath = ".github/release-notes/$releaseTag.md"
 
           if ($releaseTag -ne $expectedTag) {
             throw "Tag $releaseTag does not match pubspec version $appVersion. Expected $expectedTag."
+          }
+
+          if (Test-Path $notesPath) {
+            "has_custom_notes=true" >> $env:GITHUB_OUTPUT
+            "release_notes_path=$notesPath" >> $env:GITHUB_OUTPUT
+          } else {
+            "has_custom_notes=false" >> $env:GITHUB_OUTPUT
+            "release_notes_path=" >> $env:GITHUB_OUTPUT
           }
 
           "release_tag=$releaseTag" >> $env:GITHUB_OUTPUT
@@ -167,7 +176,23 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+      - name: Create or update GitHub Release with custom notes
+        if: steps.meta.outputs.has_custom_notes == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: ${{ steps.meta.outputs.release_title }}
+          target_commitish: ${{ github.sha }}
+          body_path: ${{ steps.meta.outputs.release_notes_path }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: |
+            dist/*.apk
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+
       - name: Create or update GitHub Release
+        if: steps.meta.outputs.has_custom_notes != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.release_tag }}
