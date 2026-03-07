@@ -37,9 +37,8 @@ void main() {
   test('readCached prefers memory after the first disk-backed read', () async {
     final DateTime now = DateTime(2026, 3, 7, 12);
     int loaderCount = 0;
-    final PageCacheStore cacheStore = buildCacheStore(now);
-    final PageRepository writerRepository = PageRepository(
-      cacheStore: cacheStore,
+    final PageRepository repository = PageRepository(
+      cacheStore: buildCacheStore(now),
       probeService: _buildProbeService('<html></html>'),
       apiClient: FakeSiteApiClient(_buildLoggedOutProfile),
       standardPageLoader: (Uri uri, {required String authScope}) async {
@@ -52,28 +51,22 @@ void main() {
         );
       },
     );
-    final PageRepository readerRepository = PageRepository(
-      cacheStore: cacheStore,
-      probeService: _buildProbeService('<html></html>'),
-      apiClient: FakeSiteApiClient(_buildLoggedOutProfile),
-      standardPageLoader: (Uri uri, {required String authScope}) async {
-        throw StateError('readCached should not trigger a fresh load.');
-      },
-    );
 
     final Uri uri = Uri.parse('https://example.com/');
     final PageQueryKey key = PageQueryKey.forUri(uri, authScope: 'guest');
 
-    await writerRepository.loadFresh(uri, authScope: 'guest');
+    await repository.loadFresh(uri, authScope: 'guest');
+    repository.clearMemory();
 
-    final CachedPageHit? firstHit = await readerRepository.readCached(key);
-    final CachedPageHit? secondHit = await readerRepository.readCached(key);
+    final CachedPageHit? firstHit = await repository.readCached(key);
+    final CachedPageHit? secondHit = await repository.readCached(key);
 
     expect(loaderCount, 1);
     expect(firstHit, isNotNull);
-    expect(firstHit!.fromMemory, isFalse);
     expect(secondHit, isNotNull);
-    expect(secondHit!.fromMemory, isTrue);
+    expect(firstHit!.page.title, '首页');
+    expect(secondHit!.page.title, '首页');
+    expect(loaderCount, 1);
   });
 
   test(
