@@ -94,6 +94,28 @@ void main() {
     expect(entry.standardScrollOffset, 180);
   });
 
+  test(
+    'replaceCurrent keeps discover filter changes on a single stack entry',
+    () {
+      final PrimaryTabSessionStore store = buildStore();
+
+      store.replaceCurrent(
+        1,
+        Uri.parse('https://example.com/comics?theme=maoxian'),
+      );
+      store.replaceCurrent(
+        1,
+        Uri.parse('https://example.com/comics?theme=qihuan&ordering=-popular'),
+      );
+
+      expect(store.stackForTab(1), hasLength(1));
+      expect(
+        store.currentEntry(1).uri,
+        Uri.parse('https://example.com/comics?ordering=-popular&theme=qihuan'),
+      );
+    },
+  );
+
   test('updateScroll and updateError target the matching route entry only', () {
     final PrimaryTabSessionStore store = buildStore();
 

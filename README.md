@@ -1,5 +1,7 @@
 # EasyCopy
 
+![EasyCopy 新头像](assets/icons/app_icon_rounded_1024.png)
+
 EasyCopy 是一个 Flutter 客户端，用来把 Copy 系漫画站的桌面网页重建成适合手机阅读的原生界面。
 
 它不是简单地把网页塞进 WebView，而是把原站页面放到后台加载，提取结构化数据后再用 Flutter 渲染首页、发现、排行、详情、阅读和个人中心。这样既能沿用原站内容和账号体系，也能把移动端交互、缓存和阅读体验掌握在客户端里。
@@ -118,6 +120,7 @@ test/          单元测试、组件测试、HTML 夹具
 docs/          README 使用的真机截图
 android/       Android 工程
 ios/           iOS 工程
+macos/         macOS 工程
 ```
 
 ## 本地开发
@@ -171,6 +174,6 @@ flutter test
 
 ## 备注
 
-- Android / iOS 现有包名与原生工程标识暂时保持不变，避免高风险重命名
+- Android / iOS / macOS 原生工程标识已统一到 `com.huangusaki.easycopy`
 - 项目强依赖目标站点的 DOM 结构和接口返回格式，不是通用爬虫框架
 - `unknown` 页面类型表示该路由还没有完成原生重建

@@ -6,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:crypto/crypto.dart';
 import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/page_models.dart';
+import 'package:easy_copy/page_transition_scope.dart';
 import 'package:easy_copy/services/comic_download_service.dart';
 import 'package:easy_copy/services/download_queue_store.dart';
 import 'package:easy_copy/services/host_manager.dart';
@@ -22,6 +23,15 @@ import 'package:easy_copy/widgets/profile_page_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+
+const Duration _pageFadeTransitionDuration = Duration(milliseconds: 200);
+
+Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
+  return FadeTransition(
+    opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+    child: child,
+  );
+}
 
 class EasyCopyScreen extends StatefulWidget {
   const EasyCopyScreen({super.key});
@@ -70,6 +80,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   final Map<String, String> _cancelledComicTitles = <String, String>{};
   _PendingPageLoad? _pendingPageLoad;
   NavigationIntent? _nextFreshNavigationIntent;
+  bool? _nextFreshPreserveCurrentPage;
 
   @override
   void initState() {
@@ -186,7 +197,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
             _startLoading(
               AppConfig.rewriteToCurrentHost(Uri.tryParse(url) ?? _currentUri),
               preserveCurrentPage:
-                  _pendingPageLoad?.intent == NavigationIntent.preserve,
+                  _pendingPageLoad?.preserveCurrentPage ?? false,
             );
           },
           onPageFinished: (String url) async {
@@ -939,6 +950,13 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         ),
       );
     });
+    if (preserveVisiblePage &&
+        preservedPage != null &&
+        preservedPage is! ReaderPageData) {
+      _restoreStandardScrollPosition(
+        _tabSessionStore.currentEntry(tabIndex).standardScrollOffset,
+      );
+    }
     return tabIndex;
   }
 
@@ -974,15 +992,18 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   }) async {
     final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
     final int loadId = ++_activeLoadId;
+    final bool preserveCurrentPage = _nextFreshPreserveCurrentPage ?? false;
     final _PendingPageLoad pendingLoad = _PendingPageLoad(
       requestedUri: targetUri,
       queryKey: _pageQueryKeyForUri(targetUri, authScope: authScope),
       intent: _nextFreshNavigationIntent ?? NavigationIntent.preserve,
+      preserveCurrentPage: preserveCurrentPage,
       loadId: loadId,
       targetTabIndex: tabIndexForUri(targetUri),
       completer: Completer<EasyCopyPage>(),
     );
     _nextFreshNavigationIntent = null;
+    _nextFreshPreserveCurrentPage = null;
     _pendingPageLoad = pendingLoad;
     await _syncSessionCookiesToCurrentHost();
     await _controller.loadRequest(targetUri);
@@ -1127,6 +1148,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     }
 
     _nextFreshNavigationIntent = historyMode;
+    _nextFreshPreserveCurrentPage = preserveVisiblePage;
     try {
       await _pageRepository.loadFresh(targetUri, authScope: key.authScope);
     } catch (error) {
@@ -1135,6 +1157,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         targetTabIndex: targetTabIndex,
         routeKey: key.routeKey,
       );
+    } finally {
+      _nextFreshNavigationIntent = null;
+      _nextFreshPreserveCurrentPage = null;
     }
   }
 
@@ -1145,6 +1170,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     required int targetTabIndex,
   }) async {
     try {
+      _nextFreshPreserveCurrentPage = true;
       await _pageRepository.revalidate(uri, key: key, envelope: cachedEntry);
       final PrimaryTabRouteEntry entry = _tabSessionStore.currentEntry(
         targetTabIndex,
@@ -1164,6 +1190,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       _finishTabEntryLoading(targetTabIndex);
     } catch (_) {
       _finishTabEntryLoading(targetTabIndex);
+    } finally {
+      _nextFreshPreserveCurrentPage = null;
     }
   }
 
@@ -1289,6 +1317,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       _loadUri(
         AppConfig.resolveNavigationUri(href, currentUri: _currentUri),
         preserveVisiblePage: true,
+        historyMode: NavigationIntent.preserve,
       ),
     );
   }
@@ -1301,6 +1330,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       _loadUri(
         AppConfig.resolveNavigationUri(href, currentUri: _currentUri),
         preserveVisiblePage: true,
+        historyMode: NavigationIntent.preserve,
       ),
     );
   }
@@ -1770,6 +1800,17 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     return uri.path.startsWith('/person/home');
   }
 
+  Uri get _visiblePageUriForTransition {
+    final EasyCopyPage? page = _page;
+    if (page == null) {
+      return _currentUri;
+    }
+    return AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
+  }
+
+  String get _standardBodyTransitionScope =>
+      standardPageTransitionScope(_page, _visiblePageUriForTransition);
+
   bool _isDiscoverMoreCategoryOption(LinkAction option) {
     return option.label.contains('查看全部分類') ||
         option.href.contains('/filter?point=');
@@ -1795,6 +1836,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final EasyCopyPage? page = _page;
     return PopScope<Object?>(
       canPop: false,
       onPopInvokedWithResult: (bool didPop, Object? result) async {
@@ -1825,10 +1867,21 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
             child: ColoredBox(
               color: Theme.of(context).scaffoldBackgroundColor,
               child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 220),
-                child: _isReaderMode
-                    ? _buildReaderMode(context, _page as ReaderPageData)
-                    : _buildStandardMode(context),
+                duration: _pageFadeTransitionDuration,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeOutCubic,
+                transitionBuilder: _buildFadeSwitchTransition,
+                child: page is ReaderPageData
+                    ? KeyedSubtree(
+                        key: ValueKey<String>(
+                          'reader-${AppConfig.routeKeyForUri(Uri.parse(page.uri))}',
+                        ),
+                        child: _buildReaderMode(context, page),
+                      )
+                    : KeyedSubtree(
+                        key: const ValueKey<String>('standard-mode'),
+                        child: _buildStandardMode(context),
+                      ),
               ),
             ),
           ),
@@ -1839,6 +1892,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
 
   Widget _buildStandardMode(BuildContext context) {
     return Scaffold(
+      key: const ValueKey<String>('standard-scaffold'),
       backgroundColor: Colors.transparent,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
@@ -1852,22 +1906,44 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
             )
             .toList(growable: false),
       ),
-      body: SafeArea(
-        child: _errorMessage != null && _page == null
-            ? _buildErrorState(context)
-            : RefreshIndicator(
-                onRefresh: _retryCurrentPage,
-                child: ListView(
-                  controller: _standardScrollController,
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: BouncingScrollPhysics(),
-                  ),
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-                  children: _buildStandardChildren(context),
-                ),
-              ),
+      body: SafeArea(child: _buildStandardBody(context)),
+    );
+  }
+
+  Widget _buildStandardBody(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: _retryCurrentPage,
+      child: ListView(
+        controller: _standardScrollController,
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+        children: <Widget>[
+          _buildAnimatedSectionContent(
+            contentKey: _standardContentTransitionKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: _buildStandardBodyChildren(context),
+            ),
+          ),
+        ],
       ),
     );
+  }
+
+  String get _standardContentTransitionKey {
+    final String prefix = _errorMessage != null && _page == null
+        ? 'error'
+        : 'page';
+    return '$prefix::$_standardBodyTransitionScope';
+  }
+
+  List<Widget> _buildStandardBodyChildren(BuildContext context) {
+    if (_errorMessage != null && _page == null) {
+      return _buildErrorSections(context);
+    }
+    return _buildStandardChildren(context);
   }
 
   List<Widget> _buildStandardChildren(BuildContext context) {
@@ -2507,65 +2583,100 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     );
   }
 
-  Widget _buildErrorState(BuildContext context) {
-    return ListView(
-      controller: _standardScrollController,
-      physics: const AlwaysScrollableScrollPhysics(
-        parent: BouncingScrollPhysics(),
-      ),
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-      children: <Widget>[
-        ..._buildStandardTopContent(context),
-        _buildDownloadQueueBanner(),
-        Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Column(
-            children: <Widget>[
-              Icon(
-                Icons.cloud_off_rounded,
-                size: 48,
-                color: Theme.of(context).colorScheme.error,
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                '内容整理失败',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 10),
-              Text(_errorMessage ?? '', textAlign: TextAlign.center),
-              const SizedBox(height: 10),
-              Text(
-                _currentUri.toString(),
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: FilledButton.tonal(
-                      onPressed: _loadHome,
-                      child: const Text('回到首頁'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: _retryCurrentPage,
-                      child: const Text('重新整理'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+  List<Widget> _buildErrorSections(BuildContext context) {
+    return <Widget>[
+      ..._buildStandardTopContent(context),
+      _buildDownloadQueueBanner(),
+      Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
         ),
-      ],
+        child: Column(
+          children: <Widget>[
+            Icon(
+              Icons.cloud_off_rounded,
+              size: 48,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              '内容整理失败',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 10),
+            Text(_errorMessage ?? '', textAlign: TextAlign.center),
+            const SizedBox(height: 10),
+            Text(
+              _currentUri.toString(),
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: FilledButton.tonal(
+                    onPressed: _loadHome,
+                    child: const Text('回到首頁'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: _retryCurrentPage,
+                    child: const Text('重新整理'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  Widget _buildInlineSectionLoadingIndicator() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(999),
+        child: const LinearProgressIndicator(minHeight: 6),
+      ),
     );
+  }
+
+  Widget _buildAnimatedSectionContent({
+    required String contentKey,
+    required Widget child,
+  }) {
+    return AnimatedSwitcher(
+      duration: _pageFadeTransitionDuration,
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeOutCubic,
+      transitionBuilder: _buildFadeSwitchTransition,
+      child: KeyedSubtree(key: ValueKey<String>(contentKey), child: child),
+    );
+  }
+
+  String _discoverListContentKey(DiscoverPageData page) {
+    return <String>[
+      AppConfig.routeKeyForUri(Uri.parse(page.uri)),
+      page.pager.currentLabel,
+      '${page.items.length}',
+      page.items.isEmpty ? '' : page.items.first.href,
+      page.items.isEmpty ? '' : page.items.last.href,
+    ].join('::');
+  }
+
+  String _rankListContentKey(RankPageData page) {
+    return <String>[
+      AppConfig.routeKeyForUri(Uri.parse(page.uri)),
+      '${page.items.length}',
+      page.items.isEmpty ? '' : page.items.first.href,
+      page.items.isEmpty ? '' : page.items.last.href,
+    ].join('::');
   }
 
   List<Widget> _buildHomeSections(HomePageData page) {
@@ -2684,39 +2795,56 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     sections.add(
       _SurfaceBlock(
         title: '內容列表',
-        child: _ComicGrid(items: page.items, onTap: _navigateToHref),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            if (_isLoading) _buildInlineSectionLoadingIndicator(),
+            _buildAnimatedSectionContent(
+              contentKey: _discoverListContentKey(page),
+              child: _ComicGrid(items: page.items, onTap: _navigateToHref),
+            ),
+          ],
+        ),
       ),
     );
     sections.add(const SizedBox(height: 18));
     sections.add(
-      _PagerCard(
-        pager: page.pager,
-        onPrev: page.pager.hasPrev
-            ? () {
-                unawaited(
-                  _loadUri(
-                    AppConfig.resolveNavigationUri(
-                      page.pager.prevHref,
-                      currentUri: _currentUri,
-                    ),
-                    preserveVisiblePage: true,
-                  ),
-                );
-              }
-            : null,
-        onNext: page.pager.hasNext
-            ? () {
-                unawaited(
-                  _loadUri(
-                    AppConfig.resolveNavigationUri(
-                      page.pager.nextHref,
-                      currentUri: _currentUri,
-                    ),
-                    preserveVisiblePage: true,
-                  ),
-                );
-              }
-            : null,
+      IgnorePointer(
+        ignoring: _isLoading,
+        child: Opacity(
+          opacity: _isLoading ? 0.72 : 1,
+          child: _PagerCard(
+            pager: page.pager,
+            onPrev: page.pager.hasPrev
+                ? () {
+                    unawaited(
+                      _loadUri(
+                        AppConfig.resolveNavigationUri(
+                          page.pager.prevHref,
+                          currentUri: _currentUri,
+                        ),
+                        preserveVisiblePage: true,
+                        historyMode: NavigationIntent.preserve,
+                      ),
+                    );
+                  }
+                : null,
+            onNext: page.pager.hasNext
+                ? () {
+                    unawaited(
+                      _loadUri(
+                        AppConfig.resolveNavigationUri(
+                          page.pager.nextHref,
+                          currentUri: _currentUri,
+                        ),
+                        preserveVisiblePage: true,
+                        historyMode: NavigationIntent.preserve,
+                      ),
+                    );
+                  }
+                : null,
+          ),
+        ),
       ),
     );
 
@@ -2736,8 +2864,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
               if (page.categories.isNotEmpty)
                 _RankFilterGroup(
                   label: '榜單類型',
-                  helperText: '切換不同分類榜單',
-                  icon: Icons.grid_view_rounded,
                   items: page.categories,
                   onTap: _navigateRankFilter,
                 ),
@@ -2749,8 +2875,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
               if (page.periods.isNotEmpty)
                 _RankFilterGroup(
                   label: '統計週期',
-                  helperText: '查看不同時間範圍',
-                  icon: Icons.schedule_rounded,
                   items: page.periods,
                   onTap: _navigateRankFilter,
                 ),
@@ -2767,20 +2891,22 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            if (_isLoading) ...<Widget>[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(999),
-                child: const LinearProgressIndicator(minHeight: 6),
-              ),
-              const SizedBox(height: 14),
-            ],
-            ...page.items.map(
-              (RankEntryData item) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _RankCard(
-                  item: item,
-                  onTap: () => _navigateToHref(item.href),
-                ),
+            if (_isLoading) _buildInlineSectionLoadingIndicator(),
+            _buildAnimatedSectionContent(
+              contentKey: _rankListContentKey(page),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: page.items
+                    .map(
+                      (RankEntryData item) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _RankCard(
+                          item: item,
+                          onTap: () => _navigateToHref(item.href),
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
               ),
             ),
           ],
@@ -3402,99 +3528,38 @@ class _FilterGroup extends StatelessWidget {
 class _RankFilterGroup extends StatelessWidget {
   const _RankFilterGroup({
     required this.label,
-    required this.helperText,
-    required this.icon,
     required this.items,
     required this.onTap,
   });
 
   final String label;
-  final String helperText;
-  final IconData icon;
   final List<LinkAction> items;
   final ValueChanged<String> onTap;
 
   @override
   Widget build(BuildContext context) {
-    final Widget chips = SizedBox(
-      width: double.infinity,
-      child: Wrap(
-        alignment: WrapAlignment.start,
-        spacing: 8,
-        runSpacing: 8,
-        children: items
-            .map(
-              (LinkAction item) => _LinkChip(
-                label: item.label,
-                active: item.active,
-                onTap: () => onTap(item.href),
-              ),
-            )
-            .toList(growable: false),
-      ),
-    );
-
-    Widget buildLabelCard() {
-      return Container(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF7F8FA),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFE2E7EE)),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          label,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Icon(icon, size: 18, color: const Color(0xFF0E8B84)),
-            const SizedBox(height: 10),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
-            ),
-            if (helperText.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 4),
-              Text(
-                helperText,
-                style: const TextStyle(
-                  color: Color(0xFF6B7280),
-                  fontSize: 11,
-                  height: 1.3,
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: items
+              .map(
+                (LinkAction item) => _LinkChip(
+                  label: item.label,
+                  active: item.active,
+                  onTap: () => onTap(item.href),
                 ),
-              ),
-            ],
-          ],
+              )
+              .toList(growable: false),
         ),
-      );
-    }
-
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        if (constraints.maxWidth < 420) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              buildLabelCard(),
-              const SizedBox(height: 12),
-              chips,
-            ],
-          );
-        }
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            SizedBox(width: 110, child: buildLabelCard()),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: chips,
-              ),
-            ),
-          ],
-        );
-      },
+      ],
     );
   }
 }
@@ -4081,6 +4146,7 @@ class _PendingPageLoad {
     required this.requestedUri,
     required this.queryKey,
     required this.intent,
+    required this.preserveCurrentPage,
     required this.loadId,
     required this.targetTabIndex,
     required this.completer,
@@ -4089,6 +4155,7 @@ class _PendingPageLoad {
   final Uri requestedUri;
   final PageQueryKey queryKey;
   final NavigationIntent intent;
+  final bool preserveCurrentPage;
   final int loadId;
   final int targetTabIndex;
   final Completer<EasyCopyPage> completer;
