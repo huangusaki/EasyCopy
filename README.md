@@ -1,6 +1,6 @@
 # EasyCopy
 
-![EasyCopy 新头像](assets/icons/app_icon_rounded_1024.png)
+<img src="assets/icons/app_icon_rounded_1024.png" alt="EasyCopy 新头像" width="320" />
 
 EasyCopy 是一个 Flutter 客户端，用来把 Copy 系漫画站的桌面网页重建成适合手机阅读的原生界面。
 
