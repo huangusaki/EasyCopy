@@ -1,17 +1,21 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/page_models.dart';
+import 'package:easy_copy/services/comic_download_service.dart';
 import 'package:easy_copy/services/host_manager.dart';
 import 'package:easy_copy/services/image_cache.dart';
 import 'package:easy_copy/services/page_cache_store.dart';
 import 'package:easy_copy/services/page_probe_service.dart';
+import 'package:easy_copy/services/reader_progress_store.dart';
 import 'package:easy_copy/services/site_api_client.dart';
 import 'package:easy_copy/services/site_session.dart';
 import 'package:easy_copy/webview/page_extractor_script.dart';
 import 'package:easy_copy/widgets/auth_webview_screen.dart';
+import 'package:easy_copy/widgets/native_login_screen.dart';
 import 'package:easy_copy/widgets/profile_page_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -26,13 +30,17 @@ class EasyCopyScreen extends StatefulWidget {
 
 class _EasyCopyScreenState extends State<EasyCopyScreen> {
   late final WebViewController _controller;
+  late final WebViewController _downloadController;
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _readerScrollController = ScrollController();
   final HostManager _hostManager = HostManager.instance;
   final SiteSession _session = SiteSession.instance;
   final PageCacheStore _cacheStore = PageCacheStore.instance;
   final PageProbeService _probeService = PageProbeService.instance;
+  final ReaderProgressStore _readerProgressStore = ReaderProgressStore.instance;
   final SiteApiClient _apiClient = SiteApiClient.instance;
+  final ComicDownloadService _downloadService = ComicDownloadService.instance;
 
   Uri _currentUri = AppConfig.resolvePath('/');
   EasyCopyPage? _page;
@@ -44,18 +52,30 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   bool _isFailingOver = false;
   int _consecutiveFrameFailures = 0;
   bool _isDiscoverThemeExpanded = false;
+  List<CachedComicLibraryEntry> _cachedComics =
+      const <CachedComicLibraryEntry>[];
+  bool _isLoadingCachedComics = true;
+  int _downloadActiveLoadId = 0;
+  Completer<ReaderPageData>? _downloadExtractionCompleter;
+  Timer? _readerProgressDebounce;
+  double? _lastPersistedReaderOffset;
 
   @override
   void initState() {
     super.initState();
     _controller = _buildController();
+    _downloadController = _buildDownloadController();
+    _readerScrollController.addListener(_handleReaderScroll);
     unawaited(_bootstrap());
     _syncSearchController();
   }
 
   @override
   void dispose() {
+    _persistCurrentReaderProgress();
+    _readerProgressDebounce?.cancel();
     _searchController.dispose();
+    _readerScrollController.dispose();
     super.dispose();
   }
 
@@ -64,7 +84,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       _hostManager.ensureInitialized(),
       _session.ensureInitialized(),
       _cacheStore.ensureInitialized(),
+      _readerProgressStore.ensureInitialized(),
     ]);
+    await _refreshCachedComics();
     final Uri homeUri = appDestinations.first.uri;
     if (!mounted) {
       return;
@@ -144,6 +166,50 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       );
   }
 
+  WebViewController _buildDownloadController() {
+    return WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setUserAgent(AppConfig.desktopUserAgent)
+      ..addJavaScriptChannel(
+        'easyCopyBridge',
+        onMessageReceived: _handleDownloadBridgeMessage,
+      )
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (NavigationRequest request) {
+            final Uri? nextUri = Uri.tryParse(request.url);
+            if (!AppConfig.isAllowedNavigationUri(nextUri)) {
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
+          onPageFinished: (String _) async {
+            final int loadId = _downloadActiveLoadId;
+            if (_downloadExtractionCompleter == null) {
+              return;
+            }
+            try {
+              await _downloadController.runJavaScript(
+                buildPageExtractionScript(loadId),
+              );
+            } catch (error) {
+              _downloadExtractionCompleter?.completeError(error);
+              _downloadExtractionCompleter = null;
+            }
+          },
+          onWebResourceError: (WebResourceError error) {
+            if (error.isForMainFrame == false) {
+              return;
+            }
+            _downloadExtractionCompleter?.completeError(
+              error.description.isEmpty ? '章节解析失败' : error.description,
+            );
+            _downloadExtractionCompleter = null;
+          },
+        ),
+      );
+  }
+
   void _handleBridgeMessage(JavaScriptMessage message) {
     try {
       final Object? decoded = jsonDecode(message.message);
@@ -162,6 +228,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
 
       payload.remove('loadId');
       final EasyCopyPage page = PageCacheStore.restorePagePayload(payload);
+      final String? previousReaderUri = switch (_page) {
+        ReaderPageData readerPage => readerPage.uri,
+        _ => null,
+      };
       if (!mounted) {
         return;
       }
@@ -175,7 +245,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         _selectedIndex = tabIndexForUri(_currentUri);
       });
       if (page is ReaderPageData) {
-        unawaited(EasyCopyImageCaches.prefetchReaderImages(page.imageUrls));
+        _handleReaderPageLoaded(page, previousUri: previousReaderUri);
       }
       _syncSearchController();
       if (page is! UnknownPageData) {
@@ -199,6 +269,72 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         _errorMessage = '轉換資料解析失敗。';
       });
     }
+  }
+
+  void _handleDownloadBridgeMessage(JavaScriptMessage message) {
+    final Completer<ReaderPageData>? completer = _downloadExtractionCompleter;
+    if (completer == null || completer.isCompleted) {
+      return;
+    }
+
+    try {
+      final Object? decoded = jsonDecode(message.message);
+      if (decoded is! Map) {
+        return;
+      }
+
+      final Map<String, Object?> payload = decoded.map(
+        (Object? key, Object? value) => MapEntry(key.toString(), value),
+      );
+      final int loadId = (payload['loadId'] as num?)?.toInt() ?? -1;
+      if (loadId != _downloadActiveLoadId) {
+        return;
+      }
+
+      payload.remove('loadId');
+      final EasyCopyPage page = PageCacheStore.restorePagePayload(payload);
+      if (page is ReaderPageData) {
+        completer.complete(page);
+      } else {
+        completer.completeError('章节解析失败');
+      }
+    } catch (error) {
+      completer.completeError(error);
+    } finally {
+      _downloadExtractionCompleter = null;
+    }
+  }
+
+  Future<void> _refreshCachedComics() async {
+    final List<CachedComicLibraryEntry> comics = await _downloadService
+        .loadCachedLibrary();
+    if (!mounted) {
+      _cachedComics = comics;
+      _isLoadingCachedComics = false;
+      return;
+    }
+    setState(() {
+      _cachedComics = comics;
+      _isLoadingCachedComics = false;
+    });
+  }
+
+  Future<ReaderPageData> _extractReaderPageForDownload(Uri uri) async {
+    if (_downloadExtractionCompleter != null) {
+      throw StateError('正在准备其他章节下载，请稍后再试。');
+    }
+    await _syncSessionCookiesToCurrentHost();
+    final Completer<ReaderPageData> completer = Completer<ReaderPageData>();
+    _downloadExtractionCompleter = completer;
+    _downloadActiveLoadId += 1;
+    await _downloadController.loadRequest(AppConfig.rewriteToCurrentHost(uri));
+    return completer.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () {
+        _downloadExtractionCompleter = null;
+        throw TimeoutException('章节解析超时');
+      },
+    );
   }
 
   void _setPendingLocation(Uri uri) {
@@ -268,6 +404,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     bool bypassCache = false,
     bool preserveVisiblePage = false,
   }) async {
+    _persistCurrentReaderProgress();
     await _hostManager.ensureInitialized();
     final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
     if (_isLoginUri(targetUri)) {
@@ -293,6 +430,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       );
       if (cachedEntry != null) {
         final EasyCopyPage cachedPage = PageCacheStore.restorePage(cachedEntry);
+        final String? previousReaderUri = switch (_page) {
+          ReaderPageData readerPage => readerPage.uri,
+          _ => null,
+        };
         if (!mounted) {
           return;
         }
@@ -304,9 +445,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
           _isLoading = false;
         });
         if (cachedPage is ReaderPageData) {
-          unawaited(
-            EasyCopyImageCaches.prefetchReaderImages(cachedPage.imageUrls),
-          );
+          _handleReaderPageLoaded(cachedPage, previousUri: previousReaderUri);
         }
         if (!cachedEntry.isSoftExpired(DateTime.now())) {
           return;
@@ -318,10 +457,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         return;
       }
     }
-    await _beginWebLoad(
-      targetUri,
-      preserveVisiblePage: preserveVisiblePage,
-    );
+    await _beginWebLoad(targetUri, preserveVisiblePage: preserveVisiblePage);
   }
 
   Future<void> _revalidateCachedPage(
@@ -330,7 +466,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   ) async {
     try {
       final PageProbeResult probe = await _probeService.probe(uri);
-      if (!mounted || AppConfig.routeKeyForUri(_currentUri) != cachedEntry.routeKey) {
+      if (!mounted ||
+          AppConfig.routeKeyForUri(_currentUri) != cachedEntry.routeKey) {
         return;
       }
       if (probe.fingerprint == cachedEntry.fingerprint) {
@@ -359,6 +496,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   }
 
   Future<void> _loadProfilePage({bool forceRefresh = false}) async {
+    _persistCurrentReaderProgress();
     final Uri profileUri = AppConfig.profileUri;
     _setPendingLocation(profileUri);
     if (!_session.isAuthenticated) {
@@ -448,7 +586,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
 
   Future<ProfilePageData> _fetchAndStoreProfile() async {
     final ProfilePageData profilePage = await _apiClient.loadProfile();
-    final String authScope = profilePage.isLoggedIn ? _session.authScope : 'guest';
+    final String authScope = profilePage.isLoggedIn
+        ? _session.authScope
+        : 'guest';
     await _cacheStore.writeEnvelope(
       PageCacheStore.buildEnvelope(
         routeKey: AppConfig.profileRouteKey,
@@ -538,7 +678,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     final AuthSessionResult? result = await Navigator.of(context).push(
       MaterialPageRoute<AuthSessionResult>(
         builder: (BuildContext context) {
-          return AuthWebViewScreen(
+          return NativeLoginScreen(
             loginUri: AppConfig.resolvePath('/web/login/?url=person/home'),
             userAgent: AppConfig.desktopUserAgent,
           );
@@ -560,6 +700,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   }
 
   Future<void> _logout({bool showFeedback = true}) async {
+    _persistCurrentReaderProgress();
     await _cacheStore.removeAuthenticatedEntries();
     await _session.clear();
     await _hostManager.clearSessionPin();
@@ -618,6 +759,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   }
 
   Future<void> _handleBackNavigation() async {
+    _persistCurrentReaderProgress();
     if (_page is ProfilePageData && _selectedIndex == 3) {
       await _loadHome();
       return;
@@ -693,6 +835,81 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     }
   }
 
+  void _handleReaderPageLoaded(ReaderPageData page, {String? previousUri}) {
+    unawaited(EasyCopyImageCaches.prefetchReaderImages(page.imageUrls));
+    if (previousUri != page.uri) {
+      unawaited(_restoreReaderScrollPosition(page));
+    }
+  }
+
+  Future<void> _restoreReaderScrollPosition(ReaderPageData page) async {
+    final String progressKey = _readerProgressKeyForPage(page);
+    final double savedOffset =
+        await _readerProgressStore.readOffset(progressKey) ?? 0;
+    _lastPersistedReaderOffset = savedOffset;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _jumpReaderToOffset(savedOffset, attempts: 10);
+    });
+  }
+
+  void _jumpReaderToOffset(double offset, {required int attempts}) {
+    if (!_readerScrollController.hasClients) {
+      if (attempts > 0) {
+        Future<void>.delayed(
+          const Duration(milliseconds: 250),
+          () => _jumpReaderToOffset(offset, attempts: attempts - 1),
+        );
+      }
+      return;
+    }
+
+    final double targetOffset = offset < 0 ? 0 : offset;
+    final double maxExtent = _readerScrollController.position.maxScrollExtent;
+    if (targetOffset > maxExtent && attempts > 0) {
+      Future<void>.delayed(
+        const Duration(milliseconds: 250),
+        () => _jumpReaderToOffset(targetOffset, attempts: attempts - 1),
+      );
+      return;
+    }
+    final double clampedOffset = targetOffset.clamp(0, maxExtent).toDouble();
+    _readerScrollController.jumpTo(clampedOffset);
+  }
+
+  void _handleReaderScroll() {
+    final EasyCopyPage? page = _page;
+    if (page is! ReaderPageData || !_readerScrollController.hasClients) {
+      return;
+    }
+
+    final double currentOffset = _readerScrollController.offset;
+    if (_lastPersistedReaderOffset != null &&
+        (currentOffset - _lastPersistedReaderOffset!).abs() < 48) {
+      return;
+    }
+    _readerProgressDebounce?.cancel();
+    _readerProgressDebounce = Timer(
+      const Duration(milliseconds: 900),
+      _persistCurrentReaderProgress,
+    );
+  }
+
+  String _readerProgressKeyForPage(ReaderPageData page) {
+    final Uri uri = Uri.parse(page.uri);
+    return '${uri.path}::${page.contentKey}';
+  }
+
+  void _persistCurrentReaderProgress() {
+    final EasyCopyPage? page = _page;
+    if (page is! ReaderPageData || !_readerScrollController.hasClients) {
+      return;
+    }
+    final double offset = _readerScrollController.offset;
+    final String progressKey = _readerProgressKeyForPage(page);
+    _lastPersistedReaderOffset = offset;
+    unawaited(_readerProgressStore.writeOffset(progressKey, offset));
+  }
+
   bool get _isReaderMode => _page is ReaderPageData;
 
   bool get _shouldShowSearchBar => _page is! ProfilePageData;
@@ -714,37 +931,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       return appDestinations[_selectedIndex].label;
     }
     return page.title;
-  }
-
-  String get _pageSubtitle {
-    final EasyCopyPage? page = _page;
-    if (_errorMessage != null) {
-      return '原网页保持隐藏，仅展示转换后的状态层。';
-    }
-    if (page != null && _isLoading) {
-      return '正在后台检查内容是否有更新。';
-    }
-    if (page == null) {
-      return '正在后台整理桌面页面内容，前台只保留移动端界面。';
-    }
-    switch (page.type) {
-      case EasyCopyPageType.home:
-        return '首页内容重新排版，直接进入可读状态。';
-      case EasyCopyPageType.discover:
-        return '筛选、列表和分页都按手机浏览节奏重构。';
-      case EasyCopyPageType.rank:
-        return '榜单信息展开成纵向卡片，避免桌面三栏压缩。';
-      case EasyCopyPageType.detail:
-        return '详情和目录已拆成移动端信息结构。';
-      case EasyCopyPageType.reader:
-        return '阅读页已切换为原生图片流。';
-      case EasyCopyPageType.profile:
-        return page is ProfilePageData && page.isLoggedIn
-            ? '收藏、历史和继续阅读都走原生接口。'
-            : '登录后在原生界面查看收藏与浏览历史。';
-      case EasyCopyPageType.unknown:
-        return '当前页面还没有完成原生支持。';
-    }
   }
 
   bool _isLoginUri(Uri? uri) {
@@ -886,6 +1072,15 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
             height: 4,
             child: IgnorePointer(child: WebViewWidget(controller: _controller)),
           ),
+          Positioned(
+            left: -16,
+            top: -16,
+            width: 4,
+            height: 4,
+            child: IgnorePointer(
+              child: WebViewWidget(controller: _downloadController),
+            ),
+          ),
           Positioned.fill(
             child: ColoredBox(
               color: Theme.of(context).scaffoldBackgroundColor,
@@ -942,7 +1137,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       _buildHeaderCard(
         context,
         title: _pageTitle,
-        subtitle: _pageSubtitle,
         showBackButton: _shouldShowBackButton,
         showSearchBar: _shouldShowSearchBar,
       ),
@@ -976,7 +1170,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   }
 
   List<Widget> _buildProfileSections(ProfilePageData page) {
-    return <Widget>[
+    final List<Widget> sections = <Widget>[
       ProfilePageView(
         page: page,
         onAuthenticate: _openAuthFlow,
@@ -990,12 +1184,381 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         },
       ),
     ];
+
+    sections.add(const SizedBox(height: 18));
+    sections.add(_buildCachedComicsSection());
+    return sections;
+  }
+
+  Widget _buildCachedComicsSection() {
+    if (_isLoadingCachedComics) {
+      return _SurfaceBlock(
+        title: '已缓存漫画',
+        child: Row(
+          children: const <Widget>[
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 12),
+            Text('正在读取本地缓存…'),
+          ],
+        ),
+      );
+    }
+
+    if (_cachedComics.isEmpty) {
+      return _SurfaceBlock(
+        title: '已缓存漫画',
+        child: const Text('还没有缓存章节，去漫画详情页挑几话下载吧。'),
+      );
+    }
+
+    return _SurfaceBlock(
+      title: '已缓存漫画',
+      child: SizedBox(
+        height: 218,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: _cachedComics.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 12),
+          itemBuilder: (BuildContext context, int index) {
+            final CachedComicLibraryEntry item = _cachedComics[index];
+            return SizedBox(
+              width: 144,
+              child: _CachedComicCard(
+                item: item,
+                onTap: item.comicHref.isEmpty
+                    ? null
+                    : () => _navigateToHref(item.comicHref),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Set<String> _downloadedChapterPathKeysForDetail(DetailPageData page) {
+    final Uri currentDetailUri = Uri.parse(page.uri);
+    final String targetPath = currentDetailUri.path;
+    final CachedComicLibraryEntry? match = _cachedComics
+        .cast<CachedComicLibraryEntry?>()
+        .firstWhere(
+          (CachedComicLibraryEntry? item) =>
+              item != null && Uri.tryParse(item.comicHref)?.path == targetPath,
+          orElse: () => null,
+        );
+    if (match == null) {
+      return const <String>{};
+    }
+    return match.chapters
+        .map(
+          (CachedChapterEntry chapter) => _chapterPathKey(chapter.chapterHref),
+        )
+        .where((String key) => key.isNotEmpty)
+        .toSet();
+  }
+
+  String _chapterPathKey(String href) {
+    final Uri? uri = Uri.tryParse(href);
+    if (uri == null) {
+      return '';
+    }
+    return Uri(path: AppConfig.rewriteToCurrentHost(uri).path).toString();
+  }
+
+  List<_ChapterPickerSection> _chapterPickerSections(DetailPageData page) {
+    if (page.chapterGroups.isNotEmpty) {
+      return page.chapterGroups
+          .map(
+            (ChapterGroupData group) => _ChapterPickerSection(
+              label: group.label,
+              chapters: group.chapters,
+            ),
+          )
+          .toList(growable: false);
+    }
+    return <_ChapterPickerSection>[
+      _ChapterPickerSection(label: '全部章节', chapters: page.chapters),
+    ];
+  }
+
+  Future<void> _showDetailDownloadPicker(DetailPageData page) async {
+    final List<_ChapterPickerSection> sections = _chapterPickerSections(page);
+    final Set<String> downloadedKeys = _downloadedChapterPathKeysForDetail(
+      page,
+    );
+    final List<ChapterData>?
+    selectedChapters = await showModalBottomSheet<List<ChapterData>>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (BuildContext context) {
+        final Set<String> selectedKeys = <String>{};
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            List<ChapterData> selectedChapterValues() {
+              return sections
+                  .expand((section) => section.chapters)
+                  .where(
+                    (ChapterData chapter) =>
+                        selectedKeys.contains(_chapterPathKey(chapter.href)),
+                  )
+                  .toList(growable: false);
+            }
+
+            return SafeArea(
+              child: SizedBox(
+                height: MediaQuery.of(context).size.height * 0.78,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  child: Column(
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          const Expanded(
+                            child: Text(
+                              '选择要缓存的章节',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              setModalState(() {
+                                selectedKeys
+                                  ..clear()
+                                  ..addAll(
+                                    sections
+                                        .expand((section) => section.chapters)
+                                        .map(
+                                          (ChapterData chapter) =>
+                                              _chapterPathKey(chapter.href),
+                                        ),
+                                  );
+                              });
+                            },
+                            child: const Text('全选'),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              setModalState(selectedKeys.clear);
+                            },
+                            child: const Text('清空'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: ListView(
+                          shrinkWrap: true,
+                          children: sections
+                              .expand((section) {
+                                return <Widget>[
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      4,
+                                      10,
+                                      4,
+                                      4,
+                                    ),
+                                    child: Text(
+                                      section.label,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                  ...section.chapters.map((
+                                    ChapterData chapter,
+                                  ) {
+                                    final String key = _chapterPathKey(
+                                      chapter.href,
+                                    );
+                                    final bool isDownloaded = downloadedKeys
+                                        .contains(key);
+                                    final bool selected = selectedKeys.contains(
+                                      key,
+                                    );
+                                    return CheckboxListTile(
+                                      value: selected,
+                                      controlAffinity:
+                                          ListTileControlAffinity.leading,
+                                      onChanged: (bool? nextValue) {
+                                        setModalState(() {
+                                          if (nextValue ?? false) {
+                                            selectedKeys.add(key);
+                                          } else {
+                                            selectedKeys.remove(key);
+                                          }
+                                        });
+                                      },
+                                      secondary: isDownloaded
+                                          ? const Icon(
+                                              Icons.check_circle_rounded,
+                                              color: Color(0xFF18A558),
+                                            )
+                                          : null,
+                                      title: Text(chapter.label),
+                                    );
+                                  }),
+                                ];
+                              })
+                              .toList(growable: false),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: selectedKeys.isEmpty
+                              ? null
+                              : () {
+                                  Navigator.of(
+                                    context,
+                                  ).pop(selectedChapterValues());
+                                },
+                          child: Text(
+                            selectedKeys.isEmpty
+                                ? '请选择章节'
+                                : '缓存 ${selectedKeys.length} 话',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (selectedChapters == null || selectedChapters.isEmpty || !mounted) {
+      return;
+    }
+    await _downloadSelectedChapters(page, selectedChapters);
+  }
+
+  Future<void> _downloadSelectedChapters(
+    DetailPageData page,
+    List<ChapterData> chapters,
+  ) async {
+    final ValueNotifier<_ChapterBatchDownloadProgress> progress =
+        ValueNotifier<_ChapterBatchDownloadProgress>(
+          const _ChapterBatchDownloadProgress(
+            label: '准备下载…',
+            completedChapters: 0,
+            totalChapters: 0,
+          ),
+        );
+
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext context) {
+          return PopScope(
+            canPop: false,
+            child: AlertDialog(
+              title: const Text('缓存章节中'),
+              content: ValueListenableBuilder<_ChapterBatchDownloadProgress>(
+                valueListenable: progress,
+                builder:
+                    (
+                      BuildContext context,
+                      _ChapterBatchDownloadProgress value,
+                      Widget? _,
+                    ) {
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            value.label,
+                            style: const TextStyle(height: 1.5),
+                          ),
+                          const SizedBox(height: 14),
+                          LinearProgressIndicator(value: value.fraction),
+                        ],
+                      );
+                    },
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    try {
+      await _session.ensureInitialized();
+      final Uri detailUri = Uri.parse(page.uri);
+      for (int index = 0; index < chapters.length; index += 1) {
+        final ChapterData chapter = chapters[index];
+        final Uri chapterUri = AppConfig.resolveNavigationUri(
+          chapter.href,
+          currentUri: detailUri,
+        );
+        progress.value = _ChapterBatchDownloadProgress(
+          label: '正在解析 ${chapter.label}',
+          completedChapters: index.toDouble(),
+          totalChapters: chapters.length,
+        );
+        final ReaderPageData readerPage = await _extractReaderPageForDownload(
+          chapterUri,
+        );
+        progress.value = _ChapterBatchDownloadProgress(
+          label: '正在缓存 ${chapter.label}',
+          completedChapters: index.toDouble(),
+          totalChapters: chapters.length,
+        );
+        await _downloadService.downloadChapter(
+          readerPage,
+          cookieHeader: _session.cookieHeader,
+          comicUri: page.uri,
+          chapterHref: chapterUri.toString(),
+          chapterLabel: chapter.label,
+          coverUrl: page.coverUrl,
+          onProgress: (ChapterDownloadProgress imageProgress) async {
+            progress.value = _ChapterBatchDownloadProgress(
+              label: '${chapter.label} · ${imageProgress.currentLabel}',
+              completedChapters: index + imageProgress.fraction,
+              totalChapters: chapters.length,
+            );
+          },
+        );
+      }
+
+      await _refreshCachedComics();
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context, rootNavigator: true).pop();
+      _showSnackBar('已缓存 ${chapters.length} 话');
+    } catch (error) {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      final String message = switch (error) {
+        TimeoutException _ => '章节解析超时',
+        HttpException httpError => httpError.message,
+        FileSystemException fileError => fileError.message,
+        _ => error.toString(),
+      };
+      _showSnackBar('缓存失败：$message');
+    } finally {
+      progress.dispose();
+    }
   }
 
   Widget _buildHeaderCard(
     BuildContext context, {
     required String title,
-    required String subtitle,
     required bool showBackButton,
     required bool showSearchBar,
   }) {
@@ -1026,30 +1589,14 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
                     ),
                   ),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          height: 1.1,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF18202A),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        subtitle,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.grey.shade700,
-                          fontSize: 12,
-                          height: 1.4,
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 22,
+                      height: 1.1,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF18202A),
+                    ),
                   ),
                 ),
                 IconButton.filledTonal(
@@ -1058,7 +1605,13 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
                     backgroundColor: const Color(0xFFF2F5F8),
                     foregroundColor: colorScheme.primary,
                   ),
-                  icon: const Icon(Icons.refresh_rounded),
+                  icon: _isLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh_rounded),
                 ),
               ],
             ),
@@ -1140,7 +1693,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         _buildHeaderCard(
           context,
           title: _pageTitle,
-          subtitle: _pageSubtitle,
           showBackButton: _shouldShowBackButton,
           showSearchBar: _shouldShowSearchBar,
         ),
@@ -1281,8 +1833,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
                   options: _visibleDiscoverThemeOptions(themeOptions),
                 ),
                 onTap: _navigateDiscoverFilter,
-                actionLabel:
-                    _isDiscoverThemeExpanded ? '收起分類' : '查看全部分類',
+                actionLabel: _isDiscoverThemeExpanded ? '收起分類' : '查看全部分類',
                 onActionTap: () {
                   setState(() {
                     _isDiscoverThemeExpanded = !_isDiscoverThemeExpanded;
@@ -1397,12 +1948,15 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   }
 
   List<Widget> _buildDetailSections(DetailPageData page) {
+    final Set<String> downloadedChapterKeys =
+        _downloadedChapterPathKeysForDetail(page);
     final List<Widget> sections = <Widget>[
       _DetailHeroCard(
         page: page,
         onReadNow: page.startReadingHref.isNotEmpty
             ? () => _navigateToHref(page.startReadingHref)
             : null,
+        onDownload: () => _showDetailDownloadPicker(page),
         onTagTap: _navigateToHref,
       ),
       const SizedBox(height: 18),
@@ -1447,19 +2001,33 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         );
         chapterWidgets.add(const SizedBox(height: 12));
         chapterWidgets.add(
-          _ChapterGrid(chapters: group.chapters, onTap: _navigateToHref),
+          _ChapterGrid(
+            chapters: group.chapters,
+            onTap: _navigateToHref,
+            downloadedChapterPathKeys: downloadedChapterKeys,
+          ),
         );
         chapterWidgets.add(const SizedBox(height: 18));
       }
     } else if (page.chapters.isNotEmpty) {
       chapterWidgets.add(
-        _ChapterGrid(chapters: page.chapters, onTap: _navigateToHref),
+        _ChapterGrid(
+          chapters: page.chapters,
+          onTap: _navigateToHref,
+          downloadedChapterPathKeys: downloadedChapterKeys,
+        ),
       );
     }
 
     sections.add(
       _SurfaceBlock(
         title: '章節目錄',
+        actionLabel: page.chapters.isNotEmpty || page.chapterGroups.isNotEmpty
+            ? '选择下载'
+            : null,
+        onActionTap: page.chapters.isNotEmpty || page.chapterGroups.isNotEmpty
+            ? () => _showDetailDownloadPicker(page)
+            : null,
         child: chapterWidgets.isEmpty
             ? const Text('章節還在整理中，向下刷新可重試。')
             : Column(
@@ -1501,163 +2069,100 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF4EFE8),
       body: SafeArea(
-        child: Column(
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Row(
-                    children: <Widget>[
-                      IconButton.filledTonal(
-                        onPressed: _handleBackNavigation,
-                        icon: const Icon(Icons.arrow_back_rounded),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Text(
-                              page.comicTitle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              page.chapterTitle.isEmpty
-                                  ? page.progressLabel
-                                  : '${page.chapterTitle} ${page.progressLabel}'
-                                        .trim(),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Colors.grey.shade700,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (page.catalogHref.isNotEmpty)
-                        IconButton.filledTonal(
-                          onPressed: () => _navigateToHref(page.catalogHref),
-                          icon: const Icon(Icons.menu_book_rounded),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
+        child: RefreshIndicator(
+          onRefresh: _retryCurrentPage,
+          child: ListView.builder(
+            key: ValueKey<String>('reader-${page.uri}'),
+            controller: _readerScrollController,
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
             ),
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: _retryCurrentPage,
-                child: ListView.builder(
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: BouncingScrollPhysics(),
-                  ),
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-                  itemCount: page.imageUrls.length + 1,
-                  itemBuilder: (BuildContext context, int index) {
-                    if (index == page.imageUrls.length) {
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 14),
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Row(
-                              children: <Widget>[
-                                Expanded(
-                                  child: FilledButton.tonal(
-                                    onPressed: page.prevHref.isEmpty
-                                        ? null
-                                        : () => _navigateToHref(page.prevHref),
-                                    child: const Text('上一話'),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: FilledButton(
-                                    onPressed: page.nextHref.isEmpty
-                                        ? null
-                                        : () => _navigateToHref(page.nextHref),
-                                    child: const Text('下一話'),
-                                  ),
-                                ),
-                              ],
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+            itemCount: page.imageUrls.length + 1,
+            itemBuilder: (BuildContext context, int index) {
+              if (index == page.imageUrls.length) {
+                return Padding(
+                  padding: const EdgeInsets.only(top: 14),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: FilledButton.tonal(
+                              onPressed: page.prevHref.isEmpty
+                                  ? null
+                                  : () => _navigateToHref(page.prevHref),
+                              child: const Text('上一話'),
                             ),
                           ),
-                        ),
-                      );
-                    }
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: page.nextHref.isEmpty
+                                  ? null
+                                  : () => _navigateToHref(page.nextHref),
+                              child: const Text('下一話'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }
 
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(22),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(22),
-                          child: CachedNetworkImage(
-                            imageUrl: page.imageUrls[index],
-                            fit: BoxFit.fitWidth,
-                            width: double.infinity,
-                            cacheManager: EasyCopyImageCaches.readerCache,
-                            progressIndicatorBuilder:
-                                (
-                                  BuildContext context,
-                                  String url,
-                                  DownloadProgress progress,
-                                ) {
-                                  return SizedBox(
-                                    height: 260,
-                                    child: Center(
-                                      child: CircularProgressIndicator(
-                                        value: progress.progress,
-                                      ),
-                                    ),
-                                  );
-                                },
-                            errorWidget:
-                                (
-                                  BuildContext context,
-                                  String url,
-                                  Object error,
-                                ) {
-                                  return const SizedBox(
-                                    height: 220,
-                                    child: Center(
-                                      child: Icon(
-                                        Icons.broken_image_outlined,
-                                        size: 36,
-                                      ),
-                                    ),
-                                  );
-                                },
-                          ),
-                        ),
-                      ),
-                    );
-                  },
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: CachedNetworkImage(
+                      imageUrl: page.imageUrls[index],
+                      fit: BoxFit.fitWidth,
+                      width: double.infinity,
+                      cacheManager: EasyCopyImageCaches.readerCache,
+                      progressIndicatorBuilder:
+                          (
+                            BuildContext context,
+                            String url,
+                            DownloadProgress progress,
+                          ) {
+                            return SizedBox(
+                              height: 260,
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  value: progress.progress,
+                                ),
+                              ),
+                            );
+                          },
+                      errorWidget:
+                          (BuildContext context, String url, Object error) {
+                            return const SizedBox(
+                              height: 220,
+                              child: Center(
+                                child: Icon(
+                                  Icons.broken_image_outlined,
+                                  size: 36,
+                                ),
+                              ),
+                            );
+                          },
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -1729,10 +2234,7 @@ class _HeroBannerCard extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: <Widget>[
-            _NetworkImageBox(
-              imageUrl: banner.imageUrl,
-              aspectRatio: 1,
-            ),
+            _NetworkImageBox(imageUrl: banner.imageUrl, aspectRatio: 1),
             const DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -2330,11 +2832,13 @@ class _DetailHeroCard extends StatelessWidget {
   const _DetailHeroCard({
     required this.page,
     required this.onReadNow,
+    required this.onDownload,
     required this.onTagTap,
   });
 
   final DetailPageData page;
   final VoidCallback? onReadNow;
+  final VoidCallback? onDownload;
   final ValueChanged<String> onTagTap;
 
   @override
@@ -2401,13 +2905,24 @@ class _DetailHeroCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 18),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: onReadNow,
-              icon: const Icon(Icons.chrome_reader_mode_rounded),
-              label: const Text('开始阅读'),
-            ),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: onReadNow,
+                  icon: const Icon(Icons.chrome_reader_mode_rounded),
+                  label: const Text('开始阅读'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: onDownload,
+                  icon: const Icon(Icons.download_rounded),
+                  label: const Text('缓存章节'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -2455,10 +2970,15 @@ class _InfoChip extends StatelessWidget {
 }
 
 class _ChapterGrid extends StatelessWidget {
-  const _ChapterGrid({required this.chapters, required this.onTap});
+  const _ChapterGrid({
+    required this.chapters,
+    required this.onTap,
+    this.downloadedChapterPathKeys = const <String>{},
+  });
 
   final List<ChapterData> chapters;
   final ValueChanged<String> onTap;
+  final Set<String> downloadedChapterPathKeys;
 
   @override
   Widget build(BuildContext context) {
@@ -2474,28 +2994,162 @@ class _ChapterGrid extends StatelessWidget {
       ),
       itemBuilder: (BuildContext context, int index) {
         final ChapterData chapter = chapters[index];
+        final String chapterPathKey = Uri.tryParse(chapter.href) == null
+            ? ''
+            : Uri(path: Uri.parse(chapter.href).path).toString();
+        final bool isDownloaded = downloadedChapterPathKeys.contains(
+          chapterPathKey,
+        );
         return InkWell(
           onTap: () => onTap(chapter.href),
           borderRadius: BorderRadius.circular(18),
           child: Ink(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF5F6F8),
+              color: isDownloaded
+                  ? const Color(0xFFE9F7EF)
+                  : const Color(0xFFF5F6F8),
               borderRadius: BorderRadius.circular(18),
+              border: isDownloaded
+                  ? Border.all(color: const Color(0xFF18A558))
+                  : null,
             ),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                chapter.label,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    chapter.label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                if (isDownloaded) ...<Widget>[
+                  const SizedBox(width: 8),
+                  const Icon(
+                    Icons.check_circle_rounded,
+                    size: 18,
+                    color: Color(0xFF18A558),
+                  ),
+                ],
+              ],
             ),
           ),
         );
       },
     );
+  }
+}
+
+class _CachedComicCard extends StatelessWidget {
+  const _CachedComicCard({required this.item, required this.onTap});
+
+  final CachedComicLibraryEntry item;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  item.coverUrl.isEmpty
+                      ? const _PlaceholderImage()
+                      : CachedNetworkImage(
+                          imageUrl: item.coverUrl,
+                          fit: BoxFit.cover,
+                          cacheManager: EasyCopyImageCaches.coverCache,
+                          errorWidget:
+                              (BuildContext context, String url, Object error) {
+                                return const _PlaceholderImage();
+                              },
+                        ),
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xCC111111),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        '${item.cachedChapterCount}话',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            item.comicTitle,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+          if (item.chapters.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 4),
+            Text(
+              '最近缓存：${item.chapters.first.chapterTitle}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ChapterPickerSection {
+  const _ChapterPickerSection({required this.label, required this.chapters});
+
+  final String label;
+  final List<ChapterData> chapters;
+}
+
+class _ChapterBatchDownloadProgress {
+  const _ChapterBatchDownloadProgress({
+    required this.label,
+    required this.completedChapters,
+    required this.totalChapters,
+  });
+
+  final String label;
+  final double completedChapters;
+  final int totalChapters;
+
+  double get fraction {
+    if (totalChapters <= 0) {
+      return 0;
+    }
+    final double value = completedChapters / totalChapters;
+    if (value < 0) {
+      return 0;
+    }
+    if (value > 1) {
+      return 1;
+    }
+    return value;
   }
 }
 
@@ -2517,14 +3171,9 @@ class _NetworkImageBox extends StatelessWidget {
                 imageUrl: imageUrl,
                 fit: BoxFit.cover,
                 cacheManager: EasyCopyImageCaches.coverCache,
-                errorWidget:
-                    (
-                      BuildContext context,
-                      String url,
-                      Object error,
-                    ) {
-                      return const _PlaceholderImage();
-                    },
+                errorWidget: (BuildContext context, String url, Object error) {
+                  return const _PlaceholderImage();
+                },
               ),
       ),
     );

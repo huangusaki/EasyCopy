@@ -8,6 +8,8 @@ Flutter client that keeps the original desktop page hidden and renders a mobile-
 - Run `flutter pub get`
 - Start locally with `flutter run`
 - Build Android APK with `.\build_arm64.ps1`
+- Build standalone `arm64-v8a` APK with `.\build_apk_arm64_v8a.ps1`
+  - Optional: `.\build_apk_arm64_v8a.ps1 -Obfuscate`
 
 ## Verification
 

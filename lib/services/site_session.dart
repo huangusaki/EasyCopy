@@ -16,13 +16,15 @@ class SiteSessionSnapshot {
   factory SiteSessionSnapshot.fromJson(Map<String, Object?> json) {
     return SiteSessionSnapshot(
       token: (json['token'] as String?) ?? '',
-      cookies: ((json['cookies'] as Map<Object?, Object?>?) ??
-              const <Object?, Object?>{})
-          .map(
-            (Object? key, Object? value) =>
-                MapEntry(key.toString(), value?.toString() ?? ''),
-          ),
-      updatedAt: DateTime.tryParse((json['updatedAt'] as String?) ?? '') ??
+      cookies:
+          ((json['cookies'] as Map<Object?, Object?>?) ??
+                  const <Object?, Object?>{})
+              .map(
+                (Object? key, Object? value) =>
+                    MapEntry(key.toString(), value?.toString() ?? ''),
+              ),
+      updatedAt:
+          DateTime.tryParse((json['updatedAt'] as String?) ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
       userId: json['userId'] as String?,
     );
@@ -44,11 +46,9 @@ class SiteSessionSnapshot {
 }
 
 class SiteSession {
-  SiteSession({
-    KeyValueStore? store,
-    SessionNowProvider? now,
-  }) : _store = store ?? SecureKeyValueStore(),
-       _now = now ?? DateTime.now;
+  SiteSession({KeyValueStore? store, SessionNowProvider? now})
+    : _store = store ?? SecureKeyValueStore(),
+      _now = now ?? DateTime.now;
 
   static final SiteSession instance = SiteSession();
 
@@ -74,6 +74,11 @@ class SiteSession {
 
   Map<String, String> get cookies => Map<String, String>.unmodifiable(_cookies);
 
+  String get cookieHeader => _cookies.entries
+      .where((MapEntry<String, String> entry) => entry.value.trim().isNotEmpty)
+      .map((MapEntry<String, String> entry) => '${entry.key}=${entry.value}')
+      .join('; ');
+
   String get authScope {
     if (!isAuthenticated) {
       return 'guest';
@@ -84,10 +89,7 @@ class SiteSession {
     return 'token:${sha1.convert(utf8.encode(_token!)).toString()}';
   }
 
-  Future<void> saveToken(
-    String token, {
-    Map<String, String>? cookies,
-  }) async {
+  Future<void> saveToken(String token, {Map<String, String>? cookies}) async {
     await ensureInitialized();
     _token = token;
     _cookies = <String, String>{
