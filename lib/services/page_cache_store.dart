@@ -12,10 +12,7 @@ typedef CacheDirectoryProvider = Future<Directory> Function();
 
 @immutable
 class PageCachePolicy {
-  const PageCachePolicy({
-    required this.softTtl,
-    required this.hardTtl,
-  });
+  const PageCachePolicy({required this.softTtl, required this.hardTtl});
 
   final Duration softTtl;
   final Duration hardTtl;
@@ -77,13 +74,15 @@ class CachedPageEnvelope {
         (EasyCopyPageType value) => value.name == pageTypeName,
         orElse: () => EasyCopyPageType.unknown,
       ),
-      payload: ((json['payload'] as Map<Object?, Object?>?) ??
-              const <Object?, Object?>{})
-          .map(
-            (Object? key, Object? value) => MapEntry(key.toString(), value),
-          ),
+      payload:
+          ((json['payload'] as Map<Object?, Object?>?) ??
+                  const <Object?, Object?>{})
+              .map(
+                (Object? key, Object? value) => MapEntry(key.toString(), value),
+              ),
       fingerprint: (json['fingerprint'] as String?) ?? '',
-      fetchedAt: DateTime.tryParse((json['fetchedAt'] as String?) ?? '') ??
+      fetchedAt:
+          DateTime.tryParse((json['fetchedAt'] as String?) ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
       validatedAt:
           DateTime.tryParse((json['validatedAt'] as String?) ?? '') ??
@@ -185,21 +184,27 @@ class PageCacheStore {
   }) async {
     await ensureInitialized();
     final DateTime now = _now();
+    final int entryCountBeforePrune = _entries.length;
     _entries = _entries
         .where((CachedPageEnvelope entry) => !entry.isHardExpired(now))
         .toList(growable: true);
+    final bool prunedExpiredEntries = _entries.length != entryCountBeforePrune;
     final int index = _entries.indexWhere((CachedPageEnvelope entry) {
       return entry.routeKey == routeKey && entry.authScope == authScope;
     });
     if (index == -1) {
-      await _persist();
+      if (prunedExpiredEntries) {
+        await _persist();
+      }
       return null;
     }
     final CachedPageEnvelope entry = _entries[index].copyWith(
       lastAccessedAt: now,
     );
     _entries[index] = entry;
-    await _persist();
+    if (prunedExpiredEntries) {
+      await _persist();
+    }
     return entry;
   }
 
@@ -220,16 +225,18 @@ class PageCacheStore {
   }) async {
     await ensureInitialized();
     final DateTime now = _now();
-    _entries = _entries.map((CachedPageEnvelope entry) {
-      if (entry.routeKey == routeKey && entry.authScope == authScope) {
-        return entry.copyWith(
-          fetchedAt: now,
-          validatedAt: now,
-          lastAccessedAt: now,
-        );
-      }
-      return entry;
-    }).toList(growable: true);
+    _entries = _entries
+        .map((CachedPageEnvelope entry) {
+          if (entry.routeKey == routeKey && entry.authScope == authScope) {
+            return entry.copyWith(
+              fetchedAt: now,
+              validatedAt: now,
+              lastAccessedAt: now,
+            );
+          }
+          return entry;
+        })
+        .toList(growable: true);
     await _persist();
   }
 
@@ -269,8 +276,7 @@ class PageCacheStore {
           .map(
             (Map<Object?, Object?> value) => CachedPageEnvelope.fromJson(
               value.map(
-                (Object? key, Object? value) =>
-                    MapEntry(key.toString(), value),
+                (Object? key, Object? value) => MapEntry(key.toString(), value),
               ),
             ),
           )
@@ -298,11 +304,13 @@ class PageCacheStore {
   }
 
   int _serializedSize() {
-    return utf8.encode(
-      jsonEncode(
-        _entries.map((CachedPageEnvelope entry) => entry.toJson()).toList(),
-      ),
-    ).length;
+    return utf8
+        .encode(
+          jsonEncode(
+            _entries.map((CachedPageEnvelope entry) => entry.toJson()).toList(),
+          ),
+        )
+        .length;
   }
 
   Future<void> _persist() async {
@@ -355,15 +363,16 @@ class PageCacheStore {
   }) {
     final HostManager manager = hostManager ?? HostManager.instance;
     return EasyCopyPage.fromJson(
-      _rewritePayloadHosts(payload, manager)
-          as Map<String, Object?>,
+      _rewritePayloadHosts(payload, manager) as Map<String, Object?>,
     );
   }
 
   static Object? _rewritePayloadHosts(Object? value, HostManager manager) {
     if (value is String) {
       final Uri? uri = Uri.tryParse(value);
-      if (uri != null && uri.hasScheme && AppConfig.isAllowedNavigationUri(uri)) {
+      if (uri != null &&
+          uri.hasScheme &&
+          AppConfig.isAllowedNavigationUri(uri)) {
         return manager.rewriteToCurrentHost(uri).toString();
       }
       return value;

@@ -8,6 +8,8 @@ import 'package:path_provider/path_provider.dart';
 
 typedef ChapterDownloadProgressCallback =
     Future<void> Function(ChapterDownloadProgress progress);
+typedef ChapterDownloadPauseChecker = bool Function();
+typedef ChapterDownloadCancelChecker = bool Function();
 
 class ChapterDownloadProgress {
   const ChapterDownloadProgress({
@@ -38,6 +40,24 @@ class ChapterDownloadResult {
   final Directory directory;
   final int fileCount;
   final File manifestFile;
+}
+
+class DownloadPausedException implements Exception {
+  const DownloadPausedException([this.message = '缓存已暂停。']);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+class DownloadCancelledException implements Exception {
+  const DownloadCancelledException([this.message = '缓存任务已取消。']);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 class CachedChapterEntry {
@@ -96,6 +116,8 @@ class ComicDownloadService {
     String? chapterLabel,
     String? coverUrl,
     ChapterDownloadProgressCallback? onProgress,
+    ChapterDownloadPauseChecker? shouldPause,
+    ChapterDownloadCancelChecker? shouldCancel,
   }) async {
     if (page.imageUrls.isEmpty) {
       throw FileSystemException('当前章节没有可下载图片。');
@@ -121,8 +143,42 @@ class ComicDownloadService {
       ]),
     );
     await chapterDirectory.create(recursive: true);
+    final File manifestFile = File(
+      _joinPath(<String>[chapterDirectory.path, 'manifest.json']),
+    );
 
-    final List<String> savedFiles = <String>[];
+    final ChapterDownloadResult? completedResult =
+        await _loadCompletedChapterFromManifest(
+          manifestFile: manifestFile,
+          chapterDirectory: chapterDirectory,
+          expectedImageCount: page.imageUrls.length,
+        );
+    if (completedResult != null) {
+      if (onProgress != null) {
+        await onProgress(
+          ChapterDownloadProgress(
+            completedCount: page.imageUrls.length,
+            totalCount: page.imageUrls.length,
+            currentLabel: '已恢复本地缓存',
+          ),
+        );
+      }
+      return completedResult;
+    }
+
+    final Map<int, String> existingFiles = await _loadExistingImageFiles(
+      chapterDirectory,
+    );
+    final List<String> savedFiles = List<String>.filled(
+      page.imageUrls.length,
+      '',
+      growable: false,
+    );
+    existingFiles.forEach((int index, String fileName) {
+      if (index >= 0 && index < savedFiles.length) {
+        savedFiles[index] = fileName;
+      }
+    });
     final Map<String, String> headers = <String, String>{
       'User-Agent': AppConfig.desktopUserAgent,
       'Referer': page.uri,
@@ -130,6 +186,23 @@ class ComicDownloadService {
     };
 
     for (int index = 0; index < page.imageUrls.length; index += 1) {
+      _throwIfCancelled(shouldCancel);
+      _throwIfPaused(shouldPause);
+
+      final String existingFileName = savedFiles[index];
+      if (existingFileName.isNotEmpty) {
+        if (onProgress != null) {
+          await onProgress(
+            ChapterDownloadProgress(
+              completedCount: index + 1,
+              totalCount: page.imageUrls.length,
+              currentLabel: '已恢复 ${index + 1}/${page.imageUrls.length}',
+            ),
+          );
+        }
+        continue;
+      }
+
       final Uri imageUri = Uri.parse(page.imageUrls[index]);
       final http.Response response = await _client.get(
         imageUri,
@@ -148,8 +221,16 @@ class ComicDownloadService {
       final File imageFile = File(
         _joinPath(<String>[chapterDirectory.path, fileName]),
       );
-      await imageFile.writeAsBytes(response.bodyBytes, flush: true);
-      savedFiles.add(fileName);
+      final File tempFile = File('${imageFile.path}.part');
+      if (await tempFile.exists()) {
+        await tempFile.delete();
+      }
+      await tempFile.writeAsBytes(response.bodyBytes, flush: true);
+      if (await imageFile.exists()) {
+        await imageFile.delete();
+      }
+      await tempFile.rename(imageFile.path);
+      savedFiles[index] = fileName;
 
       if (onProgress != null) {
         await onProgress(
@@ -162,9 +243,9 @@ class ComicDownloadService {
       }
     }
 
-    final File manifestFile = File(
-      _joinPath(<String>[chapterDirectory.path, 'manifest.json']),
-    );
+    final List<String> orderedSavedFiles = savedFiles
+        .where((String fileName) => fileName.isNotEmpty)
+        .toList(growable: false);
     await manifestFile.writeAsString(
       const JsonEncoder.withIndent('  ').convert(<String, Object?>{
         'comicTitle': page.comicTitle,
@@ -176,15 +257,15 @@ class ComicDownloadService {
         'progressLabel': page.progressLabel,
         'sourceUri': page.uri,
         'downloadedAt': DateTime.now().toIso8601String(),
-        'imageCount': savedFiles.length,
-        'files': savedFiles,
+        'imageCount': orderedSavedFiles.length,
+        'files': orderedSavedFiles,
       }),
       flush: true,
     );
 
     return ChapterDownloadResult(
       directory: chapterDirectory,
-      fileCount: savedFiles.length,
+      fileCount: orderedSavedFiles.length,
       manifestFile: manifestFile,
     );
   }
@@ -326,6 +407,36 @@ class ComicDownloadService {
         .toSet();
   }
 
+  Future<void> deleteCachedComic(CachedComicLibraryEntry entry) async {
+    if (entry.chapters.isEmpty) {
+      await deleteComicCacheByTitle(entry.comicTitle);
+      return;
+    }
+
+    final String chapterDirectoryPath = entry.chapters.first.directoryPath;
+    if (chapterDirectoryPath.isEmpty) {
+      await deleteComicCacheByTitle(entry.comicTitle);
+      return;
+    }
+
+    final Directory comicDirectory = Directory(chapterDirectoryPath).parent;
+    if (await comicDirectory.exists()) {
+      await comicDirectory.delete(recursive: true);
+      return;
+    }
+    await deleteComicCacheByTitle(entry.comicTitle);
+  }
+
+  Future<void> deleteComicCacheByTitle(String comicTitle) async {
+    final Directory rootDirectory = await _downloadsRootDirectory();
+    final Directory comicDirectory = Directory(
+      _joinPath(<String>[rootDirectory.path, _sanitizePathSegment(comicTitle)]),
+    );
+    if (await comicDirectory.exists()) {
+      await comicDirectory.delete(recursive: true);
+    }
+  }
+
   Future<Directory> _downloadsRootDirectory() async {
     final Directory baseDirectory = await _baseDirectoryProvider();
     final Directory root = Directory(
@@ -458,5 +569,73 @@ class ComicDownloadService {
       return '';
     }
     return Uri(path: uri.path).toString();
+  }
+
+  Future<ChapterDownloadResult?> _loadCompletedChapterFromManifest({
+    required File manifestFile,
+    required Directory chapterDirectory,
+    required int expectedImageCount,
+  }) async {
+    if (!await manifestFile.exists()) {
+      return null;
+    }
+    try {
+      final Object? decoded = jsonDecode(await manifestFile.readAsString());
+      if (decoded is! Map) {
+        return null;
+      }
+      final int imageCount = (decoded['imageCount'] as num?)?.toInt() ?? 0;
+      if (imageCount < expectedImageCount) {
+        return null;
+      }
+      return ChapterDownloadResult(
+        directory: chapterDirectory,
+        fileCount: imageCount,
+        manifestFile: manifestFile,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Map<int, String>> _loadExistingImageFiles(
+    Directory chapterDirectory,
+  ) async {
+    if (!await chapterDirectory.exists()) {
+      return const <int, String>{};
+    }
+
+    final Map<int, String> existingFiles = <int, String>{};
+    final RegExp pattern = RegExp(r'^(\d{3})\.[^.]+$');
+    await for (final FileSystemEntity entity in chapterDirectory.list()) {
+      if (entity is! File) {
+        continue;
+      }
+      final String fileName = entity.uri.pathSegments.isEmpty
+          ? ''
+          : entity.uri.pathSegments.last;
+      final RegExpMatch? match = pattern.firstMatch(fileName);
+      if (match == null) {
+        continue;
+      }
+      if (await entity.length() <= 0) {
+        continue;
+      }
+      final int index = int.parse(match.group(1)!) - 1;
+      existingFiles[index] = fileName;
+    }
+    return existingFiles;
+  }
+
+  void _throwIfPaused(ChapterDownloadPauseChecker? shouldPause) {
+    if (shouldPause?.call() ?? false) {
+      throw const DownloadPausedException();
+    }
+  }
+
+  void _throwIfCancelled(ChapterDownloadCancelChecker? shouldCancel) {
+    if (shouldCancel?.call() ?? false) {
+      throw const DownloadCancelledException();
+    }
   }
 }

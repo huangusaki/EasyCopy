@@ -3,15 +3,17 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:crypto/crypto.dart';
 import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/page_models.dart';
 import 'package:easy_copy/services/comic_download_service.dart';
+import 'package:easy_copy/services/download_queue_store.dart';
 import 'package:easy_copy/services/host_manager.dart';
 import 'package:easy_copy/services/image_cache.dart';
 import 'package:easy_copy/services/page_cache_store.dart';
-import 'package:easy_copy/services/page_probe_service.dart';
+import 'package:easy_copy/services/page_repository.dart';
+import 'package:easy_copy/services/primary_tab_session_store.dart';
 import 'package:easy_copy/services/reader_progress_store.dart';
-import 'package:easy_copy/services/site_api_client.dart';
 import 'package:easy_copy/services/site_session.dart';
 import 'package:easy_copy/webview/page_extractor_script.dart';
 import 'package:easy_copy/widgets/auth_webview_screen.dart';
@@ -33,22 +35,25 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   late final WebViewController _downloadController;
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _standardScrollController = ScrollController();
   final ScrollController _readerScrollController = ScrollController();
   final HostManager _hostManager = HostManager.instance;
   final SiteSession _session = SiteSession.instance;
-  final PageCacheStore _cacheStore = PageCacheStore.instance;
-  final PageProbeService _probeService = PageProbeService.instance;
   final ReaderProgressStore _readerProgressStore = ReaderProgressStore.instance;
-  final SiteApiClient _apiClient = SiteApiClient.instance;
   final ComicDownloadService _downloadService = ComicDownloadService.instance;
+  final DownloadQueueStore _downloadQueueStore = DownloadQueueStore.instance;
+  final PrimaryTabSessionStore _tabSessionStore = PrimaryTabSessionStore(
+    rootUris: <int, Uri>{
+      for (int index = 0; index < appDestinations.length; index += 1)
+        index: appDestinations[index].uri,
+    },
+  );
+  final ValueNotifier<DownloadQueueSnapshot> _downloadQueueSnapshotNotifier =
+      ValueNotifier<DownloadQueueSnapshot>(const DownloadQueueSnapshot());
+  late final PageRepository _pageRepository;
 
-  Uri _currentUri = AppConfig.resolvePath('/');
-  EasyCopyPage? _page;
-  String? _errorMessage;
-  bool _isLoading = true;
   int _selectedIndex = 0;
   int _activeLoadId = 0;
-  bool _preservePageOnNextLoad = false;
   bool _isFailingOver = false;
   int _consecutiveFrameFailures = 0;
   bool _isDiscoverThemeExpanded = false;
@@ -59,12 +64,22 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   Completer<ReaderPageData>? _downloadExtractionCompleter;
   Timer? _readerProgressDebounce;
   double? _lastPersistedReaderOffset;
+  bool _isProcessingDownloadQueue = false;
+  bool _suspendStandardScrollTracking = false;
+  final Set<String> _cancelledComicKeys = <String>{};
+  final Map<String, String> _cancelledComicTitles = <String, String>{};
+  _PendingPageLoad? _pendingPageLoad;
+  NavigationIntent? _nextFreshNavigationIntent;
 
   @override
   void initState() {
     super.initState();
     _controller = _buildController();
     _downloadController = _buildDownloadController();
+    _pageRepository = PageRepository(
+      standardPageLoader: _loadStandardPageFresh,
+    );
+    _standardScrollController.addListener(_handleStandardScroll);
     _readerScrollController.addListener(_handleReaderScroll);
     unawaited(_bootstrap());
     _syncSearchController();
@@ -74,29 +89,73 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   void dispose() {
     _persistCurrentReaderProgress();
     _readerProgressDebounce?.cancel();
+    _standardScrollController.removeListener(_handleStandardScroll);
+    _readerScrollController.removeListener(_handleReaderScroll);
     _searchController.dispose();
+    _standardScrollController.dispose();
     _readerScrollController.dispose();
+    _downloadQueueSnapshotNotifier.dispose();
     super.dispose();
+  }
+
+  PrimaryTabRouteEntry get _currentEntry =>
+      _tabSessionStore.currentEntry(_selectedIndex);
+
+  Uri get _currentUri => _currentEntry.uri;
+
+  EasyCopyPage? get _page => _currentEntry.page;
+
+  bool get _isLoading => _currentEntry.isLoading;
+
+  String? get _errorMessage => _currentEntry.errorMessage;
+
+  String _authScopeForUri(Uri uri) {
+    if (_isProfileUri(uri)) {
+      return _session.authScope;
+    }
+    return 'guest';
+  }
+
+  PageQueryKey _pageQueryKeyForUri(Uri uri, {String? authScope}) {
+    return PageQueryKey.forUri(
+      uri,
+      authScope: authScope ?? _authScopeForUri(uri),
+    );
+  }
+
+  void _mutateSessionState(VoidCallback mutation, {bool syncSearch = true}) {
+    if (!mounted) {
+      mutation();
+      if (syncSearch) {
+        _syncSearchController();
+      }
+      return;
+    }
+    setState(mutation);
+    if (syncSearch) {
+      _syncSearchController();
+    }
   }
 
   Future<void> _bootstrap() async {
     await Future.wait(<Future<void>>[
       _hostManager.ensureInitialized(),
       _session.ensureInitialized(),
-      _cacheStore.ensureInitialized(),
+      _downloadQueueStore.ensureInitialized(),
       _readerProgressStore.ensureInitialized(),
     ]);
     await _refreshCachedComics();
+    await _restoreDownloadQueue();
     final Uri homeUri = appDestinations.first.uri;
     if (!mounted) {
       return;
     }
     setState(() {
-      _currentUri = homeUri;
       _selectedIndex = tabIndexForUri(homeUri);
     });
     _syncSearchController();
-    await _loadUri(homeUri);
+    await _loadUri(homeUri, historyMode: NavigationIntent.resetToRoot);
+    unawaited(_ensureDownloadQueueRunning());
   }
 
   WebViewController _buildController() {
@@ -126,9 +185,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
           onPageStarted: (String url) {
             _startLoading(
               AppConfig.rewriteToCurrentHost(Uri.tryParse(url) ?? _currentUri),
-              preserveCurrentPage: _preservePageOnNextLoad,
+              preserveCurrentPage:
+                  _pendingPageLoad?.intent == NavigationIntent.preserve,
             );
-            _preservePageOnNextLoad = false;
           },
           onPageFinished: (String url) async {
             final int loadId = _activeLoadId;
@@ -140,10 +199,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
               if (!mounted || loadId != _activeLoadId) {
                 return;
               }
-              setState(() {
-                _isLoading = false;
-                _errorMessage = '頁面已加載，但轉換內容失敗。';
-              });
+              _failPendingPageLoad('頁面已加載，但轉換內容失敗。');
             }
           },
           onUrlChange: (UrlChange change) {
@@ -211,6 +267,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   }
 
   void _handleBridgeMessage(JavaScriptMessage message) {
+    final _PendingPageLoad? pendingLoad = _pendingPageLoad;
+    if (pendingLoad == null || pendingLoad.completer.isCompleted) {
+      return;
+    }
     try {
       final Object? decoded = jsonDecode(message.message);
       if (decoded is! Map) {
@@ -222,52 +282,22 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       );
 
       final int loadId = (payload['loadId'] as num?)?.toInt() ?? -1;
-      if (loadId != _activeLoadId) {
+      if (loadId != _activeLoadId || loadId != pendingLoad.loadId) {
         return;
       }
 
       payload.remove('loadId');
       final EasyCopyPage page = PageCacheStore.restorePagePayload(payload);
-      final String? previousReaderUri = switch (_page) {
-        ReaderPageData readerPage => readerPage.uri,
-        _ => null,
-      };
-      if (!mounted) {
-        return;
-      }
-
       _consecutiveFrameFailures = 0;
-      setState(() {
-        _page = page;
-        _isLoading = false;
-        _errorMessage = null;
-        _currentUri = AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
-        _selectedIndex = tabIndexForUri(_currentUri);
-      });
-      if (page is ReaderPageData) {
-        _handleReaderPageLoaded(page, previousUri: previousReaderUri);
-      }
-      _syncSearchController();
-      if (page is! UnknownPageData) {
-        unawaited(
-          _cacheStore.writeEnvelope(
-            PageCacheStore.buildEnvelope(
-              routeKey: AppConfig.routeKeyForUri(Uri.parse(page.uri)),
-              page: page,
-              fingerprint: _fingerprintForPage(page),
-              authScope: 'guest',
-            ),
-          ),
-        );
-      }
+      _applyLoadedPage(
+        page,
+        targetTabIndex: pendingLoad.targetTabIndex,
+        switchToTab: _selectedIndex == pendingLoad.targetTabIndex,
+      );
+      pendingLoad.completer.complete(page);
+      _pendingPageLoad = null;
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isLoading = false;
-        _errorMessage = '轉換資料解析失敗。';
-      });
+      _failPendingPageLoad('轉換資料解析失敗。');
     }
   }
 
@@ -337,82 +367,728 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     );
   }
 
-  void _setPendingLocation(Uri uri) {
-    final Uri rewrittenUri = AppConfig.rewriteToCurrentHost(uri);
-    if (!mounted) {
-      _currentUri = rewrittenUri;
-      _selectedIndex = tabIndexForUri(rewrittenUri);
+  DownloadQueueSnapshot get _downloadQueueSnapshot =>
+      _downloadQueueSnapshotNotifier.value;
+
+  Future<void> _restoreDownloadQueue() async {
+    _downloadQueueSnapshotNotifier.value = await _downloadQueueStore.read();
+  }
+
+  Future<void> _persistDownloadQueueSnapshot(
+    DownloadQueueSnapshot snapshot,
+  ) async {
+    _downloadQueueSnapshotNotifier.value = snapshot;
+    if (snapshot.isEmpty) {
+      await _downloadQueueStore.clear();
+      return;
+    }
+    await _downloadQueueStore.write(snapshot);
+  }
+
+  void _setDownloadQueueSnapshotInMemory(DownloadQueueSnapshot snapshot) {
+    _downloadQueueSnapshotNotifier.value = snapshot;
+  }
+
+  DownloadQueueTask? _downloadQueueTaskById(String taskId) {
+    for (final DownloadQueueTask task in _downloadQueueSnapshot.tasks) {
+      if (task.id == taskId) {
+        return task;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _updateDownloadQueueTask(
+    DownloadQueueTask updatedTask, {
+    bool persist = true,
+  }) async {
+    final DownloadQueueSnapshot snapshot = _downloadQueueSnapshot;
+    final int index = snapshot.tasks.indexWhere(
+      (DownloadQueueTask task) => task.id == updatedTask.id,
+    );
+    if (index == -1) {
       return;
     }
 
-    setState(() {
-      _currentUri = rewrittenUri;
-      _selectedIndex = tabIndexForUri(rewrittenUri);
-    });
-    _syncSearchController();
+    final List<DownloadQueueTask> tasks = snapshot.tasks.toList(growable: true);
+    tasks[index] = updatedTask;
+    final DownloadQueueSnapshot nextSnapshot = snapshot.copyWith(
+      tasks: tasks.toList(growable: false),
+    );
+    if (persist) {
+      await _persistDownloadQueueSnapshot(nextSnapshot);
+      return;
+    }
+    _setDownloadQueueSnapshotInMemory(nextSnapshot);
+  }
+
+  String _comicQueueKey(String value) {
+    final Uri? uri = Uri.tryParse(value);
+    if (uri == null) {
+      return value.trim();
+    }
+    return Uri(path: AppConfig.rewriteToCurrentHost(uri).path).toString();
+  }
+
+  DownloadQueueTask _buildDownloadQueueTask(
+    DetailPageData page,
+    Uri chapterUri,
+    ChapterData chapter,
+  ) {
+    final DateTime now = DateTime.now();
+    final String comicKey = _comicQueueKey(page.uri);
+    final String chapterKey = _chapterPathKey(chapterUri.toString());
+    final String id = sha1
+        .convert(utf8.encode('$comicKey::$chapterKey'))
+        .toString();
+    return DownloadQueueTask(
+      id: id,
+      comicKey: comicKey,
+      chapterKey: chapterKey,
+      comicTitle: page.title,
+      comicUri: page.uri,
+      coverUrl: page.coverUrl,
+      chapterLabel: chapter.label,
+      chapterHref: chapterUri.toString(),
+      status: DownloadQueueTaskStatus.queued,
+      progressLabel: '等待缓存',
+      completedImages: 0,
+      totalImages: 0,
+      createdAt: now,
+      updatedAt: now,
+    );
+  }
+
+  Future<void> _enqueueSelectedChapters(
+    DetailPageData page,
+    List<ChapterData> chapters,
+  ) async {
+    final DownloadQueueSnapshot snapshot = _downloadQueueSnapshot;
+    final List<DownloadQueueTask> tasks = snapshot.tasks.toList(growable: true);
+    final Set<String> downloadedKeys = _downloadedChapterPathKeysForDetail(
+      page,
+    );
+    final Set<String> queuedChapterKeys = snapshot.tasks
+        .map((DownloadQueueTask task) => task.chapterKey)
+        .toSet();
+    final Uri detailUri = Uri.parse(page.uri);
+
+    int addedCount = 0;
+    int skippedCachedCount = 0;
+    int skippedQueuedCount = 0;
+
+    for (final ChapterData chapter in chapters) {
+      final Uri chapterUri = AppConfig.resolveNavigationUri(
+        chapter.href,
+        currentUri: detailUri,
+      );
+      final String chapterKey = _chapterPathKey(chapterUri.toString());
+      if (downloadedKeys.contains(chapterKey)) {
+        skippedCachedCount += 1;
+        continue;
+      }
+      if (queuedChapterKeys.contains(chapterKey)) {
+        skippedQueuedCount += 1;
+        continue;
+      }
+
+      tasks.add(_buildDownloadQueueTask(page, chapterUri, chapter));
+      queuedChapterKeys.add(chapterKey);
+      addedCount += 1;
+    }
+
+    if (addedCount == 0) {
+      if (skippedCachedCount > 0 && skippedQueuedCount > 0) {
+        _showSnackBar('所选章节已缓存或已在队列中');
+      } else if (skippedCachedCount > 0) {
+        _showSnackBar('所选章节都已经缓存过了');
+      } else {
+        _showSnackBar('所选章节已在后台缓存队列中');
+      }
+      return;
+    }
+
+    final bool keepPaused = snapshot.isPaused && snapshot.isNotEmpty;
+    await _persistDownloadQueueSnapshot(
+      snapshot.copyWith(
+        isPaused: keepPaused,
+        tasks: tasks.toList(growable: false),
+      ),
+    );
+
+    final StringBuffer message = StringBuffer('已加入后台缓存队列：$addedCount 话');
+    if (skippedCachedCount > 0) {
+      message.write('，已跳过已缓存 $skippedCachedCount 话');
+    }
+    if (skippedQueuedCount > 0) {
+      message.write('，已跳过队列内 $skippedQueuedCount 话');
+    }
+    if (keepPaused) {
+      message.write('（当前队列已暂停）');
+    }
+    _showSnackBar(message.toString());
+
+    if (!keepPaused) {
+      unawaited(_ensureDownloadQueueRunning());
+    }
+  }
+
+  Future<void> _pauseDownloadQueue() async {
+    final DownloadQueueSnapshot snapshot = _downloadQueueSnapshot;
+    if (snapshot.isEmpty || snapshot.isPaused) {
+      return;
+    }
+    await _persistDownloadQueueSnapshot(snapshot.copyWith(isPaused: true));
+    _showSnackBar('后台缓存将在当前图片完成后暂停');
+  }
+
+  Future<void> _resumeDownloadQueue() async {
+    final DownloadQueueSnapshot snapshot = _downloadQueueSnapshot;
+    if (snapshot.isEmpty) {
+      return;
+    }
+
+    final DateTime now = DateTime.now();
+    final List<DownloadQueueTask> tasks = snapshot.tasks
+        .map((DownloadQueueTask task) {
+          if (task.status == DownloadQueueTaskStatus.failed ||
+              task.status == DownloadQueueTaskStatus.paused ||
+              task.status == DownloadQueueTaskStatus.parsing ||
+              task.status == DownloadQueueTaskStatus.downloading) {
+            return task.copyWith(
+              status: DownloadQueueTaskStatus.queued,
+              progressLabel: '等待缓存',
+              errorMessage: '',
+              updatedAt: now,
+            );
+          }
+          return task;
+        })
+        .toList(growable: false);
+
+    await _persistDownloadQueueSnapshot(
+      snapshot.copyWith(isPaused: false, tasks: tasks),
+    );
+    _showSnackBar('已继续后台缓存');
+    unawaited(_ensureDownloadQueueRunning());
+  }
+
+  Future<void> _removeComicFromDownloadQueue(
+    String comicKey, {
+    required String comicTitle,
+    bool markFilesForDeletion = false,
+  }) async {
+    final DownloadQueueSnapshot snapshot = _downloadQueueSnapshot;
+    if (snapshot.isEmpty) {
+      return;
+    }
+
+    final bool containsComic = snapshot.tasks.any(
+      (DownloadQueueTask task) => task.comicKey == comicKey,
+    );
+    if (!containsComic) {
+      return;
+    }
+
+    final bool removesActiveComic = snapshot.activeTask?.comicKey == comicKey;
+    final List<DownloadQueueTask> remainingTasks = snapshot.tasks
+        .where((DownloadQueueTask task) => task.comicKey != comicKey)
+        .toList(growable: false);
+
+    if (removesActiveComic) {
+      _cancelledComicKeys.add(comicKey);
+      if (markFilesForDeletion) {
+        _cancelledComicTitles[comicKey] = comicTitle;
+      }
+    }
+
+    await _persistDownloadQueueSnapshot(
+      snapshot.copyWith(
+        isPaused: remainingTasks.isEmpty ? false : snapshot.isPaused,
+        tasks: remainingTasks,
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteCachedComic(CachedComicLibraryEntry item) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('删除已缓存漫画'),
+          content: Text('确认删除《${item.comicTitle}》的本地缓存吗？'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    final String comicKey = item.comicHref.isEmpty
+        ? item.comicTitle
+        : _comicQueueKey(item.comicHref);
+    final bool removesActiveComic =
+        _downloadQueueSnapshot.activeTask?.comicKey == comicKey;
+
+    await _removeComicFromDownloadQueue(
+      comicKey,
+      comicTitle: item.comicTitle,
+      markFilesForDeletion: removesActiveComic,
+    );
+
+    if (!removesActiveComic) {
+      await _downloadService.deleteCachedComic(item);
+      await _refreshCachedComics();
+    }
+
+    _showSnackBar('已删除 ${item.comicTitle} 的缓存');
+  }
+
+  Future<void> _confirmRemoveQueuedComic(DownloadQueueTask task) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('移出缓存队列'),
+          content: Text('确认停止《${task.comicTitle}》的后台缓存，并清理未完成文件吗？'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('移出'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    final bool removesActiveComic =
+        _downloadQueueSnapshot.activeTask?.comicKey == task.comicKey;
+    await _removeComicFromDownloadQueue(
+      task.comicKey,
+      comicTitle: task.comicTitle,
+      markFilesForDeletion: true,
+    );
+    if (!removesActiveComic) {
+      await _downloadService.deleteComicCacheByTitle(task.comicTitle);
+      await _refreshCachedComics();
+    }
+    _showSnackBar('已移出 ${task.comicTitle} 的缓存任务');
+  }
+
+  bool _shouldPauseActiveDownload(DownloadQueueTask task) {
+    return _downloadQueueSnapshot.isPaused &&
+        _downloadQueueTaskById(task.id) != null;
+  }
+
+  bool _shouldCancelActiveDownload(DownloadQueueTask task) {
+    return _cancelledComicKeys.contains(task.comicKey) ||
+        _downloadQueueTaskById(task.id) == null;
+  }
+
+  Future<void> _ensureDownloadQueueRunning() async {
+    if (_isProcessingDownloadQueue ||
+        _downloadQueueSnapshot.isPaused ||
+        _downloadQueueSnapshot.isEmpty ||
+        !mounted) {
+      return;
+    }
+
+    _isProcessingDownloadQueue = true;
+    try {
+      while (mounted) {
+        final DownloadQueueSnapshot snapshot = _downloadQueueSnapshot;
+        if (snapshot.isPaused || snapshot.isEmpty) {
+          break;
+        }
+        final DownloadQueueTask task = snapshot.activeTask!;
+        await _runDownloadQueueTask(task);
+      }
+    } finally {
+      _isProcessingDownloadQueue = false;
+    }
+  }
+
+  Future<void> _runDownloadQueueTask(DownloadQueueTask task) async {
+    await _updateDownloadQueueTask(
+      task.copyWith(
+        status: DownloadQueueTaskStatus.parsing,
+        progressLabel: '正在解析 ${task.chapterLabel}',
+        completedImages: 0,
+        totalImages: 0,
+        errorMessage: '',
+        updatedAt: DateTime.now(),
+      ),
+    );
+
+    try {
+      await _session.ensureInitialized();
+      final ReaderPageData readerPage = await _extractReaderPageForDownload(
+        Uri.parse(task.chapterHref),
+      );
+
+      if (_shouldCancelActiveDownload(task)) {
+        throw const DownloadCancelledException();
+      }
+      if (_shouldPauseActiveDownload(task)) {
+        throw const DownloadPausedException();
+      }
+
+      await _updateDownloadQueueTask(
+        task.copyWith(
+          status: DownloadQueueTaskStatus.downloading,
+          progressLabel: '正在缓存 ${task.chapterLabel}',
+          completedImages: 0,
+          totalImages: readerPage.imageUrls.length,
+          errorMessage: '',
+          updatedAt: DateTime.now(),
+        ),
+      );
+
+      await _downloadService.downloadChapter(
+        readerPage,
+        cookieHeader: _session.cookieHeader,
+        comicUri: task.comicUri,
+        chapterHref: task.chapterHref,
+        chapterLabel: task.chapterLabel,
+        coverUrl: task.coverUrl,
+        shouldPause: () => _shouldPauseActiveDownload(task),
+        shouldCancel: () => _shouldCancelActiveDownload(task),
+        onProgress: (ChapterDownloadProgress progress) async {
+          final DownloadQueueTask? latestTask = _downloadQueueTaskById(task.id);
+          if (latestTask == null) {
+            return;
+          }
+          await _updateDownloadQueueTask(
+            latestTask.copyWith(
+              status: DownloadQueueTaskStatus.downloading,
+              progressLabel: '${task.chapterLabel} · ${progress.currentLabel}',
+              completedImages: progress.completedCount,
+              totalImages: progress.totalCount,
+              errorMessage: '',
+              updatedAt: DateTime.now(),
+            ),
+            persist: false,
+          );
+        },
+      );
+
+      final DownloadQueueSnapshot snapshot = _downloadQueueSnapshot;
+      final List<DownloadQueueTask> remainingTasks = snapshot.tasks
+          .where((DownloadQueueTask item) => item.id != task.id)
+          .toList(growable: false);
+      await _persistDownloadQueueSnapshot(
+        snapshot.copyWith(
+          isPaused: remainingTasks.isEmpty ? false : snapshot.isPaused,
+          tasks: remainingTasks,
+        ),
+      );
+      await _refreshCachedComics();
+
+      if (mounted && remainingTasks.isEmpty) {
+        _showSnackBar('后台缓存已完成');
+      }
+    } on DownloadPausedException {
+      final DownloadQueueTask? latestTask = _downloadQueueTaskById(task.id);
+      if (latestTask != null) {
+        final String pauseLabel =
+            latestTask.totalImages > 0 && latestTask.completedImages > 0
+            ? '已暂停 ${latestTask.completedImages}/${latestTask.totalImages}'
+            : '已暂停';
+        await _updateDownloadQueueTask(
+          latestTask.copyWith(
+            status: DownloadQueueTaskStatus.paused,
+            progressLabel: pauseLabel,
+            updatedAt: DateTime.now(),
+          ),
+        );
+      }
+    } on DownloadCancelledException {
+      final String comicTitle =
+          _cancelledComicTitles.remove(task.comicKey) ?? task.comicTitle;
+      _cancelledComicKeys.remove(task.comicKey);
+      await _downloadService.deleteComicCacheByTitle(comicTitle);
+      await _refreshCachedComics();
+    } catch (error) {
+      final DownloadQueueTask? latestTask = _downloadQueueTaskById(task.id);
+      final String message = _formatDownloadError(error);
+      if (latestTask != null) {
+        final DownloadQueueSnapshot snapshot = _downloadQueueSnapshot;
+        final List<DownloadQueueTask> tasks = snapshot.tasks
+            .map((DownloadQueueTask item) {
+              if (item.id != latestTask.id) {
+                return item;
+              }
+              return latestTask.copyWith(
+                status: DownloadQueueTaskStatus.failed,
+                progressLabel: '失败：$message',
+                errorMessage: message,
+                updatedAt: DateTime.now(),
+              );
+            })
+            .toList(growable: false);
+        await _persistDownloadQueueSnapshot(
+          snapshot.copyWith(isPaused: true, tasks: tasks),
+        );
+      }
+      if (mounted) {
+        _showSnackBar('缓存失败：$message');
+      }
+    }
+  }
+
+  String _formatDownloadError(Object error) {
+    return switch (error) {
+      TimeoutException _ => '章节解析超时',
+      HttpException httpError => httpError.message,
+      FileSystemException fileError => fileError.message,
+      DownloadPausedException paused => paused.message,
+      DownloadCancelledException cancelled => cancelled.message,
+      _ => error.toString(),
+    };
+  }
+
+  void _setPendingLocation(Uri uri) {
+    final Uri rewrittenUri = AppConfig.rewriteToCurrentHost(uri);
+    final int tabIndex =
+        _pendingPageLoad?.targetTabIndex ?? tabIndexForUri(rewrittenUri);
+    _mutateSessionState(() {
+      _tabSessionStore.replaceCurrent(tabIndex, rewrittenUri);
+    }, syncSearch: tabIndex == _selectedIndex);
   }
 
   void _startLoading(Uri uri, {required bool preserveCurrentPage}) {
-    _activeLoadId += 1;
+    if (!preserveCurrentPage) {
+      _resetStandardScrollPosition();
+    }
     final Uri rewrittenUri = AppConfig.rewriteToCurrentHost(uri);
-    if (!mounted) {
-      _currentUri = rewrittenUri;
-      _selectedIndex = tabIndexForUri(rewrittenUri);
-      _isLoading = true;
-      _errorMessage = null;
-      if (!preserveCurrentPage) {
-        _page = null;
+    final int tabIndex =
+        _pendingPageLoad?.targetTabIndex ?? tabIndexForUri(rewrittenUri);
+    final EasyCopyPage? visiblePage = preserveCurrentPage
+        ? _tabSessionStore.currentEntry(tabIndex).page
+        : null;
+    _mutateSessionState(() {
+      _tabSessionStore.replaceCurrent(tabIndex, rewrittenUri);
+      _tabSessionStore.updateCurrent(
+        tabIndex,
+        (PrimaryTabRouteEntry entry) => entry.copyWith(
+          uri: rewrittenUri,
+          page: visiblePage,
+          clearPage: !preserveCurrentPage,
+          isLoading: true,
+          clearError: true,
+          standardScrollOffset: preserveCurrentPage
+              ? entry.standardScrollOffset
+              : 0,
+        ),
+      );
+    }, syncSearch: tabIndex == _selectedIndex);
+  }
+
+  int _prepareRouteEntry(
+    Uri uri, {
+    required NavigationIntent intent,
+    required bool preserveVisiblePage,
+  }) {
+    final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
+    final int tabIndex = tabIndexForUri(targetUri);
+    final EasyCopyPage? preservedPage = preserveVisiblePage
+        ? _tabSessionStore.currentEntry(tabIndex).page
+        : null;
+    _mutateSessionState(() {
+      switch (intent) {
+        case NavigationIntent.push:
+          _tabSessionStore.push(tabIndex, targetUri);
+          break;
+        case NavigationIntent.preserve:
+          _tabSessionStore.replaceCurrent(tabIndex, targetUri);
+          break;
+        case NavigationIntent.resetToRoot:
+          _tabSessionStore.resetToRoot(tabIndex);
+          _tabSessionStore.replaceCurrent(tabIndex, targetUri);
+          break;
+      }
+      _selectedIndex = tabIndex;
+      _tabSessionStore.updateCurrent(
+        tabIndex,
+        (PrimaryTabRouteEntry entry) => entry.copyWith(
+          uri: targetUri,
+          page: preservedPage,
+          clearPage: !preserveVisiblePage,
+          isLoading: true,
+          clearError: true,
+          standardScrollOffset: preserveVisiblePage
+              ? entry.standardScrollOffset
+              : 0,
+        ),
+      );
+    });
+    return tabIndex;
+  }
+
+  void _markTabEntryLoading(int tabIndex, {required bool preservePage}) {
+    _mutateSessionState(() {
+      _tabSessionStore.updateCurrent(
+        tabIndex,
+        (PrimaryTabRouteEntry entry) => entry.copyWith(
+          isLoading: true,
+          clearError: true,
+          clearPage: !preservePage,
+        ),
+      );
+    }, syncSearch: tabIndex == _selectedIndex);
+  }
+
+  void _finishTabEntryLoading(int tabIndex, {String? message}) {
+    _mutateSessionState(() {
+      _tabSessionStore.updateCurrent(
+        tabIndex,
+        (PrimaryTabRouteEntry entry) => entry.copyWith(
+          isLoading: false,
+          errorMessage: message,
+          clearError: message == null,
+        ),
+      );
+    }, syncSearch: tabIndex == _selectedIndex);
+  }
+
+  Future<EasyCopyPage> _loadStandardPageFresh(
+    Uri uri, {
+    required String authScope,
+  }) async {
+    final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
+    final int loadId = ++_activeLoadId;
+    final _PendingPageLoad pendingLoad = _PendingPageLoad(
+      requestedUri: targetUri,
+      queryKey: _pageQueryKeyForUri(targetUri, authScope: authScope),
+      intent: _nextFreshNavigationIntent ?? NavigationIntent.preserve,
+      loadId: loadId,
+      targetTabIndex: tabIndexForUri(targetUri),
+      completer: Completer<EasyCopyPage>(),
+    );
+    _nextFreshNavigationIntent = null;
+    _pendingPageLoad = pendingLoad;
+    await _syncSessionCookiesToCurrentHost();
+    await _controller.loadRequest(targetUri);
+    return pendingLoad.completer.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () {
+        if (identical(_pendingPageLoad, pendingLoad)) {
+          _pendingPageLoad = null;
+        }
+        throw TimeoutException('页面解析超时');
+      },
+    );
+  }
+
+  void _applyLoadedPage(
+    EasyCopyPage page, {
+    int? targetTabIndex,
+    bool switchToTab = true,
+  }) {
+    final Uri pageUri = AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
+    final int tabIndex = targetTabIndex ?? tabIndexForUri(pageUri);
+    final String? previousReaderUri =
+        tabIndex == _selectedIndex && _page is ReaderPageData
+        ? (_page as ReaderPageData).uri
+        : null;
+
+    _mutateSessionState(() {
+      if (switchToTab) {
+        _selectedIndex = tabIndex;
+      }
+      _tabSessionStore.updatePage(tabIndex, page);
+    }, syncSearch: switchToTab || tabIndex == _selectedIndex);
+
+    if (tabIndex != _selectedIndex) {
+      return;
+    }
+    if (page is ReaderPageData) {
+      _handleReaderPageLoaded(page, previousUri: previousReaderUri);
+      return;
+    }
+    _restoreStandardScrollPosition(
+      _tabSessionStore.currentEntry(tabIndex).standardScrollOffset,
+    );
+  }
+
+  void _failPendingPageLoad(String message) {
+    final _PendingPageLoad? pendingLoad = _pendingPageLoad;
+    if (pendingLoad == null) {
+      return;
+    }
+    if (!pendingLoad.completer.isCompleted) {
+      pendingLoad.completer.completeError(message);
+    }
+    _pendingPageLoad = null;
+
+    final PrimaryTabRouteEntry currentEntry = _tabSessionStore.currentEntry(
+      pendingLoad.targetTabIndex,
+    );
+    if (currentEntry.page != null) {
+      _finishTabEntryLoading(pendingLoad.targetTabIndex);
+      if (pendingLoad.targetTabIndex == _selectedIndex) {
+        _showSnackBar(message);
       }
       return;
     }
-
-    setState(() {
-      _currentUri = rewrittenUri;
-      _selectedIndex = tabIndexForUri(rewrittenUri);
-      _isLoading = true;
-      _errorMessage = null;
-      if (!preserveCurrentPage) {
-        _page = null;
-      }
-    });
-    _syncSearchController();
-  }
-
-  Future<void> _beginWebLoad(
-    Uri uri, {
-    bool preserveVisiblePage = false,
-  }) async {
-    final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
-    _preservePageOnNextLoad = preserveVisiblePage;
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-        _errorMessage = null;
-        _currentUri = targetUri;
-        _selectedIndex = tabIndexForUri(targetUri);
-        if (!preserveVisiblePage) {
-          _page = null;
-        }
-      });
-    }
-    await _syncSessionCookiesToCurrentHost();
-    await _controller.loadRequest(targetUri);
+    _mutateSessionState(() {
+      _tabSessionStore.updateError(
+        pendingLoad.targetTabIndex,
+        currentEntry.routeKey,
+        message,
+      );
+    }, syncSearch: pendingLoad.targetTabIndex == _selectedIndex);
   }
 
   Future<void> _loadUri(
     Uri uri, {
     bool bypassCache = false,
     bool preserveVisiblePage = false,
+    NavigationIntent historyMode = NavigationIntent.push,
   }) async {
-    _persistCurrentReaderProgress();
+    _persistVisiblePageState();
     await _hostManager.ensureInitialized();
     final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
+    final PageQueryKey key = _pageQueryKeyForUri(targetUri);
+    if (!bypassCache &&
+        !preserveVisiblePage &&
+        !_isLoading &&
+        _page != null &&
+        _currentEntry.routeKey == key.routeKey &&
+        _isPrimaryTabContent) {
+      _restoreStandardScrollPosition(_currentEntry.standardScrollOffset);
+      return;
+    }
+    if (!preserveVisiblePage) {
+      _resetStandardScrollPosition();
+    }
     if (_isLoginUri(targetUri)) {
       await _openAuthFlow();
       return;
     }
     if (_isProfileUri(targetUri)) {
-      await _loadProfilePage(forceRefresh: bypassCache);
+      await _loadProfilePage(
+        forceRefresh: bypassCache,
+        historyMode: historyMode,
+        preserveVisiblePage: preserveVisiblePage,
+      );
       return;
     }
     if (!AppConfig.isAllowedNavigationUri(targetUri)) {
@@ -421,229 +1097,203 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     }
 
     _consecutiveFrameFailures = 0;
-    _setPendingLocation(targetUri);
-    final String routeKey = AppConfig.routeKeyForUri(targetUri);
+    final int targetTabIndex = _prepareRouteEntry(
+      targetUri,
+      intent: historyMode,
+      preserveVisiblePage: preserveVisiblePage,
+    );
     if (!bypassCache) {
-      final CachedPageEnvelope? cachedEntry = await _cacheStore.read(
-        routeKey,
-        authScope: 'guest',
-      );
-      if (cachedEntry != null) {
-        final EasyCopyPage cachedPage = PageCacheStore.restorePage(cachedEntry);
-        final String? previousReaderUri = switch (_page) {
-          ReaderPageData readerPage => readerPage.uri,
-          _ => null,
-        };
-        if (!mounted) {
+      final CachedPageHit? cachedHit = await _pageRepository.readCached(key);
+      if (cachedHit != null) {
+        _applyLoadedPage(
+          cachedHit.page,
+          targetTabIndex: targetTabIndex,
+          switchToTab: true,
+        );
+        if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
           return;
         }
-        setState(() {
-          _page = cachedPage;
-          _currentUri = targetUri;
-          _selectedIndex = tabIndexForUri(targetUri);
-          _errorMessage = null;
-          _isLoading = false;
-        });
-        if (cachedPage is ReaderPageData) {
-          _handleReaderPageLoaded(cachedPage, previousUri: previousReaderUri);
-        }
-        if (!cachedEntry.isSoftExpired(DateTime.now())) {
-          return;
-        }
-        setState(() {
-          _isLoading = true;
-        });
-        unawaited(_revalidateCachedPage(targetUri, cachedEntry));
+        _markTabEntryLoading(targetTabIndex, preservePage: true);
+        unawaited(
+          _revalidateCachedPage(
+            targetUri,
+            key: key,
+            cachedEntry: cachedHit.envelope,
+            targetTabIndex: targetTabIndex,
+          ),
+        );
         return;
       }
     }
-    await _beginWebLoad(targetUri, preserveVisiblePage: preserveVisiblePage);
+
+    _nextFreshNavigationIntent = historyMode;
+    try {
+      await _pageRepository.loadFresh(targetUri, authScope: key.authScope);
+    } catch (error) {
+      await _handlePageLoadFailure(
+        error,
+        targetTabIndex: targetTabIndex,
+        routeKey: key.routeKey,
+      );
+    }
   }
 
   Future<void> _revalidateCachedPage(
-    Uri uri,
-    CachedPageEnvelope cachedEntry,
-  ) async {
+    Uri uri, {
+    required PageQueryKey key,
+    required CachedPageEnvelope cachedEntry,
+    required int targetTabIndex,
+  }) async {
     try {
-      final PageProbeResult probe = await _probeService.probe(uri);
-      if (!mounted ||
-          AppConfig.routeKeyForUri(_currentUri) != cachedEntry.routeKey) {
+      await _pageRepository.revalidate(uri, key: key, envelope: cachedEntry);
+      final PrimaryTabRouteEntry entry = _tabSessionStore.currentEntry(
+        targetTabIndex,
+      );
+      if (entry.routeKey != key.routeKey) {
         return;
       }
-      if (probe.fingerprint == cachedEntry.fingerprint) {
-        await _cacheStore.refreshValidation(
-          cachedEntry.routeKey,
-          authScope: cachedEntry.authScope,
+      final CachedPageHit? refreshedHit = await _pageRepository.readCached(key);
+      if (refreshedHit != null) {
+        _applyLoadedPage(
+          refreshedHit.page,
+          targetTabIndex: targetTabIndex,
+          switchToTab: targetTabIndex == _selectedIndex,
         );
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _isLoading = false;
-          _errorMessage = null;
-        });
         return;
       }
-      await _beginWebLoad(uri, preserveVisiblePage: true);
+      _finishTabEntryLoading(targetTabIndex);
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isLoading = false;
-      });
+      _finishTabEntryLoading(targetTabIndex);
     }
   }
 
-  Future<void> _loadProfilePage({bool forceRefresh = false}) async {
-    _persistCurrentReaderProgress();
+  Future<void> _loadProfilePage({
+    bool forceRefresh = false,
+    bool preserveVisiblePage = false,
+    NavigationIntent historyMode = NavigationIntent.push,
+  }) async {
+    _persistVisiblePageState();
+    if (!preserveVisiblePage) {
+      _resetStandardScrollPosition();
+    }
     final Uri profileUri = AppConfig.profileUri;
-    _setPendingLocation(profileUri);
-    if (!_session.isAuthenticated) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _page = ProfilePageData.loggedOut(uri: profileUri.toString());
-        _isLoading = false;
-        _errorMessage = null;
-      });
-      return;
-    }
-
-    final String authScope = _session.authScope;
-    if (!forceRefresh) {
-      final CachedPageEnvelope? cachedEntry = await _cacheStore.read(
-        AppConfig.profileRouteKey,
-        authScope: authScope,
-      );
-      if (cachedEntry != null) {
-        final ProfilePageData cachedPage =
-            PageCacheStore.restorePage(cachedEntry) as ProfilePageData;
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _page = cachedPage;
-          _isLoading = false;
-          _errorMessage = null;
-        });
-        if (!cachedEntry.isSoftExpired(DateTime.now())) {
-          return;
-        }
-        setState(() {
-          _isLoading = true;
-        });
-        unawaited(_refreshProfileInBackground(cachedEntry.authScope));
-        return;
-      }
-    }
-
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-        _errorMessage = null;
-      });
-    }
-    try {
-      final ProfilePageData profilePage = await _fetchAndStoreProfile();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _page = profilePage;
-        _isLoading = false;
-      });
-    } catch (error) {
-      await _handleProfileLoadFailure(error);
-    }
-  }
-
-  Future<void> _refreshProfileInBackground(String authScope) async {
-    try {
-      final ProfilePageData profilePage = await _fetchAndStoreProfile();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _page = profilePage;
-        _isLoading = false;
-        _errorMessage = null;
-      });
-      await _cacheStore.refreshValidation(
-        AppConfig.profileRouteKey,
-        authScope: authScope,
-      );
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isLoading = false;
-      });
-    }
-  }
-
-  Future<ProfilePageData> _fetchAndStoreProfile() async {
-    final ProfilePageData profilePage = await _apiClient.loadProfile();
-    final String authScope = profilePage.isLoggedIn
-        ? _session.authScope
-        : 'guest';
-    await _cacheStore.writeEnvelope(
-      PageCacheStore.buildEnvelope(
-        routeKey: AppConfig.profileRouteKey,
-        page: profilePage,
-        fingerprint: _fingerprintForPage(profilePage),
-        authScope: authScope,
-      ),
+    final int targetTabIndex = _prepareRouteEntry(
+      profileUri,
+      intent: historyMode,
+      preserveVisiblePage: preserveVisiblePage,
     );
-    return profilePage;
+    final PageQueryKey key = _pageQueryKeyForUri(profileUri);
+    if (!forceRefresh) {
+      final CachedPageHit? cachedHit = await _pageRepository.readCached(key);
+      if (cachedHit != null) {
+        _applyLoadedPage(
+          cachedHit.page,
+          targetTabIndex: targetTabIndex,
+          switchToTab: true,
+        );
+        if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
+          return;
+        }
+        _markTabEntryLoading(targetTabIndex, preservePage: true);
+        unawaited(
+          _revalidateCachedPage(
+            profileUri,
+            key: key,
+            cachedEntry: cachedHit.envelope,
+            targetTabIndex: targetTabIndex,
+          ),
+        );
+        return;
+      }
+    }
+
+    try {
+      final EasyCopyPage profilePage = await _pageRepository.loadFresh(
+        profileUri,
+        authScope: key.authScope,
+      );
+      _applyLoadedPage(
+        profilePage,
+        targetTabIndex: targetTabIndex,
+        switchToTab: true,
+      );
+    } catch (error) {
+      await _handlePageLoadFailure(
+        error,
+        targetTabIndex: targetTabIndex,
+        routeKey: key.routeKey,
+      );
+    }
   }
 
-  Future<void> _handleProfileLoadFailure(Object error) async {
+  Future<void> _handlePageLoadFailure(
+    Object error, {
+    required int targetTabIndex,
+    required String routeKey,
+  }) async {
     final String message = error.toString();
     if (message.contains('登录已失效')) {
       await _logout(showFeedback: false);
-      if (!mounted) {
-        return;
+      if (targetTabIndex == _selectedIndex) {
+        _showSnackBar('登录已失效，请重新登录。');
       }
-      setState(() {
-        _page = ProfilePageData.loggedOut(uri: AppConfig.profileUri.toString());
-        _isLoading = false;
-        _errorMessage = null;
-      });
-      _showSnackBar('登录已失效，请重新登录。');
       return;
     }
-    if (!mounted) {
+
+    final PrimaryTabRouteEntry entry = _tabSessionStore.currentEntry(
+      targetTabIndex,
+    );
+    if (entry.page != null) {
+      _finishTabEntryLoading(targetTabIndex);
+      if (targetTabIndex == _selectedIndex) {
+        _showSnackBar(message);
+      }
       return;
     }
-    setState(() {
-      _isLoading = false;
-      _errorMessage = _page == null ? message : null;
-    });
-    if (_page != null) {
-      _showSnackBar(message);
-    }
+
+    _mutateSessionState(() {
+      _tabSessionStore.updateError(targetTabIndex, routeKey, message);
+    }, syncSearch: targetTabIndex == _selectedIndex);
   }
 
   Future<void> _retryCurrentPage() async {
     if (_page is ProfilePageData || _selectedIndex == 3) {
-      await _loadProfilePage(forceRefresh: true);
+      await _loadProfilePage(
+        forceRefresh: true,
+        preserveVisiblePage: _page != null,
+        historyMode: NavigationIntent.preserve,
+      );
       return;
     }
     await _loadUri(
       _currentUri,
       bypassCache: true,
       preserveVisiblePage: _page != null,
+      historyMode: NavigationIntent.preserve,
     );
   }
 
   Future<void> _loadHome() async {
-    await _loadUri(appDestinations.first.uri);
+    await _loadUri(
+      _targetUriForPrimaryTab(0, resetToRoot: true),
+      preserveVisiblePage: true,
+      historyMode: NavigationIntent.resetToRoot,
+    );
   }
 
   void _navigateDiscoverFilter(String href) {
+    if (href.trim().isEmpty) {
+      return;
+    }
+    unawaited(
+      _loadUri(
+        AppConfig.resolveNavigationUri(href, currentUri: _currentUri),
+        preserveVisiblePage: true,
+      ),
+    );
+  }
+
+  void _navigateRankFilter(String href) {
     if (href.trim().isEmpty) {
       return;
     }
@@ -696,24 +1346,26 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     await _session.saveToken(token!, cookies: result.cookies);
     await _hostManager.pinSessionHost(_hostManager.currentHost);
     await _syncSessionCookiesToCurrentHost();
-    await _loadProfilePage(forceRefresh: true);
+    await _loadProfilePage(
+      forceRefresh: true,
+      historyMode: NavigationIntent.resetToRoot,
+    );
   }
 
   Future<void> _logout({bool showFeedback = true}) async {
-    _persistCurrentReaderProgress();
-    await _cacheStore.removeAuthenticatedEntries();
+    _persistVisiblePageState();
+    _resetStandardScrollPosition();
+    await _pageRepository.removeAuthenticatedEntries();
     await _session.clear();
     await _hostManager.clearSessionPin();
     await _cookieManager.clearCookies();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _page = ProfilePageData.loggedOut(uri: AppConfig.profileUri.toString());
-      _currentUri = AppConfig.profileUri;
+    _mutateSessionState(() {
       _selectedIndex = 3;
-      _isLoading = false;
-      _errorMessage = null;
+      _tabSessionStore.resetToRoot(3);
+      _tabSessionStore.updatePage(
+        3,
+        ProfilePageData.loggedOut(uri: AppConfig.profileUri.toString()),
+      );
     });
     if (showFeedback) {
       _showSnackBar('已退出登录');
@@ -747,25 +1399,55 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     unawaited(_loadUri(AppConfig.buildSearchUri(query)));
   }
 
+  Uri _targetUriForPrimaryTab(int index, {bool resetToRoot = false}) {
+    if (resetToRoot) {
+      return _tabSessionStore.resetToRoot(index).uri;
+    }
+    return _tabSessionStore.currentEntry(index).uri;
+  }
+
   Future<void> _onItemTapped(int index) async {
     if (index < 0 || index >= appDestinations.length) {
       return;
     }
-    if (index == 3) {
-      await _loadProfilePage();
+    if (index == _selectedIndex && _isPrimaryTabContent && !_isLoading) {
+      await _scrollCurrentStandardPageToTop();
       return;
     }
-    await _loadUri(appDestinations[index].uri);
+    if (index == 3) {
+      await _loadProfilePage(
+        preserveVisiblePage: true,
+        historyMode: index == _selectedIndex
+            ? NavigationIntent.resetToRoot
+            : NavigationIntent.preserve,
+      );
+      return;
+    }
+    final bool shouldResetToRoot = index == _selectedIndex;
+    final Uri targetUri = _targetUriForPrimaryTab(
+      index,
+      resetToRoot: shouldResetToRoot,
+    );
+    await _loadUri(
+      targetUri,
+      preserveVisiblePage: !shouldResetToRoot,
+      historyMode: shouldResetToRoot
+          ? NavigationIntent.resetToRoot
+          : NavigationIntent.preserve,
+    );
   }
 
   Future<void> _handleBackNavigation() async {
-    _persistCurrentReaderProgress();
-    if (_page is ProfilePageData && _selectedIndex == 3) {
-      await _loadHome();
-      return;
-    }
-    if (await _controller.canGoBack()) {
-      await _controller.goBack();
+    _persistVisiblePageState();
+    final PrimaryTabRouteEntry? previousEntry = _tabSessionStore.pop(
+      _selectedIndex,
+    );
+    if (previousEntry != null) {
+      await _loadUri(
+        previousEntry.uri,
+        preserveVisiblePage: _page != null,
+        historyMode: NavigationIntent.preserve,
+      );
       return;
     }
     if (_selectedIndex != 0) {
@@ -780,15 +1462,18 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     if (!mounted) {
       return;
     }
-    if (_page == null) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = message;
+    if (_pendingPageLoad != null) {
+      _failPendingPageLoad(message);
+    } else if (_page == null) {
+      _mutateSessionState(() {
+        _tabSessionStore.updateError(
+          _selectedIndex,
+          _currentEntry.routeKey,
+          message,
+        );
       });
     } else {
-      setState(() {
-        _isLoading = false;
-      });
+      _finishTabEntryLoading(_selectedIndex);
       _showSnackBar(message);
     }
     if (_isFailingOver || _consecutiveFrameFailures < 2) {
@@ -811,6 +1496,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       await _loadUri(
         AppConfig.rewriteToCurrentHost(_currentUri),
         preserveVisiblePage: _page != null,
+        historyMode: NavigationIntent.preserve,
       );
       _consecutiveFrameFailures = 0;
     } finally {
@@ -910,16 +1596,153 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     unawaited(_readerProgressStore.writeOffset(progressKey, offset));
   }
 
+  void _persistVisiblePageState() {
+    _persistCurrentReaderProgress();
+    if (_page == null ||
+        _isReaderMode ||
+        !_standardScrollController.hasClients) {
+      return;
+    }
+    _tabSessionStore.updateScroll(
+      _selectedIndex,
+      _currentEntry.routeKey,
+      _standardScrollController.offset,
+    );
+  }
+
+  void _handleStandardScroll() {
+    if (_suspendStandardScrollTracking ||
+        !_standardScrollController.hasClients ||
+        _page == null ||
+        _isReaderMode) {
+      return;
+    }
+    _tabSessionStore.updateScroll(
+      _selectedIndex,
+      _currentEntry.routeKey,
+      _standardScrollController.offset,
+    );
+  }
+
+  void _resetStandardScrollPosition() {
+    _suspendStandardScrollTracking = true;
+    if (_standardScrollController.hasClients) {
+      _standardScrollController.jumpTo(0);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        _suspendStandardScrollTracking = false;
+        return;
+      }
+      if (!_standardScrollController.hasClients) {
+        _suspendStandardScrollTracking = false;
+        return;
+      }
+      if (_standardScrollController.offset != 0) {
+        _standardScrollController.jumpTo(0);
+      }
+      _suspendStandardScrollTracking = false;
+    });
+  }
+
+  void _restoreStandardScrollPosition(double offset) {
+    _suspendStandardScrollTracking = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _jumpStandardToOffset(offset, attempts: 10);
+    });
+  }
+
+  void _jumpStandardToOffset(double offset, {required int attempts}) {
+    if (!mounted) {
+      _suspendStandardScrollTracking = false;
+      return;
+    }
+    if (!_standardScrollController.hasClients) {
+      if (attempts > 0) {
+        Future<void>.delayed(
+          const Duration(milliseconds: 120),
+          () => _jumpStandardToOffset(offset, attempts: attempts - 1),
+        );
+        return;
+      }
+      _suspendStandardScrollTracking = false;
+      return;
+    }
+
+    final double maxExtent = _standardScrollController.position.maxScrollExtent;
+    final double clampedOffset = offset.clamp(0, maxExtent).toDouble();
+    if ((offset - clampedOffset).abs() > 1 && attempts > 0) {
+      Future<void>.delayed(
+        const Duration(milliseconds: 120),
+        () => _jumpStandardToOffset(offset, attempts: attempts - 1),
+      );
+      return;
+    }
+
+    _standardScrollController.jumpTo(clampedOffset);
+    _suspendStandardScrollTracking = false;
+    _tabSessionStore.updateScroll(
+      _selectedIndex,
+      _currentEntry.routeKey,
+      clampedOffset,
+    );
+  }
+
+  Future<void> _scrollCurrentStandardPageToTop() async {
+    if (!_standardScrollController.hasClients) {
+      return;
+    }
+    await _standardScrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+    );
+    _tabSessionStore.updateScroll(_selectedIndex, _currentEntry.routeKey, 0);
+  }
+
   bool get _isReaderMode => _page is ReaderPageData;
 
-  bool get _shouldShowSearchBar => _page is! ProfilePageData;
+  bool get _isDetailRoute {
+    final EasyCopyPage? page = _page;
+    if (page is DetailPageData) {
+      return true;
+    }
+    final String path = _currentUri.path.toLowerCase();
+    return path.startsWith('/comic/') && !path.startsWith('/comic/chapter');
+  }
+
+  bool get _shouldShowSearchBar {
+    final EasyCopyPage? page = _page;
+    if (page is ProfilePageData || page is DetailPageData) {
+      return false;
+    }
+    return !_isDetailRoute;
+  }
+
+  bool get _isPrimaryTabContent {
+    if (_shouldShowBackButton) {
+      return false;
+    }
+    final EasyCopyPage? page = _page;
+    return page == null ||
+        page is HomePageData ||
+        page is DiscoverPageData ||
+        page is RankPageData ||
+        page is ProfilePageData;
+  }
+
+  bool get _shouldShowHeaderCard => !_isPrimaryTabContent && !_isDetailRoute;
+
+  bool get _shouldShowStandaloneDiscoverSearch =>
+      _isPrimaryTabContent && _selectedIndex == 1;
 
   bool get _shouldShowBackButton {
     final EasyCopyPage? page = _page;
-    if (page is DetailPageData || page is UnknownPageData) {
+    if (page is DetailPageData || page is UnknownPageData || _isDetailRoute) {
       return true;
     }
-    if (page is DiscoverPageData && _currentUri.path == '/search') {
+    if ((page is DiscoverPageData || page == null) &&
+        _currentUri.path == '/search') {
       return true;
     }
     return false;
@@ -928,6 +1751,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   String get _pageTitle {
     final EasyCopyPage? page = _page;
     if (page == null) {
+      if (_isDetailRoute) {
+        return '漫畫詳情';
+      }
       return appDestinations[_selectedIndex].label;
     }
     return page.title;
@@ -965,92 +1791,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       visible.add(options[activeIndex]);
     }
     return visible;
-  }
-
-  String _fingerprintForPage(EasyCopyPage page) {
-    switch (page) {
-      case HomePageData homePage:
-        final List<ComicCardData> cards = homePage.sections
-            .expand((ComicSectionData section) => section.items)
-            .toList(growable: false);
-        return <String>[
-          Uri.parse(homePage.uri).path,
-          Uri.parse(homePage.uri).query,
-          '',
-          cards.isEmpty ? '' : '${cards.first.title}::${cards.first.href}',
-          cards.isEmpty ? '' : '${cards.last.title}::${cards.last.href}',
-          '${cards.length}',
-        ].join('::');
-      case DiscoverPageData discoverPage:
-        final List<String> activeFilters = discoverPage.filters
-            .expand((FilterGroupData group) => group.options)
-            .where((LinkAction option) => option.active)
-            .map((LinkAction option) => option.label)
-            .followedBy(
-              discoverPage.pager.currentLabel.isEmpty
-                  ? const Iterable<String>.empty()
-                  : <String>[discoverPage.pager.currentLabel],
-            )
-            .toList(growable: false);
-        return <String>[
-          Uri.parse(discoverPage.uri).path,
-          Uri.parse(discoverPage.uri).query,
-          activeFilters.join('|'),
-          discoverPage.items.isEmpty
-              ? ''
-              : '${discoverPage.items.first.title}::${discoverPage.items.first.href}',
-          discoverPage.items.isEmpty
-              ? ''
-              : '${discoverPage.items.last.title}::${discoverPage.items.last.href}',
-          '${discoverPage.items.length}',
-        ].join('::');
-      case RankPageData rankPage:
-        final List<LinkAction> activeTabs = <LinkAction>[
-          ...rankPage.categories.where((LinkAction item) => item.active),
-          ...rankPage.periods.where((LinkAction item) => item.active),
-        ];
-        return <String>[
-          Uri.parse(rankPage.uri).path,
-          activeTabs.map((LinkAction item) => item.label).join('|'),
-          rankPage.items.isEmpty
-              ? ''
-              : '${rankPage.items.first.title}::${rankPage.items.first.href}',
-          rankPage.items.isEmpty
-              ? ''
-              : '${rankPage.items.last.title}::${rankPage.items.last.href}',
-          '${rankPage.items.length}',
-        ].join('::');
-      case DetailPageData detailPage:
-        final List<ChapterData> chapters = detailPage.chapterGroups.isNotEmpty
-            ? detailPage.chapterGroups
-                  .expand((ChapterGroupData group) => group.chapters)
-                  .toList(growable: false)
-            : detailPage.chapters;
-        return <String>[
-          Uri.parse(detailPage.uri).path,
-          detailPage.updatedAt,
-          detailPage.status,
-          '${chapters.length}',
-          chapters.isEmpty ? '' : chapters.first.href,
-          chapters.isEmpty ? '' : chapters.last.href,
-        ].join('::');
-      case ReaderPageData readerPage:
-        return <String>[
-          Uri.parse(readerPage.uri).path,
-          readerPage.title,
-          readerPage.progressLabel,
-          readerPage.contentKey,
-        ].join('::');
-      case ProfilePageData profilePage:
-        return <String>[
-          profilePage.user?.userId ?? '',
-          '${profilePage.collections.length}',
-          '${profilePage.history.length}',
-          profilePage.continueReading?.chapterHref ?? '',
-        ].join('::');
-      case UnknownPageData unknownPage:
-        return <String>[unknownPage.uri, unknownPage.message].join('::');
-    }
   }
 
   @override
@@ -1118,9 +1858,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
             : RefreshIndicator(
                 onRefresh: _retryCurrentPage,
                 child: ListView(
-                  key: ValueKey<String>(
-                    '${_page?.type.name ?? 'loading'}-${_currentUri.toString()}',
-                  ),
+                  controller: _standardScrollController,
                   physics: const AlwaysScrollableScrollPhysics(
                     parent: BouncingScrollPhysics(),
                   ),
@@ -1134,13 +1872,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
 
   List<Widget> _buildStandardChildren(BuildContext context) {
     final List<Widget> children = <Widget>[
-      _buildHeaderCard(
-        context,
-        title: _pageTitle,
-        showBackButton: _shouldShowBackButton,
-        showSearchBar: _shouldShowSearchBar,
-      ),
-      const SizedBox(height: 18),
+      ..._buildStandardTopContent(context),
+      _buildDownloadQueueBanner(),
     ];
 
     if (_page == null) {
@@ -1169,6 +1902,234 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     return children;
   }
 
+  List<Widget> _buildStandardTopContent(BuildContext context) {
+    if (_shouldShowHeaderCard) {
+      return <Widget>[
+        _buildHeaderCard(
+          context,
+          title: _pageTitle,
+          showBackButton: _shouldShowBackButton,
+          showSearchBar: _shouldShowSearchBar,
+        ),
+        const SizedBox(height: 18),
+      ];
+    }
+
+    if (_shouldShowStandaloneDiscoverSearch) {
+      return <Widget>[
+        _buildStandaloneDiscoverSearchBar(context),
+        const SizedBox(height: 18),
+      ];
+    }
+
+    return const <Widget>[];
+  }
+
+  Widget _buildStandaloneDiscoverSearchBar(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(18)),
+      child: _buildSearchField(context),
+    );
+  }
+
+  Widget _buildSearchField(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE4E8EE)),
+      ),
+      child: Row(
+        children: <Widget>[
+          Icon(Icons.search_rounded, color: colorScheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              onSubmitted: _submitSearch,
+              textInputAction: TextInputAction.search,
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                hintText: '搜尋漫畫、作者或題材',
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: () => _submitSearch(_searchController.text),
+            icon: const Icon(Icons.arrow_forward_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDownloadQueueBanner() {
+    return ValueListenableBuilder<DownloadQueueSnapshot>(
+      valueListenable: _downloadQueueSnapshotNotifier,
+      builder: (BuildContext context, DownloadQueueSnapshot snapshot, Widget? _) {
+        if (snapshot.isEmpty || (_selectedIndex == 3 && _isPrimaryTabContent)) {
+          return const SizedBox.shrink();
+        }
+
+        final DownloadQueueTask activeTask = snapshot.activeTask!;
+        final bool isPaused = snapshot.isPaused;
+        final String statusLabel = isPaused
+            ? (activeTask.progressLabel.isEmpty
+                  ? '后台缓存已暂停'
+                  : activeTask.progressLabel)
+            : activeTask.progressLabel;
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 18),
+          child: Material(
+            color: isPaused ? const Color(0xFFFFF5E8) : const Color(0xFFEAF6F3),
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Icon(
+                        isPaused
+                            ? Icons.pause_circle_rounded
+                            : Icons.download_for_offline_rounded,
+                        color: isPaused
+                            ? const Color(0xFFB86A00)
+                            : const Color(0xFF0E8B84),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          '${activeTask.comicTitle} · 剩余 ${snapshot.remainingCount} 话',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: isPaused
+                            ? _resumeDownloadQueue
+                            : _pauseDownloadQueue,
+                        child: Text(isPaused ? '继续' : '暂停'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    statusLabel,
+                    style: TextStyle(color: Colors.grey.shade700, height: 1.4),
+                  ),
+                  const SizedBox(height: 10),
+                  LinearProgressIndicator(
+                    value: activeTask.fraction > 0 ? activeTask.fraction : null,
+                    borderRadius: BorderRadius.circular(999),
+                    minHeight: 8,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDownloadQueueSection() {
+    return ValueListenableBuilder<DownloadQueueSnapshot>(
+      valueListenable: _downloadQueueSnapshotNotifier,
+      builder:
+          (BuildContext context, DownloadQueueSnapshot snapshot, Widget? _) {
+            if (snapshot.isEmpty) {
+              return const SizedBox.shrink();
+            }
+
+            final Map<String, List<DownloadQueueTask>> groupedTasks =
+                <String, List<DownloadQueueTask>>{};
+            for (final DownloadQueueTask task in snapshot.tasks) {
+              groupedTasks
+                  .putIfAbsent(task.comicKey, () => <DownloadQueueTask>[])
+                  .add(task);
+            }
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 18),
+              child: _SurfaceBlock(
+                title: '缓存任务',
+                actionLabel: snapshot.isPaused ? '继续' : '暂停',
+                onActionTap: snapshot.isPaused
+                    ? _resumeDownloadQueue
+                    : _pauseDownloadQueue,
+                child: Column(
+                  children: groupedTasks.entries
+                      .map((MapEntry<String, List<DownloadQueueTask>> entry) {
+                        final List<DownloadQueueTask> tasks = entry.value;
+                        final DownloadQueueTask displayTask = tasks.first;
+                        final bool isActiveComic =
+                            snapshot.activeTask?.comicKey ==
+                            displayTask.comicKey;
+                        final DownloadQueueTask taskForStatus = isActiveComic
+                            ? snapshot.activeTask!
+                            : displayTask;
+                        final String subtitle = isActiveComic
+                            ? taskForStatus.progressLabel
+                            : '等待缓存 ${tasks.length} 话';
+
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Material(
+                            color: const Color(0xFFF6F7F9),
+                            borderRadius: BorderRadius.circular(18),
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.fromLTRB(
+                                16,
+                                8,
+                                8,
+                                8,
+                              ),
+                              leading: CircleAvatar(
+                                backgroundColor: isActiveComic
+                                    ? const Color(0xFF0E8B84)
+                                    : const Color(0xFFCBD4DE),
+                                foregroundColor: Colors.white,
+                                child: Text('${tasks.length}'),
+                              ),
+                              title: Text(
+                                displayTask.comicTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              subtitle: Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  subtitle,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              trailing: IconButton(
+                                onPressed: () =>
+                                    _confirmRemoveQueuedComic(displayTask),
+                                icon: const Icon(Icons.delete_outline_rounded),
+                              ),
+                            ),
+                          ),
+                        );
+                      })
+                      .toList(growable: false),
+                ),
+              ),
+            );
+          },
+    );
+  }
+
   List<Widget> _buildProfileSections(ProfilePageData page) {
     final List<Widget> sections = <Widget>[
       ProfilePageView(
@@ -1182,11 +2143,12 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
               : item.comicHref;
           _navigateToHref(targetHref);
         },
+        afterContinueReading: _buildCachedComicsSection(),
       ),
     ];
 
     sections.add(const SizedBox(height: 18));
-    sections.add(_buildCachedComicsSection());
+    sections.add(_buildDownloadQueueSection());
     return sections;
   }
 
@@ -1232,6 +2194,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
                 onTap: item.comicHref.isEmpty
                     ? null
                     : () => _navigateToHref(item.comicHref),
+                onDelete: () => _confirmDeleteCachedComic(item),
               ),
             );
           },
@@ -1442,118 +2405,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     if (selectedChapters == null || selectedChapters.isEmpty || !mounted) {
       return;
     }
-    await _downloadSelectedChapters(page, selectedChapters);
-  }
-
-  Future<void> _downloadSelectedChapters(
-    DetailPageData page,
-    List<ChapterData> chapters,
-  ) async {
-    final ValueNotifier<_ChapterBatchDownloadProgress> progress =
-        ValueNotifier<_ChapterBatchDownloadProgress>(
-          const _ChapterBatchDownloadProgress(
-            label: '准备下载…',
-            completedChapters: 0,
-            totalChapters: 0,
-          ),
-        );
-
-    unawaited(
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (BuildContext context) {
-          return PopScope(
-            canPop: false,
-            child: AlertDialog(
-              title: const Text('缓存章节中'),
-              content: ValueListenableBuilder<_ChapterBatchDownloadProgress>(
-                valueListenable: progress,
-                builder:
-                    (
-                      BuildContext context,
-                      _ChapterBatchDownloadProgress value,
-                      Widget? _,
-                    ) {
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text(
-                            value.label,
-                            style: const TextStyle(height: 1.5),
-                          ),
-                          const SizedBox(height: 14),
-                          LinearProgressIndicator(value: value.fraction),
-                        ],
-                      );
-                    },
-              ),
-            ),
-          );
-        },
-      ),
-    );
-
-    try {
-      await _session.ensureInitialized();
-      final Uri detailUri = Uri.parse(page.uri);
-      for (int index = 0; index < chapters.length; index += 1) {
-        final ChapterData chapter = chapters[index];
-        final Uri chapterUri = AppConfig.resolveNavigationUri(
-          chapter.href,
-          currentUri: detailUri,
-        );
-        progress.value = _ChapterBatchDownloadProgress(
-          label: '正在解析 ${chapter.label}',
-          completedChapters: index.toDouble(),
-          totalChapters: chapters.length,
-        );
-        final ReaderPageData readerPage = await _extractReaderPageForDownload(
-          chapterUri,
-        );
-        progress.value = _ChapterBatchDownloadProgress(
-          label: '正在缓存 ${chapter.label}',
-          completedChapters: index.toDouble(),
-          totalChapters: chapters.length,
-        );
-        await _downloadService.downloadChapter(
-          readerPage,
-          cookieHeader: _session.cookieHeader,
-          comicUri: page.uri,
-          chapterHref: chapterUri.toString(),
-          chapterLabel: chapter.label,
-          coverUrl: page.coverUrl,
-          onProgress: (ChapterDownloadProgress imageProgress) async {
-            progress.value = _ChapterBatchDownloadProgress(
-              label: '${chapter.label} · ${imageProgress.currentLabel}',
-              completedChapters: index + imageProgress.fraction,
-              totalChapters: chapters.length,
-            );
-          },
-        );
-      }
-
-      await _refreshCachedComics();
-      if (!mounted) {
-        return;
-      }
-      Navigator.of(context, rootNavigator: true).pop();
-      _showSnackBar('已缓存 ${chapters.length} 话');
-    } catch (error) {
-      if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      final String message = switch (error) {
-        TimeoutException _ => '章节解析超时',
-        HttpException httpError => httpError.message,
-        FileSystemException fileError => fileError.message,
-        _ => error.toString(),
-      };
-      _showSnackBar('缓存失败：$message');
-    } finally {
-      progress.dispose();
-    }
+    await _enqueueSelectedChapters(page, selectedChapters);
   }
 
   Widget _buildHeaderCard(
@@ -1617,35 +2469,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
             ),
             if (showSearchBar) ...<Widget>[
               const SizedBox(height: 14),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF7F8FA),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFFE4E8EE)),
-                ),
-                child: Row(
-                  children: <Widget>[
-                    Icon(Icons.search_rounded, color: colorScheme.primary),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(
-                        controller: _searchController,
-                        onSubmitted: _submitSearch,
-                        textInputAction: TextInputAction.search,
-                        decoration: const InputDecoration(
-                          border: InputBorder.none,
-                          hintText: '搜尋漫畫、作者或題材',
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => _submitSearch(_searchController.text),
-                      icon: const Icon(Icons.arrow_forward_rounded),
-                    ),
-                  ],
-                ),
-              ),
+              _buildSearchField(context),
             ],
           ],
         ),
@@ -1685,18 +2509,14 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
 
   Widget _buildErrorState(BuildContext context) {
     return ListView(
+      controller: _standardScrollController,
       physics: const AlwaysScrollableScrollPhysics(
         parent: BouncingScrollPhysics(),
       ),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
       children: <Widget>[
-        _buildHeaderCard(
-          context,
-          title: _pageTitle,
-          showBackButton: _shouldShowBackButton,
-          showSearchBar: _shouldShowSearchBar,
-        ),
-        const SizedBox(height: 18),
+        ..._buildStandardTopContent(context),
+        _buildDownloadQueueBanner(),
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
@@ -1911,13 +2731,29 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         _SurfaceBlock(
           title: '榜單切換',
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               if (page.categories.isNotEmpty)
-                _LinkChipWrap(items: page.categories, onTap: _navigateToHref),
+                _RankFilterGroup(
+                  label: '榜單類型',
+                  helperText: '切換不同分類榜單',
+                  icon: Icons.grid_view_rounded,
+                  items: page.categories,
+                  onTap: _navigateRankFilter,
+                ),
               if (page.categories.isNotEmpty && page.periods.isNotEmpty)
-                const SizedBox(height: 14),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: Container(height: 1, color: const Color(0xFFE7EBEF)),
+                ),
               if (page.periods.isNotEmpty)
-                _LinkChipWrap(items: page.periods, onTap: _navigateToHref),
+                _RankFilterGroup(
+                  label: '統計週期',
+                  helperText: '查看不同時間範圍',
+                  icon: Icons.schedule_rounded,
+                  items: page.periods,
+                  onTap: _navigateRankFilter,
+                ),
             ],
           ),
         ),
@@ -1929,17 +2765,25 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       _SurfaceBlock(
         title: '榜单列表',
         child: Column(
-          children: page.items
-              .map(
-                (RankEntryData item) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _RankCard(
-                    item: item,
-                    onTap: () => _navigateToHref(item.href),
-                  ),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            if (_isLoading) ...<Widget>[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: const LinearProgressIndicator(minHeight: 6),
+              ),
+              const SizedBox(height: 14),
+            ],
+            ...page.items.map(
+              (RankEntryData item) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _RankCard(
+                  item: item,
+                  onTap: () => _navigateToHref(item.href),
                 ),
-              )
-              .toList(growable: false),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -2555,26 +3399,102 @@ class _FilterGroup extends StatelessWidget {
   }
 }
 
-class _LinkChipWrap extends StatelessWidget {
-  const _LinkChipWrap({required this.items, required this.onTap});
+class _RankFilterGroup extends StatelessWidget {
+  const _RankFilterGroup({
+    required this.label,
+    required this.helperText,
+    required this.icon,
+    required this.items,
+    required this.onTap,
+  });
 
+  final String label;
+  final String helperText;
+  final IconData icon;
   final List<LinkAction> items;
   final ValueChanged<String> onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: items
-          .map(
-            (LinkAction item) => _LinkChip(
-              label: item.label,
-              active: item.active,
-              onTap: () => onTap(item.href),
+    final Widget chips = SizedBox(
+      width: double.infinity,
+      child: Wrap(
+        alignment: WrapAlignment.start,
+        spacing: 8,
+        runSpacing: 8,
+        children: items
+            .map(
+              (LinkAction item) => _LinkChip(
+                label: item.label,
+                active: item.active,
+                onTap: () => onTap(item.href),
+              ),
+            )
+            .toList(growable: false),
+      ),
+    );
+
+    Widget buildLabelCard() {
+      return Container(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7F8FA),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE2E7EE)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Icon(icon, size: 18, color: const Color(0xFF0E8B84)),
+            const SizedBox(height: 10),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
             ),
-          )
-          .toList(growable: false),
+            if (helperText.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 4),
+              Text(
+                helperText,
+                style: const TextStyle(
+                  color: Color(0xFF6B7280),
+                  fontSize: 11,
+                  height: 1.3,
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        if (constraints.maxWidth < 420) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              buildLabelCard(),
+              const SizedBox(height: 12),
+              chips,
+            ],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            SizedBox(width: 110, child: buildLabelCard()),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: chips,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -3042,10 +3962,15 @@ class _ChapterGrid extends StatelessWidget {
 }
 
 class _CachedComicCard extends StatelessWidget {
-  const _CachedComicCard({required this.item, required this.onTap});
+  const _CachedComicCard({
+    required this.item,
+    required this.onTap,
+    this.onDelete,
+  });
 
   final CachedComicLibraryEntry item;
   final VoidCallback? onTap;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -3075,23 +4000,47 @@ class _CachedComicCard extends StatelessWidget {
                   Positioned(
                     right: 8,
                     top: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xCC111111),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        '${item.cachedChapterCount}话',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xCC111111),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '${item.cachedChapterCount}话',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                         ),
-                      ),
+                        if (onDelete != null) ...<Widget>[
+                          const SizedBox(width: 6),
+                          Material(
+                            color: const Color(0xCC111111),
+                            borderRadius: BorderRadius.circular(999),
+                            child: InkWell(
+                              onTap: onDelete,
+                              borderRadius: BorderRadius.circular(999),
+                              child: const Padding(
+                                padding: EdgeInsets.all(6),
+                                child: Icon(
+                                  Icons.delete_outline_rounded,
+                                  size: 16,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],
@@ -3127,30 +4076,22 @@ class _ChapterPickerSection {
   final List<ChapterData> chapters;
 }
 
-class _ChapterBatchDownloadProgress {
-  const _ChapterBatchDownloadProgress({
-    required this.label,
-    required this.completedChapters,
-    required this.totalChapters,
+class _PendingPageLoad {
+  _PendingPageLoad({
+    required this.requestedUri,
+    required this.queryKey,
+    required this.intent,
+    required this.loadId,
+    required this.targetTabIndex,
+    required this.completer,
   });
 
-  final String label;
-  final double completedChapters;
-  final int totalChapters;
-
-  double get fraction {
-    if (totalChapters <= 0) {
-      return 0;
-    }
-    final double value = completedChapters / totalChapters;
-    if (value < 0) {
-      return 0;
-    }
-    if (value > 1) {
-      return 1;
-    }
-    return value;
-  }
+  final Uri requestedUri;
+  final PageQueryKey queryKey;
+  final NavigationIntent intent;
+  final int loadId;
+  final int targetTabIndex;
+  final Completer<EasyCopyPage> completer;
 }
 
 class _NetworkImageBox extends StatelessWidget {

@@ -10,6 +10,7 @@ class ProfilePageView extends StatelessWidget {
     required this.onLogout,
     required this.onOpenComic,
     required this.onOpenHistory,
+    this.afterContinueReading,
     super.key,
   });
 
@@ -18,6 +19,7 @@ class ProfilePageView extends StatelessWidget {
   final VoidCallback onLogout;
   final ValueChanged<String> onOpenComic;
   final ValueChanged<ProfileHistoryItem> onOpenHistory;
+  final Widget? afterContinueReading;
 
   @override
   Widget build(BuildContext context) {
@@ -136,6 +138,10 @@ class ProfilePageView extends StatelessWidget {
             ),
           ),
         ],
+        if (afterContinueReading != null) ...<Widget>[
+          const SizedBox(height: 18),
+          afterContinueReading!,
+        ],
         if (page.collections.isNotEmpty) ...<Widget>[
           const SizedBox(height: 18),
           _SectionCard(
@@ -185,10 +191,7 @@ class ProfilePageView extends StatelessWidget {
 }
 
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({
-    required this.child,
-    this.title,
-  });
+  const _SectionCard({required this.child, this.title});
 
   final String? title;
   final Widget child;
@@ -226,10 +229,7 @@ class _AvatarImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (imageUrl.isEmpty) {
-      return const CircleAvatar(
-        radius: 28,
-        child: Icon(Icons.person_rounded),
-      );
+      return const CircleAvatar(radius: 28, child: Icon(Icons.person_rounded));
     }
     return ClipOval(
       child: CachedNetworkImage(
