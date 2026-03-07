@@ -57,15 +57,15 @@ class HostProbeSnapshot {
   factory HostProbeSnapshot.fromJson(Map<String, Object?> json) {
     return HostProbeSnapshot(
       selectedHost: (json['selectedHost'] as String?) ?? '',
-      checkedAt: DateTime.tryParse((json['checkedAt'] as String?) ?? '') ??
+      checkedAt:
+          DateTime.tryParse((json['checkedAt'] as String?) ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
       probes: ((json['probes'] as List<Object?>?) ?? const <Object?>[])
           .whereType<Map>()
           .map(
             (Map<Object?, Object?> value) => HostProbeRecord.fromJson(
               value.map(
-                (Object? key, Object? value) =>
-                    MapEntry(key.toString(), value),
+                (Object? key, Object? value) => MapEntry(key.toString(), value),
               ),
             ),
           )
@@ -152,6 +152,10 @@ class HostManager {
 
   Uri get baseUri => Uri.parse('https://$currentHost/');
 
+  HostProbeSnapshot? get probeSnapshot => _snapshot;
+
+  String? get sessionPinnedHost => _sessionPinnedHost;
+
   @visibleForTesting
   HostProbeSnapshot? get snapshot => _snapshot;
 
@@ -172,14 +176,13 @@ class HostManager {
       _candidateHosts.map(_probeHost),
     );
     final List<HostProbeRecord> ranked = _sortProbes(probes);
-    final String nextHost = ranked.firstWhere(
-      (HostProbeRecord probe) => probe.success,
-      orElse: () => HostProbeRecord(
-        host: currentHost,
-        success: true,
-        latencyMs: 0,
-      ),
-    ).host;
+    final String nextHost = ranked
+        .firstWhere(
+          (HostProbeRecord probe) => probe.success,
+          orElse: () =>
+              HostProbeRecord(host: currentHost, success: true, latencyMs: 0),
+        )
+        .host;
     _currentHost = nextHost;
     _snapshot = HostProbeSnapshot(
       selectedHost: nextHost,
@@ -212,14 +215,13 @@ class HostManager {
     final Set<String> excludedHosts = exclude.map(_normalizeHost).toSet()
       ..add(_normalizeHost(currentHost));
     final List<HostProbeRecord> ranked = _sortProbes(_snapshot?.probes ?? []);
-    final HostProbeRecord? nextHost = ranked.cast<HostProbeRecord?>().firstWhere(
-      (HostProbeRecord? probe) {
-        return probe != null &&
-            probe.success &&
-            !excludedHosts.contains(_normalizeHost(probe.host));
-      },
-      orElse: () => null,
-    );
+    final HostProbeRecord? nextHost = ranked
+        .cast<HostProbeRecord?>()
+        .firstWhere((HostProbeRecord? probe) {
+          return probe != null &&
+              probe.success &&
+              !excludedHosts.contains(_normalizeHost(probe.host));
+        }, orElse: () => null);
     if (nextHost == null) {
       return currentHost;
     }
@@ -319,11 +321,7 @@ class HostManager {
       );
     } catch (_) {
       stopwatch.stop();
-      return HostProbeRecord(
-        host: host,
-        success: false,
-        latencyMs: 999999,
-      );
+      return HostProbeRecord(host: host, success: false, latencyMs: 999999);
     }
   }
 

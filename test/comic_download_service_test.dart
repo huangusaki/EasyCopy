@@ -124,4 +124,47 @@ void main() {
 
     expect(comicDirectory.existsSync(), isFalse);
   });
+
+  test('loadCachedReaderPage rebuilds a local reader payload from manifest', () async {
+    final Directory tempDir = await Directory.systemTemp.createTemp(
+      'easy_copy_cached_reader_payload',
+    );
+    addTearDown(() => tempDir.delete(recursive: true));
+
+    final ComicDownloadService service = ComicDownloadService(
+      client: MockClient((http.Request request) async {
+        return http.Response.bytes(
+          utf8.encode('image:${request.url.pathSegments.last}'),
+          200,
+          headers: <String, String>{'content-type': 'image/jpeg'},
+        );
+      }),
+      baseDirectoryProvider: () async => tempDir,
+    );
+
+    await service.downloadChapter(
+      buildReaderPage(),
+      chapterLabel: 'Chapter 1',
+      comicUri: 'https://www.2026copy.com/comic/demo',
+      coverUrl: 'https://img.example/demo.jpg',
+    );
+
+    final ReaderPageData? cachedPage = await service.loadCachedReaderPage(
+      'https://www.2026copy.com/comic/demo/chapter/1',
+      prevHref: 'https://www.2026copy.com/comic/demo/chapter/0',
+      nextHref: 'https://www.2026copy.com/comic/demo/chapter/2',
+      catalogHref: 'https://www.2026copy.com/comic/demo',
+    );
+
+    expect(cachedPage, isNotNull);
+    expect(cachedPage?.comicTitle, 'Demo Comic');
+    expect(cachedPage?.chapterTitle, 'Chapter 1');
+    expect(cachedPage?.prevHref, contains('/chapter/0'));
+    expect(cachedPage?.nextHref, contains('/chapter/2'));
+    expect(cachedPage?.imageUrls, hasLength(2));
+    expect(
+      cachedPage?.imageUrls.every((String value) => value.startsWith('file:')),
+      isTrue,
+    );
+  });
 }

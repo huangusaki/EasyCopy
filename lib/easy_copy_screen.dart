@@ -5,8 +5,10 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:crypto/crypto.dart';
 import 'package:easy_copy/config/app_config.dart';
+import 'package:easy_copy/models/app_preferences.dart';
 import 'package:easy_copy/models/page_models.dart';
 import 'package:easy_copy/page_transition_scope.dart';
+import 'package:easy_copy/services/app_preferences_controller.dart';
 import 'package:easy_copy/services/comic_download_service.dart';
 import 'package:easy_copy/services/download_queue_store.dart';
 import 'package:easy_copy/services/host_manager.dart';
@@ -14,12 +16,14 @@ import 'package:easy_copy/services/image_cache.dart';
 import 'package:easy_copy/services/page_cache_store.dart';
 import 'package:easy_copy/services/page_repository.dart';
 import 'package:easy_copy/services/primary_tab_session_store.dart';
+import 'package:easy_copy/services/reader_platform_bridge.dart';
 import 'package:easy_copy/services/reader_progress_store.dart';
 import 'package:easy_copy/services/site_session.dart';
 import 'package:easy_copy/webview/page_extractor_script.dart';
 import 'package:easy_copy/widgets/auth_webview_screen.dart';
 import 'package:easy_copy/widgets/native_login_screen.dart';
 import 'package:easy_copy/widgets/profile_page_view.dart';
+import 'package:easy_copy/widgets/settings_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -34,19 +38,34 @@ Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
 }
 
 class EasyCopyScreen extends StatefulWidget {
-  const EasyCopyScreen({super.key});
+  const EasyCopyScreen({
+    super.key,
+    this.preferencesController,
+  });
+
+  final AppPreferencesController? preferencesController;
 
   @override
   State<EasyCopyScreen> createState() => _EasyCopyScreenState();
 }
 
 class _EasyCopyScreenState extends State<EasyCopyScreen> {
+  static const List<DeviceOrientation> _defaultOrientations =
+      <DeviceOrientation>[
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ];
+
   late final WebViewController _controller;
   late final WebViewController _downloadController;
+  late final AppPreferencesController _preferencesController;
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _standardScrollController = ScrollController();
   final ScrollController _readerScrollController = ScrollController();
+  final ReaderPlatformBridge _readerPlatformBridge =
+      ReaderPlatformBridge.instance;
   final HostManager _hostManager = HostManager.instance;
   final SiteSession _session = SiteSession.instance;
   final ReaderProgressStore _readerProgressStore = ReaderProgressStore.instance;
@@ -61,6 +80,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   final ValueNotifier<DownloadQueueSnapshot> _downloadQueueSnapshotNotifier =
       ValueNotifier<DownloadQueueSnapshot>(const DownloadQueueSnapshot());
   late final PageRepository _pageRepository;
+  late PageController _readerPageController;
 
   int _selectedIndex = 0;
   int _activeLoadId = 0;
@@ -73,11 +93,24 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   int _downloadActiveLoadId = 0;
   Completer<ReaderPageData>? _downloadExtractionCompleter;
   Timer? _readerProgressDebounce;
-  double? _lastPersistedReaderOffset;
+  Timer? _readerAutoTurnTimer;
+  Timer? _readerClockTimer;
+  ReaderPosition? _lastPersistedReaderPosition;
   bool _isProcessingDownloadQueue = false;
+  bool _isUpdatingHostSettings = false;
+  bool _isReaderSettingsOpen = false;
+  bool _readerPresentationSyncScheduled = false;
   bool _suspendStandardScrollTracking = false;
+  int _currentReaderPageIndex = 0;
+  int? _batteryLevel;
+  _AppliedReaderEnvironment? _appliedReaderEnvironment;
+  ReaderPreferences? _lastObservedReaderPreferences;
   final Set<String> _cancelledComicKeys = <String>{};
   final Map<String, String> _cancelledComicTitles = <String, String>{};
+  final Map<int, ScrollController> _readerPageScrollControllers =
+      <int, ScrollController>{};
+  StreamSubscription<int>? _batterySubscription;
+  StreamSubscription<ReaderVolumeKeyAction>? _volumeKeySubscription;
   _PendingPageLoad? _pendingPageLoad;
   NavigationIntent? _nextFreshNavigationIntent;
   bool? _nextFreshPreserveCurrentPage;
@@ -85,13 +118,33 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   @override
   void initState() {
     super.initState();
+    _preferencesController =
+        widget.preferencesController ?? AppPreferencesController.instance;
+    _readerPageController = PageController();
+    _lastObservedReaderPreferences = _preferencesController.readerPreferences;
     _controller = _buildController();
     _downloadController = _buildDownloadController();
     _pageRepository = PageRepository(
       standardPageLoader: _loadStandardPageFresh,
     );
+    _preferencesController.addListener(_handlePreferencesChanged);
     _standardScrollController.addListener(_handleStandardScroll);
     _readerScrollController.addListener(_handleReaderScroll);
+    if (_readerPlatformBridge.isAndroidSupported) {
+      _batterySubscription = _readerPlatformBridge.batteryStream.listen((
+        int level,
+      ) {
+        if (!mounted || _batteryLevel == level) {
+          return;
+        }
+        setState(() {
+          _batteryLevel = level;
+        });
+      });
+      _volumeKeySubscription = _readerPlatformBridge.volumeKeyEventStream.listen(
+        _handleReaderVolumeKeyAction,
+      );
+    }
     unawaited(_bootstrap());
     _syncSearchController();
   }
@@ -100,12 +153,20 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   void dispose() {
     _persistCurrentReaderProgress();
     _readerProgressDebounce?.cancel();
+    _readerAutoTurnTimer?.cancel();
+    _readerClockTimer?.cancel();
+    _batterySubscription?.cancel();
+    _volumeKeySubscription?.cancel();
+    _preferencesController.removeListener(_handlePreferencesChanged);
     _standardScrollController.removeListener(_handleStandardScroll);
     _readerScrollController.removeListener(_handleReaderScroll);
+    _disposeReaderPagedScrollControllers();
+    _readerPageController.dispose();
     _searchController.dispose();
     _standardScrollController.dispose();
     _readerScrollController.dispose();
     _downloadQueueSnapshotNotifier.dispose();
+    unawaited(_restoreDefaultReaderEnvironment());
     super.dispose();
   }
 
@@ -119,6 +180,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   bool get _isLoading => _currentEntry.isLoading;
 
   String? get _errorMessage => _currentEntry.errorMessage;
+
+  ReaderPreferences get _readerPreferences =>
+      _preferencesController.readerPreferences;
 
   String _authScopeForUri(Uri uri) {
     if (_isProfileUri(uri)) {
@@ -146,6 +210,272 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     if (syncSearch) {
       _syncSearchController();
     }
+  }
+
+  void _handlePreferencesChanged() {
+    final ReaderPreferences previousPreferences =
+        _lastObservedReaderPreferences ?? _readerPreferences;
+    final ReaderPreferences nextPreferences = _readerPreferences;
+    _lastObservedReaderPreferences = nextPreferences;
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {});
+
+    final bool requiresReaderRestore =
+        previousPreferences.readingDirection != nextPreferences.readingDirection ||
+        previousPreferences.pageFit != nextPreferences.pageFit ||
+        previousPreferences.openingPosition != nextPreferences.openingPosition;
+    final EasyCopyPage? page = _page;
+    if (requiresReaderRestore && page is ReaderPageData) {
+      _handleReaderPageLoaded(
+        page,
+        previousUri: page.uri,
+        forceRestore: true,
+      );
+      return;
+    }
+    _scheduleReaderPresentationSync();
+  }
+
+  void _handleReaderVolumeKeyAction(ReaderVolumeKeyAction action) {
+    if (!_isReaderMode || !_readerPreferences.useVolumeKeysForPaging) {
+      return;
+    }
+    switch (action) {
+      case ReaderVolumeKeyAction.previous:
+        unawaited(_stepReaderBackward());
+      case ReaderVolumeKeyAction.next:
+        unawaited(_stepReaderForward());
+    }
+  }
+
+  Future<void> _stepReaderForward() async {
+    if (_readerPreferences.isPaged) {
+      final EasyCopyPage? page = _page;
+      if (page is! ReaderPageData) {
+        return;
+      }
+      final int nextPageIndex = _currentReaderPageIndex + 1;
+      if (nextPageIndex >= page.imageUrls.length) {
+        return;
+      }
+      await _animateToReaderPage(nextPageIndex);
+      return;
+    }
+    if (!_readerScrollController.hasClients) {
+      return;
+    }
+    final double viewportExtent = _readerScrollController.position.viewportDimension;
+    final double maxExtent = _readerScrollController.position.maxScrollExtent;
+    final double nextOffset = (_readerScrollController.offset + viewportExtent)
+        .clamp(0, maxExtent)
+        .toDouble();
+    if ((nextOffset - _readerScrollController.offset).abs() < 1) {
+      return;
+    }
+    await _readerScrollController.animateTo(
+      nextOffset,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+    _restartReaderAutoTurn();
+  }
+
+  Future<void> _stepReaderBackward() async {
+    if (_readerPreferences.isPaged) {
+      final int previousPageIndex = _currentReaderPageIndex - 1;
+      if (previousPageIndex < 0) {
+        return;
+      }
+      await _animateToReaderPage(previousPageIndex);
+      return;
+    }
+    if (!_readerScrollController.hasClients) {
+      return;
+    }
+    final double viewportExtent = _readerScrollController.position.viewportDimension;
+    final double previousOffset =
+        (_readerScrollController.offset - viewportExtent)
+            .clamp(0, _readerScrollController.position.maxScrollExtent)
+            .toDouble();
+    if ((previousOffset - _readerScrollController.offset).abs() < 1) {
+      return;
+    }
+    await _readerScrollController.animateTo(
+      previousOffset,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+    _restartReaderAutoTurn();
+  }
+
+  Future<void> _animateToReaderPage(int pageIndex) async {
+    if (!_readerPageController.hasClients) {
+      return;
+    }
+    await _readerPageController.animateToPage(
+      pageIndex,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+    _restartReaderAutoTurn();
+  }
+
+  void _scheduleReaderPresentationSync() {
+    if (_readerPresentationSyncScheduled) {
+      return;
+    }
+    _readerPresentationSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _readerPresentationSyncScheduled = false;
+      if (!mounted) {
+        return;
+      }
+      final EasyCopyPage? page = _page;
+      unawaited(
+        _applyReaderEnvironment(page is ReaderPageData ? page : null),
+      );
+    });
+  }
+
+  Future<void> _applyReaderEnvironment(ReaderPageData? page) async {
+    final _AppliedReaderEnvironment nextEnvironment = page == null
+        ? const _AppliedReaderEnvironment.standard()
+        : _AppliedReaderEnvironment.reader(
+            orientation: _readerPreferences.screenOrientation,
+            fullscreen: _readerPreferences.fullscreen,
+            keepScreenOn: _readerPreferences.keepScreenOn,
+            volumePagingEnabled:
+                _readerPlatformBridge.isAndroidSupported &&
+                _readerPreferences.useVolumeKeysForPaging,
+          );
+    if (_appliedReaderEnvironment != nextEnvironment) {
+      if (page == null) {
+        await _restoreDefaultReaderEnvironment();
+      } else {
+        await SystemChrome.setPreferredOrientations(
+          nextEnvironment.orientation ==
+                  ReaderScreenOrientation.landscape
+              ? const <DeviceOrientation>[
+                  DeviceOrientation.landscapeLeft,
+                  DeviceOrientation.landscapeRight,
+                ]
+              : const <DeviceOrientation>[DeviceOrientation.portraitUp],
+        );
+        await SystemChrome.setEnabledSystemUIMode(
+          nextEnvironment.fullscreen
+              ? SystemUiMode.immersiveSticky
+              : SystemUiMode.edgeToEdge,
+        );
+        await _readerPlatformBridge.setKeepScreenOn(
+          nextEnvironment.keepScreenOn,
+        );
+        await _readerPlatformBridge.setVolumePagingEnabled(
+          nextEnvironment.volumePagingEnabled,
+        );
+        _appliedReaderEnvironment = nextEnvironment;
+      }
+    }
+
+    _syncReaderClockTicker(enabled: page != null && _readerPreferences.showClock);
+    if (page == null) {
+      _readerAutoTurnTimer?.cancel();
+      _readerAutoTurnTimer = null;
+      return;
+    }
+    _restartReaderAutoTurn();
+  }
+
+  Future<void> _restoreDefaultReaderEnvironment() async {
+    await SystemChrome.setPreferredOrientations(_defaultOrientations);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    await _readerPlatformBridge.setKeepScreenOn(false);
+    await _readerPlatformBridge.setVolumePagingEnabled(false);
+    _appliedReaderEnvironment = const _AppliedReaderEnvironment.standard();
+  }
+
+  void _syncReaderClockTicker({required bool enabled}) {
+    if (!enabled) {
+      _readerClockTimer?.cancel();
+      _readerClockTimer = null;
+      return;
+    }
+    if (_readerClockTimer != null) {
+      return;
+    }
+    _readerClockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {});
+    });
+  }
+
+  void _restartReaderAutoTurn() {
+    _readerAutoTurnTimer?.cancel();
+    final EasyCopyPage? page = _page;
+    if (page is! ReaderPageData ||
+        _readerPreferences.autoPageTurnSeconds <= 0 ||
+        _isReaderSettingsOpen) {
+      return;
+    }
+    _readerAutoTurnTimer = Timer(
+      Duration(seconds: _readerPreferences.autoPageTurnSeconds),
+      () async {
+        if (!mounted || _page is! ReaderPageData) {
+          return;
+        }
+        if (_readerPreferences.isPaged) {
+          final int nextPageIndex = _currentReaderPageIndex + 1;
+          if (nextPageIndex >= page.imageUrls.length) {
+            return;
+          }
+          await _animateToReaderPage(nextPageIndex);
+          return;
+        }
+        if (!_readerScrollController.hasClients) {
+          return;
+        }
+        final double maxExtent = _readerScrollController.position.maxScrollExtent;
+        final double viewportExtent =
+            _readerScrollController.position.viewportDimension;
+        final double nextOffset =
+            (_readerScrollController.offset + viewportExtent)
+                .clamp(0, maxExtent)
+                .toDouble();
+        if ((nextOffset - _readerScrollController.offset).abs() < 1) {
+          return;
+        }
+        await _readerScrollController.animateTo(
+          nextOffset,
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+        );
+        _restartReaderAutoTurn();
+      },
+    );
+  }
+
+  void _disposeReaderPagedScrollControllers() {
+    final List<ScrollController> controllers = _readerPageScrollControllers.values
+        .toList(growable: false);
+    _readerPageScrollControllers.clear();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final ScrollController controller in controllers) {
+        controller.dispose();
+      }
+    });
+  }
+
+  void _replaceReaderPageController({required int initialPage}) {
+    final PageController previousController = _readerPageController;
+    _readerPageController = PageController(initialPage: initialPage);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      previousController.dispose();
+    });
   }
 
   Future<void> _bootstrap() async {
@@ -1036,6 +1366,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       }
       _tabSessionStore.updatePage(tabIndex, page);
     }, syncSearch: switchToTab || tabIndex == _selectedIndex);
+    _scheduleReaderPresentationSync();
 
     if (tabIndex != _selectedIndex) {
       return;
@@ -1336,6 +1667,17 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   }
 
   void _navigateToHref(String href) {
+    unawaited(_openHref(href));
+  }
+
+  Future<void> _openHref(
+    String href, {
+    String prevHref = '',
+    String nextHref = '',
+    String catalogHref = '',
+    NavigationIntent historyMode = NavigationIntent.push,
+    bool preferCached = true,
+  }) async {
     if (href.trim().isEmpty) {
       return;
     }
@@ -1344,10 +1686,101 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       currentUri: _currentUri,
     );
     if (_isLoginUri(targetUri)) {
-      unawaited(_openAuthFlow());
+      await _openAuthFlow();
       return;
     }
-    unawaited(_loadUri(targetUri));
+    if (preferCached && _isReaderChapterUri(targetUri)) {
+      final bool openedFromCache = await _tryOpenCachedChapterReader(
+        targetUri.toString(),
+        prevHref: prevHref,
+        nextHref: nextHref,
+        catalogHref: catalogHref,
+        historyMode: historyMode,
+      );
+      if (openedFromCache) {
+        return;
+      }
+    }
+    await _loadUri(targetUri, historyMode: historyMode);
+  }
+
+  bool _isReaderChapterUri(Uri uri) {
+    return uri.pathSegments.contains('chapter');
+  }
+
+  Future<bool> _tryOpenCachedChapterReader(
+    String href, {
+    String prevHref = '',
+    String nextHref = '',
+    String catalogHref = '',
+    NavigationIntent historyMode = NavigationIntent.push,
+  }) async {
+    final ReaderPageData? cachedPage = await _downloadService.loadCachedReaderPage(
+      href,
+      prevHref: prevHref,
+      nextHref: nextHref,
+      catalogHref: catalogHref,
+    );
+    if (cachedPage == null) {
+      return false;
+    }
+    _persistVisiblePageState();
+    final int targetTabIndex = _prepareRouteEntry(
+      Uri.parse(cachedPage.uri),
+      intent: historyMode,
+      preserveVisiblePage: false,
+    );
+    _applyLoadedPage(
+      cachedPage,
+      targetTabIndex: targetTabIndex,
+      switchToTab: true,
+    );
+    return true;
+  }
+
+  void _openDetailChapter(DetailPageData page, String href) {
+    if (href.trim().isEmpty) {
+      return;
+    }
+    final _AdjacentChapterLinks links = _adjacentChapterLinksForDetail(
+      page,
+      href,
+    );
+    unawaited(
+      _openHref(
+        href,
+        prevHref: links.prevHref,
+        nextHref: links.nextHref,
+        catalogHref: page.uri,
+      ),
+    );
+  }
+
+  List<ChapterData> _detailChapterList(DetailPageData page) {
+    if (page.chapterGroups.isNotEmpty) {
+      return page.chapterGroups
+          .expand((ChapterGroupData group) => group.chapters)
+          .toList(growable: false);
+    }
+    return page.chapters;
+  }
+
+  _AdjacentChapterLinks _adjacentChapterLinksForDetail(
+    DetailPageData page,
+    String href,
+  ) {
+    final List<ChapterData> chapters = _detailChapterList(page);
+    final String targetKey = _chapterPathKey(href);
+    final int index = chapters.indexWhere(
+      (ChapterData chapter) => _chapterPathKey(chapter.href) == targetKey,
+    );
+    if (index == -1) {
+      return const _AdjacentChapterLinks();
+    }
+    return _AdjacentChapterLinks(
+      prevHref: index > 0 ? chapters[index - 1].href : '',
+      nextHref: index + 1 < chapters.length ? chapters[index + 1].href : '',
+    );
   }
 
   Future<void> _openAuthFlow() async {
@@ -1399,6 +1832,98 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     });
     if (showFeedback) {
       _showSnackBar('已退出登录');
+    }
+  }
+
+  Future<void> _refreshHostSettings() async {
+    if (_isUpdatingHostSettings) {
+      return;
+    }
+    _mutateSessionState(() {
+      _isUpdatingHostSettings = true;
+    }, syncSearch: false);
+    try {
+      await _hostManager.refreshProbes(force: true);
+      await _syncSessionCookiesToCurrentHost();
+      if (!mounted) {
+        return;
+      }
+      final bool isPinned = _hostManager.sessionPinnedHost != null;
+      _showSnackBar(
+        isPinned
+            ? '测速完成，当前仍手动锁定到 ${_hostManager.currentHost}'
+            : '测速完成，已自动选择 ${_hostManager.currentHost}',
+      );
+    } catch (_) {
+      if (mounted) {
+        _showSnackBar('测速失败，请稍后重试');
+      }
+    } finally {
+      if (mounted) {
+        _mutateSessionState(() {
+          _isUpdatingHostSettings = false;
+        }, syncSearch: false);
+      } else {
+        _isUpdatingHostSettings = false;
+      }
+    }
+  }
+
+  Future<void> _selectHost(String host) async {
+    final String normalizedHost = host.trim().toLowerCase();
+    if (normalizedHost.isEmpty || _isUpdatingHostSettings) {
+      return;
+    }
+    _mutateSessionState(() {
+      _isUpdatingHostSettings = true;
+    }, syncSearch: false);
+    try {
+      await _hostManager.pinSessionHost(normalizedHost);
+      await _syncSessionCookiesToCurrentHost();
+      if (mounted) {
+        _showSnackBar('已切换到 $normalizedHost');
+      }
+    } catch (_) {
+      if (mounted) {
+        _showSnackBar('切换节点失败，请稍后重试');
+      }
+    } finally {
+      if (mounted) {
+        _mutateSessionState(() {
+          _isUpdatingHostSettings = false;
+        }, syncSearch: false);
+      } else {
+        _isUpdatingHostSettings = false;
+      }
+    }
+  }
+
+  Future<void> _useAutomaticHostSelection() async {
+    if (_isUpdatingHostSettings) {
+      return;
+    }
+    _mutateSessionState(() {
+      _isUpdatingHostSettings = true;
+    }, syncSearch: false);
+    try {
+      await _hostManager.clearSessionPin();
+      await _hostManager.refreshProbes(force: true);
+      await _syncSessionCookiesToCurrentHost();
+      if (mounted) {
+        _showSnackBar('已恢复自动选择，当前节点 ${_hostManager.currentHost}');
+      }
+    } catch (_) {
+      if (mounted) {
+        _showSnackBar('恢复自动选择失败，请稍后重试');
+      }
+    } finally {
+      if (mounted) {
+        _mutateSessionState(() {
+          _isUpdatingHostSettings = false;
+        }, syncSearch: false);
+      } else {
+        _isUpdatingHostSettings = false;
+      }
     }
   }
 
@@ -1551,24 +2076,81 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     }
   }
 
-  void _handleReaderPageLoaded(ReaderPageData page, {String? previousUri}) {
-    unawaited(EasyCopyImageCaches.prefetchReaderImages(page.imageUrls));
-    if (previousUri != page.uri) {
-      unawaited(_restoreReaderScrollPosition(page));
+  void _handleReaderPageLoaded(
+    ReaderPageData page, {
+    String? previousUri,
+    bool forceRestore = false,
+  }) {
+    final List<String> remoteImages = page.imageUrls.where((String imageUrl) {
+      final Uri? uri = Uri.tryParse(imageUrl);
+      return uri != null &&
+          (uri.scheme == 'http' || uri.scheme == 'https');
+    }).toList(growable: false);
+    unawaited(EasyCopyImageCaches.prefetchReaderImages(remoteImages));
+    final bool changedPage = previousUri != page.uri;
+    if (changedPage) {
+      _currentReaderPageIndex = 0;
+      _disposeReaderPagedScrollControllers();
+    }
+    _scheduleReaderPresentationSync();
+    if (changedPage || forceRestore) {
+      unawaited(
+        _restoreReaderPosition(
+          page,
+          resetControllers: changedPage || forceRestore,
+        ),
+      );
     }
   }
 
-  Future<void> _restoreReaderScrollPosition(ReaderPageData page) async {
+  Future<void> _restoreReaderPosition(
+    ReaderPageData page, {
+    required bool resetControllers,
+  }) async {
     final String progressKey = _readerProgressKeyForPage(page);
-    final double savedOffset =
-        await _readerProgressStore.readOffset(progressKey) ?? 0;
-    _lastPersistedReaderOffset = savedOffset;
+    final ReaderPosition? savedPosition =
+        await _readerProgressStore.readPosition(progressKey);
+    if (!mounted || _page is! ReaderPageData || (_page as ReaderPageData).uri != page.uri) {
+      return;
+    }
+
+    if (_readerPreferences.isPaged) {
+      final int pageIndex = savedPosition?.isPaged == true
+          ? savedPosition!.pageIndex.clamp(0, page.imageUrls.length - 1)
+          : 0;
+      final double? pageOffset = savedPosition?.isPaged == true
+          ? savedPosition!.pageOffset
+          : null;
+      if (resetControllers) {
+        _disposeReaderPagedScrollControllers();
+        _replaceReaderPageController(initialPage: pageIndex);
+      }
+      _lastPersistedReaderPosition = savedPosition;
+      _currentReaderPageIndex = pageIndex;
+      if (mounted) {
+        setState(() {});
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _jumpReaderToPage(pageIndex, attempts: 10);
+        _jumpReaderPageOffset(
+          pageIndex,
+          offset: pageOffset,
+          attempts: 10,
+        );
+      });
+      return;
+    }
+
+    final double? savedOffset = savedPosition?.isScroll == true
+        ? savedPosition!.offset
+        : null;
+    _lastPersistedReaderPosition = savedPosition;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _jumpReaderToOffset(savedOffset, attempts: 10);
     });
   }
 
-  void _jumpReaderToOffset(double offset, {required int attempts}) {
+  void _jumpReaderToOffset(double? offset, {required int attempts}) {
     if (!_readerScrollController.hasClients) {
       if (attempts > 0) {
         Future<void>.delayed(
@@ -1579,8 +2161,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       return;
     }
 
-    final double targetOffset = offset < 0 ? 0 : offset;
     final double maxExtent = _readerScrollController.position.maxScrollExtent;
+    final double targetOffset = offset ??
+        (_readerPreferences.openingPosition == ReaderOpeningPosition.center
+            ? (_readerScrollController.position.viewportDimension * 0.5)
+            : 0);
     if (targetOffset > maxExtent && attempts > 0) {
       Future<void>.delayed(
         const Duration(milliseconds: 250),
@@ -1592,17 +2177,97 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     _readerScrollController.jumpTo(clampedOffset);
   }
 
+  void _jumpReaderToPage(int pageIndex, {required int attempts}) {
+    if (!_readerPageController.hasClients) {
+      if (attempts > 0) {
+        Future<void>.delayed(
+          const Duration(milliseconds: 250),
+          () => _jumpReaderToPage(pageIndex, attempts: attempts - 1),
+        );
+      }
+      return;
+    }
+    _readerPageController.jumpToPage(pageIndex);
+  }
+
+  void _jumpReaderPageOffset(
+    int pageIndex, {
+    required double? offset,
+    required int attempts,
+  }) {
+    final ScrollController? controller = _readerPageScrollControllers[pageIndex];
+    if (controller == null || !controller.hasClients) {
+      if (attempts > 0) {
+        Future<void>.delayed(
+          const Duration(milliseconds: 250),
+          () => _jumpReaderPageOffset(
+            pageIndex,
+            offset: offset,
+            attempts: attempts - 1,
+          ),
+        );
+      }
+      return;
+    }
+    final double maxExtent = controller.position.maxScrollExtent;
+    final double targetOffset = offset ??
+        (_readerPreferences.openingPosition == ReaderOpeningPosition.center
+            ? maxExtent * 0.5
+            : 0);
+    controller.jumpTo(targetOffset.clamp(0, maxExtent).toDouble());
+  }
+
   void _handleReaderScroll() {
     final EasyCopyPage? page = _page;
-    if (page is! ReaderPageData || !_readerScrollController.hasClients) {
+    if (page is! ReaderPageData ||
+        !_readerScrollController.hasClients ||
+        _readerPreferences.isPaged) {
       return;
     }
 
     final double currentOffset = _readerScrollController.offset;
-    if (_lastPersistedReaderOffset != null &&
-        (currentOffset - _lastPersistedReaderOffset!).abs() < 48) {
+    if (_lastPersistedReaderPosition?.isScroll == true &&
+        (currentOffset - _lastPersistedReaderPosition!.offset).abs() < 48) {
       return;
     }
+    _scheduleReaderProgressPersistence();
+    _restartReaderAutoTurn();
+  }
+
+  void _handleReaderPageChanged(int index) {
+    if (_currentReaderPageIndex == index) {
+      return;
+    }
+    if (!mounted) {
+      _currentReaderPageIndex = index;
+      return;
+    }
+    setState(() {
+      _currentReaderPageIndex = index;
+    });
+    _scheduleReaderProgressPersistence();
+    _restartReaderAutoTurn();
+  }
+
+  void _handleReaderPagedInnerScroll(int pageIndex) {
+    if (pageIndex != _currentReaderPageIndex) {
+      return;
+    }
+    final ScrollController? controller = _readerPageScrollControllers[pageIndex];
+    if (controller == null || !controller.hasClients) {
+      return;
+    }
+    if (_lastPersistedReaderPosition?.isPaged == true &&
+        _lastPersistedReaderPosition!.pageIndex == pageIndex &&
+        (controller.offset - _lastPersistedReaderPosition!.pageOffset).abs() <
+            32) {
+      return;
+    }
+    _scheduleReaderProgressPersistence();
+    _restartReaderAutoTurn();
+  }
+
+  void _scheduleReaderProgressPersistence() {
     _readerProgressDebounce?.cancel();
     _readerProgressDebounce = Timer(
       const Duration(milliseconds: 900),
@@ -1617,13 +2282,32 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
 
   void _persistCurrentReaderProgress() {
     final EasyCopyPage? page = _page;
-    if (page is! ReaderPageData || !_readerScrollController.hasClients) {
+    if (page is! ReaderPageData) {
       return;
     }
-    final double offset = _readerScrollController.offset;
     final String progressKey = _readerProgressKeyForPage(page);
-    _lastPersistedReaderOffset = offset;
-    unawaited(_readerProgressStore.writeOffset(progressKey, offset));
+    if (_readerPreferences.isPaged) {
+      final ScrollController? pageController =
+          _readerPageScrollControllers[_currentReaderPageIndex];
+      final ReaderPosition position = ReaderPosition.paged(
+        pageIndex: _currentReaderPageIndex,
+        pageOffset:
+            pageController != null && pageController.hasClients
+            ? pageController.offset
+            : 0,
+      );
+      _lastPersistedReaderPosition = position;
+      unawaited(_readerProgressStore.writePosition(progressKey, position));
+      return;
+    }
+    if (!_readerScrollController.hasClients) {
+      return;
+    }
+    final ReaderPosition position = ReaderPosition.scroll(
+      offset: _readerScrollController.offset,
+    );
+    _lastPersistedReaderPosition = position;
+    unawaited(_readerProgressStore.writePosition(progressKey, position));
   }
 
   void _persistVisiblePageState() {
@@ -2013,9 +2697,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F8FA),
+        color: colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE4E8EE)),
+        border: Border.all(color: colorScheme.outlineVariant),
       ),
       child: Row(
         children: <Widget>[
@@ -2049,6 +2733,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
           return const SizedBox.shrink();
         }
 
+        final ColorScheme colorScheme = Theme.of(context).colorScheme;
         final DownloadQueueTask activeTask = snapshot.activeTask!;
         final bool isPaused = snapshot.isPaused;
         final String statusLabel = isPaused
@@ -2060,7 +2745,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         return Padding(
           padding: const EdgeInsets.only(bottom: 18),
           child: Material(
-            color: isPaused ? const Color(0xFFFFF5E8) : const Color(0xFFEAF6F3),
+            color: isPaused
+                ? colorScheme.secondaryContainer.withValues(alpha: 0.52)
+                : colorScheme.primaryContainer.withValues(alpha: 0.42),
             borderRadius: BorderRadius.circular(20),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
@@ -2074,8 +2761,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
                             ? Icons.pause_circle_rounded
                             : Icons.download_for_offline_rounded,
                         color: isPaused
-                            ? const Color(0xFFB86A00)
-                            : const Color(0xFF0E8B84),
+                            ? colorScheme.secondary
+                            : colorScheme.primary,
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -2097,7 +2784,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
                   const SizedBox(height: 6),
                   Text(
                     statusLabel,
-                    style: TextStyle(color: Colors.grey.shade700, height: 1.4),
+                    style: TextStyle(
+                      color: colorScheme.onSurface.withValues(alpha: 0.72),
+                      height: 1.4,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   LinearProgressIndicator(
@@ -2157,7 +2847,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 12),
                           child: Material(
-                            color: const Color(0xFFF6F7F9),
+                            color: Theme.of(context).colorScheme.surfaceContainerLow,
                             borderRadius: BorderRadius.circular(18),
                             child: ListTile(
                               contentPadding: const EdgeInsets.fromLTRB(
@@ -2168,8 +2858,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
                               ),
                               leading: CircleAvatar(
                                 backgroundColor: isActiveComic
-                                    ? const Color(0xFF0E8B84)
-                                    : const Color(0xFFCBD4DE),
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context)
+                                          .colorScheme
+                                          .surfaceContainerHighest,
                                 foregroundColor: Colors.white,
                                 child: Text('${tasks.length}'),
                               ),
@@ -2218,6 +2910,23 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
               ? item.chapterHref
               : item.comicHref;
           _navigateToHref(targetHref);
+        },
+        currentHost: _hostManager.currentHost,
+        candidateHosts: _hostManager.candidateHosts,
+        hostSnapshot: _hostManager.probeSnapshot,
+        isRefreshingHosts: _isUpdatingHostSettings,
+        onRefreshHosts: () {
+          unawaited(_refreshHostSettings());
+        },
+        onUseAutomaticHostSelection: () {
+          unawaited(_useAutomaticHostSelection());
+        },
+        onSelectHost: (String host) {
+          unawaited(_selectHost(host));
+        },
+        themePreference: _preferencesController.themePreference,
+        onThemePreferenceChanged: (AppThemePreference preference) {
+          unawaited(_preferencesController.setThemePreference(preference));
         },
         afterContinueReading: _buildCachedComicsSection(),
       ),
@@ -2492,63 +3201,57 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                if (showBackButton)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 10),
-                    child: IconButton.filledTonal(
-                      onPressed: _handleBackNavigation,
-                      style: IconButton.styleFrom(
-                        backgroundColor: const Color(0xFFF2F5F8),
-                        foregroundColor: const Color(0xFF202733),
-                      ),
-                      icon: const Icon(Icons.arrow_back_rounded),
+    return AppSurfaceCard(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              if (showBackButton)
+                Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: IconButton.filledTonal(
+                    onPressed: _handleBackNavigation,
+                    style: IconButton.styleFrom(
+                      backgroundColor: colorScheme.surfaceContainerLow,
+                      foregroundColor: colorScheme.onSurface,
                     ),
-                  ),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 22,
-                      height: 1.1,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF18202A),
-                    ),
+                    icon: const Icon(Icons.arrow_back_rounded),
                   ),
                 ),
-                IconButton.filledTonal(
-                  onPressed: _retryCurrentPage,
-                  style: IconButton.styleFrom(
-                    backgroundColor: const Color(0xFFF2F5F8),
-                    foregroundColor: colorScheme.primary,
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 22,
+                    height: 1.1,
+                    fontWeight: FontWeight.w900,
+                    color: colorScheme.onSurface,
                   ),
-                  icon: _isLoading
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh_rounded),
                 ),
-              ],
-            ),
-            if (showSearchBar) ...<Widget>[
-              const SizedBox(height: 14),
-              _buildSearchField(context),
+              ),
+              IconButton.filledTonal(
+                onPressed: _retryCurrentPage,
+                style: IconButton.styleFrom(
+                  backgroundColor: colorScheme.surfaceContainerLow,
+                  foregroundColor: colorScheme.primary,
+                ),
+                icon: _isLoading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_rounded),
+              ),
             ],
+          ),
+          if (showSearchBar) ...<Widget>[
+            const SizedBox(height: 14),
+            _buildSearchField(context),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -2564,20 +3267,19 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
   }
 
   Widget _buildLoadingCard({required double height}) {
-    return Container(
+    return AppSurfaceCard(
+      padding: EdgeInsets.zero,
+      child: SizedBox(
       height: height,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: const <Widget>[
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('正在整理可读内容'),
-          ],
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: const <Widget>[
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('正在整理可读内容'),
+            ],
+          ),
         ),
       ),
     );
@@ -2587,12 +3289,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     return <Widget>[
       ..._buildStandardTopContent(context),
       _buildDownloadQueueBanner(),
-      Container(
+      AppSurfaceCard(
         padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-        ),
         child: Column(
           children: <Widget>[
             Icon(
@@ -2611,7 +3309,12 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
             Text(
               _currentUri.toString(),
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface.withValues(
+                  alpha: 0.62,
+                ),
+                fontSize: 12,
+              ),
             ),
             const SizedBox(height: 20),
             Row(
@@ -2773,7 +3476,14 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
               ),
               if (secondaryGroups.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 18),
-                Container(height: 1, color: const Color(0xFFE7EBEF)),
+                Builder(
+                  builder: (BuildContext context) {
+                    return Container(
+                      height: 1,
+                      color: Theme.of(context).dividerColor,
+                    );
+                  },
+                ),
                 const SizedBox(height: 18),
                 ...secondaryGroups.map(
                   (FilterGroupData group) => Padding(
@@ -2870,7 +3580,14 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
               if (page.categories.isNotEmpty && page.periods.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  child: Container(height: 1, color: const Color(0xFFE7EBEF)),
+                  child: Builder(
+                    builder: (BuildContext context) {
+                      return Container(
+                        height: 1,
+                        color: Theme.of(context).dividerColor,
+                      );
+                    },
+                  ),
                 ),
               if (page.periods.isNotEmpty)
                 _RankFilterGroup(
@@ -2924,7 +3641,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       _DetailHeroCard(
         page: page,
         onReadNow: page.startReadingHref.isNotEmpty
-            ? () => _navigateToHref(page.startReadingHref)
+            ? () => _openDetailChapter(page, page.startReadingHref)
             : null,
         onDownload: () => _showDetailDownloadPicker(page),
         onTagTap: _navigateToHref,
@@ -2973,7 +3690,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
         chapterWidgets.add(
           _ChapterGrid(
             chapters: group.chapters,
-            onTap: _navigateToHref,
+            onTap: (String href) => _openDetailChapter(page, href),
             downloadedChapterPathKeys: downloadedChapterKeys,
           ),
         );
@@ -2983,7 +3700,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
       chapterWidgets.add(
         _ChapterGrid(
           chapters: page.chapters,
-          onTap: _navigateToHref,
+          onTap: (String href) => _openDetailChapter(page, href),
           downloadedChapterPathKeys: downloadedChapterKeys,
         ),
       );
@@ -3012,12 +3729,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
 
   List<Widget> _buildMessageSections(String message) {
     return <Widget>[
-      Container(
+      AppSurfaceCard(
         padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-        ),
         child: Column(
           children: <Widget>[
             const Icon(Icons.layers_clear_rounded, size: 44),
@@ -3035,105 +3748,646 @@ class _EasyCopyScreenState extends State<EasyCopyScreen> {
     ];
   }
 
-  Widget _buildReaderMode(BuildContext context, ReaderPageData page) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF4EFE8),
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _retryCurrentPage,
-          child: ListView.builder(
-            key: ValueKey<String>('reader-${page.uri}'),
-            controller: _readerScrollController,
-            physics: const AlwaysScrollableScrollPhysics(
-              parent: BouncingScrollPhysics(),
-            ),
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-            itemCount: page.imageUrls.length + 1,
-            itemBuilder: (BuildContext context, int index) {
-              if (index == page.imageUrls.length) {
-                return Padding(
-                  padding: const EdgeInsets.only(top: 14),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(24),
+  Future<void> _showReaderSettingsSheet() async {
+    if (_isReaderSettingsOpen) {
+      return;
+    }
+    _isReaderSettingsOpen = true;
+    _scheduleReaderPresentationSync();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: _buildReaderSettingsSheet,
+    );
+    _isReaderSettingsOpen = false;
+    if (mounted) {
+      _scheduleReaderPresentationSync();
+    }
+  }
+
+  Widget _buildReaderSettingsSheet(BuildContext context) {
+    final double maxHeight = MediaQuery.sizeOf(context).height * 0.78;
+    return AnimatedBuilder(
+      animation: _preferencesController,
+      builder: (BuildContext context, Widget? _) {
+        final ReaderPreferences preferences = _readerPreferences;
+        return SafeArea(
+          child: SizedBox(
+            key: const ValueKey<String>('reader-settings-sheet'),
+            height: maxHeight,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: Column(
+                children: <Widget>[
+                  Expanded(
+                    child: ListView(
+                      children: <Widget>[
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(4, 0, 4, 16),
+                          child: Text(
+                            '菜单',
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        SettingsSection(
+                          children: <Widget>[
+                            SettingsSelectRow<ReaderScreenOrientation>(
+                              label: '屏幕方向',
+                              value: preferences.screenOrientation,
+                              items: ReaderScreenOrientation.values
+                                  .map((ReaderScreenOrientation value) {
+                                    return DropdownMenuItem<
+                                      ReaderScreenOrientation
+                                    >(
+                                      value: value,
+                                      child: Text(
+                                        value ==
+                                                ReaderScreenOrientation.portrait
+                                            ? '竖屏'
+                                            : '横屏',
+                                      ),
+                                    );
+                                  })
+                                  .toList(growable: false),
+                              onChanged: (ReaderScreenOrientation? value) {
+                                if (value == null) {
+                                  return;
+                                }
+                                unawaited(
+                                  _preferencesController.updateReaderPreferences(
+                                    (ReaderPreferences current) =>
+                                        current.copyWith(
+                                          screenOrientation: value,
+                                        ),
+                                  ),
+                                );
+                              },
+                            ),
+                            SettingsSelectRow<ReaderReadingDirection>(
+                              label: '阅读方向',
+                              value: preferences.readingDirection,
+                              items: ReaderReadingDirection.values
+                                  .map((ReaderReadingDirection value) {
+                                    return DropdownMenuItem<
+                                      ReaderReadingDirection
+                                    >(
+                                      value: value,
+                                      child: Text(
+                                        switch (value) {
+                                          ReaderReadingDirection.topToBottom =>
+                                            '从上到下',
+                                          ReaderReadingDirection.leftToRight =>
+                                            '从左到右',
+                                          ReaderReadingDirection.rightToLeft =>
+                                            '从右到左',
+                                        },
+                                      ),
+                                    );
+                                  })
+                                  .toList(growable: false),
+                              onChanged: (ReaderReadingDirection? value) {
+                                if (value == null) {
+                                  return;
+                                }
+                                unawaited(
+                                  _preferencesController.updateReaderPreferences(
+                                    (ReaderPreferences current) =>
+                                        current.copyWith(
+                                          readingDirection: value,
+                                        ),
+                                  ),
+                                );
+                              },
+                            ),
+                            SettingsSelectRow<ReaderPageFit>(
+                              label: '页面缩放',
+                              value: preferences.pageFit,
+                              items: ReaderPageFit.values
+                                  .map((ReaderPageFit value) {
+                                    return DropdownMenuItem<ReaderPageFit>(
+                                      value: value,
+                                      child: Text(
+                                        value == ReaderPageFit.fitWidth
+                                            ? '匹配宽度'
+                                            : '适应屏幕',
+                                      ),
+                                    );
+                                  })
+                                  .toList(growable: false),
+                              onChanged: (ReaderPageFit? value) {
+                                if (value == null) {
+                                  return;
+                                }
+                                unawaited(
+                                  _preferencesController.updateReaderPreferences(
+                                    (ReaderPreferences current) =>
+                                        current.copyWith(pageFit: value),
+                                  ),
+                                );
+                              },
+                            ),
+                            SettingsSelectRow<ReaderOpeningPosition>(
+                              label: '开页位置',
+                              value: preferences.openingPosition,
+                              items: ReaderOpeningPosition.values
+                                  .map((ReaderOpeningPosition value) {
+                                    return DropdownMenuItem<
+                                      ReaderOpeningPosition
+                                    >(
+                                      value: value,
+                                      child: Text(
+                                        value == ReaderOpeningPosition.top
+                                            ? '顶部'
+                                            : '中心',
+                                      ),
+                                    );
+                                  })
+                                  .toList(growable: false),
+                              onChanged: (ReaderOpeningPosition? value) {
+                                if (value == null) {
+                                  return;
+                                }
+                                unawaited(
+                                  _preferencesController.updateReaderPreferences(
+                                    (ReaderPreferences current) =>
+                                        current.copyWith(
+                                          openingPosition: value,
+                                        ),
+                                  ),
+                                );
+                              },
+                            ),
+                            SettingsSliderRow(
+                              label: '自动翻页(${preferences.autoPageTurnSeconds}秒)',
+                              value: preferences.autoPageTurnSeconds.toDouble(),
+                              max: 10,
+                              divisions: 10,
+                              onChanged: (double value) {
+                                unawaited(
+                                  _preferencesController.updateReaderPreferences(
+                                    (ReaderPreferences current) =>
+                                        current.copyWith(
+                                          autoPageTurnSeconds: value.round(),
+                                        ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        SettingsSection(
+                          children: <Widget>[
+                            SettingsSwitchRow(
+                              label: '屏幕常亮',
+                              value: preferences.keepScreenOn,
+                              onChanged: (bool value) {
+                                unawaited(
+                                  _preferencesController.updateReaderPreferences(
+                                    (ReaderPreferences current) =>
+                                        current.copyWith(keepScreenOn: value),
+                                  ),
+                                );
+                              },
+                            ),
+                            SettingsSwitchRow(
+                              label: '显示时钟',
+                              value: preferences.showClock,
+                              onChanged: (bool value) {
+                                unawaited(
+                                  _preferencesController.updateReaderPreferences(
+                                    (ReaderPreferences current) =>
+                                        current.copyWith(showClock: value),
+                                  ),
+                                );
+                              },
+                            ),
+                            SettingsSwitchRow(
+                              label: '显示进度',
+                              value: preferences.showProgress,
+                              onChanged: (bool value) {
+                                unawaited(
+                                  _preferencesController.updateReaderPreferences(
+                                    (ReaderPreferences current) =>
+                                        current.copyWith(showProgress: value),
+                                  ),
+                                );
+                              },
+                            ),
+                            if (_readerPlatformBridge.isAndroidSupported)
+                              SettingsSwitchRow(
+                                label: '显示电量',
+                                value: preferences.showBattery,
+                                onChanged: (bool value) {
+                                  unawaited(
+                                    _preferencesController
+                                        .updateReaderPreferences(
+                                          (ReaderPreferences current) =>
+                                              current.copyWith(
+                                                showBattery: value,
+                                              ),
+                                        ),
+                                  );
+                                },
+                              ),
+                            SettingsSwitchRow(
+                              label: '显示页面间隔',
+                              value: preferences.showPageGap,
+                              onChanged: (bool value) {
+                                unawaited(
+                                  _preferencesController.updateReaderPreferences(
+                                    (ReaderPreferences current) =>
+                                        current.copyWith(showPageGap: value),
+                                  ),
+                                );
+                              },
+                            ),
+                            if (_readerPlatformBridge.isAndroidSupported)
+                              SettingsSwitchRow(
+                                label: '使用音量键翻页',
+                                value: preferences.useVolumeKeysForPaging,
+                                onChanged: (bool value) {
+                                  unawaited(
+                                    _preferencesController
+                                        .updateReaderPreferences(
+                                          (ReaderPreferences current) =>
+                                              current.copyWith(
+                                                useVolumeKeysForPaging: value,
+                                              ),
+                                        ),
+                                  );
+                                },
+                              ),
+                            SettingsSwitchRow(
+                              label: '全屏',
+                              value: preferences.fullscreen,
+                              onChanged: (bool value) {
+                                unawaited(
+                                  _preferencesController.updateReaderPreferences(
+                                    (ReaderPreferences current) =>
+                                        current.copyWith(fullscreen: value),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Row(
-                        children: <Widget>[
-                          Expanded(
-                            child: FilledButton.tonal(
-                              onPressed: page.prevHref.isEmpty
-                                  ? null
-                                  : () => _navigateToHref(page.prevHref),
-                              child: const Text('上一話'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: FilledButton(
-                              onPressed: page.nextHref.isEmpty
-                                  ? null
-                                  : () => _navigateToHref(page.nextHref),
-                              child: const Text('下一話'),
-                            ),
-                          ),
-                        ],
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('确定'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  ScrollController _readerPageScrollControllerFor(int pageIndex) {
+    return _readerPageScrollControllers.putIfAbsent(pageIndex, () {
+      final ScrollController controller = ScrollController();
+      controller.addListener(() => _handleReaderPagedInnerScroll(pageIndex));
+      return controller;
+    });
+  }
+
+  Widget _buildReaderOverlay(BuildContext context, ReaderPageData page) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
+    return IgnorePointer(
+      child: Stack(
+        children: <Widget>[
+          if (_readerPreferences.showClock)
+            Positioned(
+              left: 12,
+              top: viewPadding.top + 12,
+              child: _ReaderStatusPill(
+                label: _readerClockLabel(),
+                icon: Icons.schedule_rounded,
+                backgroundColor: colorScheme.surface.withValues(alpha: 0.88),
+                foregroundColor: colorScheme.onSurface,
+              ),
+            ),
+          if (_readerPlatformBridge.isAndroidSupported &&
+              _readerPreferences.showBattery)
+            Positioned(
+              right: 12,
+              top: viewPadding.top + 12,
+              child: _ReaderStatusPill(
+                label: _batteryLevel == null ? '--%' : '${_batteryLevel!}%',
+                icon: Icons.battery_std_rounded,
+                backgroundColor: colorScheme.surface.withValues(alpha: 0.88),
+                foregroundColor: colorScheme.onSurface,
+              ),
+            ),
+          if (_readerPreferences.showProgress)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: viewPadding.bottom + 88,
+              child: Align(
+                child: _ReaderStatusPill(
+                  label: _readerProgressLabel(page),
+                  icon: Icons.auto_stories_rounded,
+                  backgroundColor: colorScheme.surface.withValues(alpha: 0.88),
+                  foregroundColor: colorScheme.onSurface,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _readerClockLabel() {
+    final DateTime now = DateTime.now();
+    final String hour = now.hour.toString().padLeft(2, '0');
+    final String minute = now.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  String _readerProgressLabel(ReaderPageData page) {
+    if (_readerPreferences.isPaged) {
+      return '${_currentReaderPageIndex + 1} / ${page.imageUrls.length}';
+    }
+    if (!_readerScrollController.hasClients) {
+      return page.progressLabel.isEmpty ? '0%' : page.progressLabel;
+    }
+    final double maxExtent = _readerScrollController.position.maxScrollExtent;
+    if (maxExtent <= 0) {
+      return '100%';
+    }
+    final int percent =
+        ((_readerScrollController.offset / maxExtent) * 100).round().clamp(
+              0,
+              100,
+            );
+    return '$percent%';
+  }
+
+  Widget _buildReaderChapterControls(
+    BuildContext context,
+    ReaderPageData page,
+  ) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return AppSurfaceCard(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: FilledButton.tonal(
+              onPressed: page.prevHref.isEmpty
+                  ? null
+                  : () => _navigateToHref(page.prevHref),
+              child: const Text('上一话'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 88, maxWidth: 120),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  page.progressLabel.isEmpty ? '-- / --' : page.progressLabel,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                if (page.chapterTitle.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 2),
+                  Text(
+                    page.chapterTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: colorScheme.onSurface.withValues(alpha: 0.66),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: FilledButton(
+              onPressed: page.nextHref.isEmpty
+                  ? null
+                  : () => _navigateToHref(page.nextHref),
+              child: const Text('下一话'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReaderScrollableContent(
+    BuildContext context,
+    ReaderPageData page,
+  ) {
+    final bool showGap = _readerPreferences.showPageGap;
+    return RefreshIndicator(
+      onRefresh: _retryCurrentPage,
+      child: ListView.builder(
+        key: ValueKey<String>(
+          'reader-scroll-${page.uri}-${_readerPreferences.pageFit.name}-$showGap',
+        ),
+        controller: _readerScrollController,
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+        padding: showGap
+            ? const EdgeInsets.fromLTRB(12, 8, 12, 16)
+            : const EdgeInsets.only(bottom: 16),
+        itemCount: page.imageUrls.length,
+        itemBuilder: (BuildContext context, int index) {
+          return Padding(
+            padding: EdgeInsets.only(bottom: showGap ? 10 : 0),
+            child: _buildReaderImageFrame(
+              context,
+              imageUrl: page.imageUrls[index],
+              viewportHeight:
+                  _readerPreferences.pageFit == ReaderPageFit.fitScreen
+                  ? MediaQuery.sizeOf(context).height * 0.72
+                  : null,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildReaderPagedContent(BuildContext context, ReaderPageData page) {
+    final bool reverse =
+        _readerPreferences.readingDirection == ReaderReadingDirection.rightToLeft;
+    return PageView.builder(
+      key: ValueKey<String>(
+        'reader-paged-${page.uri}-${_readerPreferences.readingDirection.name}-${_readerPreferences.pageFit.name}-${_readerPreferences.showPageGap}',
+      ),
+      controller: _readerPageController,
+      reverse: reverse,
+      itemCount: page.imageUrls.length,
+      onPageChanged: _handleReaderPageChanged,
+      itemBuilder: (BuildContext context, int index) {
+        final ScrollController scrollController =
+            _readerPageScrollControllerFor(index);
+        return LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            return Padding(
+              padding: _readerPreferences.showPageGap
+                  ? const EdgeInsets.fromLTRB(12, 8, 12, 8)
+                  : EdgeInsets.zero,
+              child: SingleChildScrollView(
+                controller: scrollController,
+                physics: const BouncingScrollPhysics(),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: _buildReaderImageFrame(
+                    context,
+                    imageUrl: page.imageUrls[index],
+                    viewportHeight:
+                        _readerPreferences.pageFit == ReaderPageFit.fitScreen
+                        ? constraints.maxHeight
+                        : null,
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildReaderImageFrame(
+    BuildContext context, {
+    required String imageUrl,
+    double? viewportHeight,
+  }) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final bool showGap = _readerPreferences.showPageGap;
+    final double borderRadius = showGap ? 22 : 0;
+    final BoxFit fit = _readerPreferences.pageFit == ReaderPageFit.fitWidth
+        ? BoxFit.fitWidth
+        : BoxFit.contain;
+    final Uri? parsedUri = Uri.tryParse(imageUrl);
+    final bool isLocalFile = parsedUri != null && parsedUri.scheme == 'file';
+    final Widget image = isLocalFile
+        ? Image.file(
+            File.fromUri(parsedUri),
+            fit: fit,
+            width: double.infinity,
+            height: viewportHeight,
+            errorBuilder:
+                (
+                  BuildContext context,
+                  Object error,
+                  StackTrace? stackTrace,
+                ) {
+                  return SizedBox(
+                    height: viewportHeight ?? 220,
+                    child: const Center(
+                      child: Icon(Icons.broken_image_outlined, size: 36),
+                    ),
+                  );
+                },
+          )
+        : CachedNetworkImage(
+            imageUrl: imageUrl,
+            fit: fit,
+            width: double.infinity,
+            height: viewportHeight,
+            cacheManager: EasyCopyImageCaches.readerCache,
+            progressIndicatorBuilder:
+                (
+                  BuildContext context,
+                  String url,
+                  DownloadProgress progress,
+                ) {
+                  return SizedBox(
+                    height: viewportHeight ?? 260,
+                    child: Center(
+                      child: CircularProgressIndicator(
+                        value: progress.progress,
                       ),
                     ),
-                  ),
-                );
-              }
-
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(22),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(22),
-                    child: CachedNetworkImage(
-                      imageUrl: page.imageUrls[index],
-                      fit: BoxFit.fitWidth,
-                      width: double.infinity,
-                      cacheManager: EasyCopyImageCaches.readerCache,
-                      progressIndicatorBuilder:
-                          (
-                            BuildContext context,
-                            String url,
-                            DownloadProgress progress,
-                          ) {
-                            return SizedBox(
-                              height: 260,
-                              child: Center(
-                                child: CircularProgressIndicator(
-                                  value: progress.progress,
-                                ),
-                              ),
-                            );
-                          },
-                      errorWidget:
-                          (BuildContext context, String url, Object error) {
-                            return const SizedBox(
-                              height: 220,
-                              child: Center(
-                                child: Icon(
-                                  Icons.broken_image_outlined,
-                                  size: 36,
-                                ),
-                              ),
-                            );
-                          },
-                    ),
-                  ),
+                  );
+                },
+            errorWidget: (BuildContext context, String url, Object error) {
+              return SizedBox(
+                height: viewportHeight ?? 220,
+                child: const Center(
+                  child: Icon(Icons.broken_image_outlined, size: 36),
                 ),
               );
             },
+          );
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: showGap ? colorScheme.surface : colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(borderRadius),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(borderRadius),
+        child: image,
+      ),
+    );
+  }
+
+  Widget _buildReaderMode(BuildContext context, ReaderPageData page) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
+    return Scaffold(
+      backgroundColor: colorScheme.surfaceContainerLowest,
+      body: Column(
+        children: <Widget>[
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _showReaderSettingsSheet,
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  Positioned.fill(
+                    child: _readerPreferences.isPaged
+                        ? _buildReaderPagedContent(context, page)
+                        : _buildReaderScrollableContent(context, page),
+                  ),
+                  _buildReaderOverlay(context, page),
+                ],
+              ),
+            ),
           ),
-        ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              _readerPreferences.showPageGap ? 12 : 0,
+              8,
+              _readerPreferences.showPageGap ? 12 : 0,
+              (viewPadding.bottom > 0 ? viewPadding.bottom : 0) + 12,
+            ),
+            child: _buildReaderChapterControls(context, page),
+          ),
+        ],
       ),
     );
   }
@@ -3154,37 +4408,101 @@ class _SurfaceBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(24),
-      clipBehavior: Clip.antiAlias,
+    return AppSurfaceCard(
+      title: title,
+      action: actionLabel != null && onActionTap != null
+          ? TextButton(onPressed: onActionTap, child: Text(actionLabel!))
+          : null,
+      child: child,
+    );
+  }
+}
+
+class _ReaderStatusPill extends StatelessWidget {
+  const _ReaderStatusPill({
+    required this.label,
+    required this.icon,
+    required this.backgroundColor,
+    required this.foregroundColor,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color backgroundColor;
+  final Color foregroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                if (actionLabel != null && onActionTap != null)
-                  TextButton(onPressed: onActionTap, child: Text(actionLabel!)),
-              ],
+            Icon(icon, size: 14, color: foregroundColor),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: foregroundColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
             ),
-            const SizedBox(height: 14),
-            child,
           ],
         ),
       ),
     );
   }
+}
+
+@immutable
+class _AppliedReaderEnvironment {
+  const _AppliedReaderEnvironment.standard()
+    : orientation = ReaderScreenOrientation.portrait,
+      fullscreen = false,
+      keepScreenOn = false,
+      volumePagingEnabled = false,
+      isReader = false;
+
+  const _AppliedReaderEnvironment.reader({
+    required this.orientation,
+    required this.fullscreen,
+    required this.keepScreenOn,
+    required this.volumePagingEnabled,
+  }) : isReader = true;
+
+  final ReaderScreenOrientation orientation;
+  final bool fullscreen;
+  final bool keepScreenOn;
+  final bool volumePagingEnabled;
+  final bool isReader;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    return other is _AppliedReaderEnvironment &&
+        other.orientation == orientation &&
+        other.fullscreen == fullscreen &&
+        other.keepScreenOn == keepScreenOn &&
+        other.volumePagingEnabled == volumePagingEnabled &&
+        other.isReader == isReader;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    orientation,
+    fullscreen,
+    keepScreenOn,
+    volumePagingEnabled,
+    isReader,
+  );
 }
 
 class _HeroBannerCard extends StatelessWidget {
@@ -3195,8 +4513,9 @@ class _HeroBannerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
     return Material(
-      color: const Color(0xFF102038),
+      color: isDark ? const Color(0xFF18222D) : const Color(0xFF102038),
       borderRadius: BorderRadius.circular(24),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -3205,12 +4524,14 @@ class _HeroBannerCard extends StatelessWidget {
           fit: StackFit.expand,
           children: <Widget>[
             _NetworkImageBox(imageUrl: banner.imageUrl, aspectRatio: 1),
-            const DecoratedBox(
+            DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.bottomCenter,
                   end: Alignment.topCenter,
-                  colors: <Color>[Color(0xCC0F1320), Color(0x330F1320)],
+                  colors: isDark
+                      ? const <Color>[Color(0xDD0D1117), Color(0x550D1117)]
+                      : const <Color>[Color(0xCC0F1320), Color(0x330F1320)],
                 ),
               ),
             ),
@@ -3258,6 +4579,8 @@ class _FeatureBannerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(24),
@@ -3265,10 +4588,15 @@ class _FeatureBannerCard extends StatelessWidget {
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(24),
-          gradient: const LinearGradient(
+          gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: <Color>[Color(0xFFFFEEE1), Color(0xFFFFD1B8)],
+            colors: isDark
+                ? <Color>[
+                    colorScheme.surfaceContainerHigh,
+                    colorScheme.surfaceContainerHighest,
+                  ]
+                : const <Color>[Color(0xFFFFEEE1), Color(0xFFFFD1B8)],
           ),
         ),
         child: Row(
@@ -3277,12 +4605,14 @@ class _FeatureBannerCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  const Text(
+                  Text(
                     '专题精选',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w800,
-                      color: Color(0xFF995630),
+                      color: isDark
+                          ? colorScheme.secondary
+                          : const Color(0xFF995630),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -3300,7 +4630,9 @@ class _FeatureBannerCard extends StatelessWidget {
                     const SizedBox(height: 8),
                     Text(
                       banner.subtitle,
-                      style: TextStyle(color: Colors.grey.shade800),
+                      style: TextStyle(
+                        color: colorScheme.onSurface.withValues(alpha: 0.76),
+                      ),
                     ),
                   ],
                 ],
@@ -3363,6 +4695,7 @@ class _ComicCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
@@ -3393,7 +4726,7 @@ class _ComicCard extends StatelessWidget {
                             vertical: 5,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFFF7B54),
+                            color: colorScheme.secondary,
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
@@ -3431,7 +4764,7 @@ class _ComicCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.grey.shade700,
+                          color: colorScheme.onSurface.withValues(alpha: 0.72),
                           fontSize: 11,
                         ),
                       ),
@@ -3443,7 +4776,7 @@ class _ComicCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.grey.shade500,
+                          color: colorScheme.onSurface.withValues(alpha: 0.56),
                           fontSize: 10,
                         ),
                       ),
@@ -3494,7 +4827,7 @@ class _FilterGroup extends StatelessWidget {
                 TextButton(
                   onPressed: onActionTap,
                   style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF0E8B84),
+                    foregroundColor: Theme.of(context).colorScheme.primary,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
                       vertical: 4,
@@ -3577,15 +4910,16 @@ class _LinkChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final Color backgroundColor = active
-        ? const Color(0x660E8B84)
-        : const Color(0xFFF7F8FA);
+        ? colorScheme.primaryContainer.withValues(alpha: 0.76)
+        : colorScheme.surfaceContainerLow;
     final Color borderColor = active
-        ? const Color(0xCC0E8B84)
-        : const Color(0xFFE2E6EB);
+        ? colorScheme.primary.withValues(alpha: 0.82)
+        : colorScheme.outlineVariant;
     final Color textColor = active
-        ? const Color(0xFF17312E)
-        : const Color(0xFF313742);
+        ? colorScheme.onPrimaryContainer
+        : colorScheme.onSurface;
 
     return InkWell(
       onTap: onTap,
@@ -3598,9 +4932,9 @@ class _LinkChip extends StatelessWidget {
           border: Border.all(color: borderColor),
           borderRadius: BorderRadius.circular(999),
           boxShadow: active
-              ? const <BoxShadow>[
+              ? <BoxShadow>[
                   BoxShadow(
-                    color: Color(0x330E8B84),
+                    color: colorScheme.primary.withValues(alpha: 0.22),
                     blurRadius: 12,
                     offset: Offset(0, 3),
                   ),
@@ -3635,12 +4969,9 @@ class _PagerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return AppSurfaceCard(
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-      ),
       child: Row(
         children: <Widget>[
           Expanded(
@@ -3663,7 +4994,9 @@ class _PagerCard extends StatelessWidget {
                 if (pager.totalLabel.isNotEmpty)
                   Text(
                     pager.totalLabel,
-                    style: TextStyle(color: Colors.grey.shade600),
+                    style: TextStyle(
+                      color: colorScheme.onSurface.withValues(alpha: 0.64),
+                    ),
                   ),
               ],
             ),
@@ -3685,6 +5018,7 @@ class _RankCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final IconData trendIcon;
     final Color trendColor;
     switch (item.trend) {
@@ -3705,7 +5039,7 @@ class _RankCard extends StatelessWidget {
       child: Ink(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8F8FA),
+          color: colorScheme.surfaceContainerLow,
           borderRadius: BorderRadius.circular(22),
         ),
         child: Row(
@@ -3715,7 +5049,7 @@ class _RankCard extends StatelessWidget {
               height: 42,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: const Color(0xFFFF7B54),
+                color: colorScheme.secondary,
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Text(
@@ -3757,7 +5091,7 @@ class _RankCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Colors.grey.shade700,
+                        color: colorScheme.onSurface.withValues(alpha: 0.72),
                         fontSize: 12,
                       ),
                     ),
@@ -3771,7 +5105,9 @@ class _RankCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Colors.grey.shade800,
+                            color: colorScheme.onSurface.withValues(
+                              alpha: 0.78,
+                            ),
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -3828,12 +5164,9 @@ class _DetailHeroCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return AppSurfaceCard(
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-      ),
       child: Column(
         children: <Widget>[
           Row(
@@ -3864,7 +5197,7 @@ class _DetailHeroCard extends StatelessWidget {
                       Text(
                         page.authors,
                         style: TextStyle(
-                          color: Colors.grey.shade700,
+                          color: colorScheme.onSurface.withValues(alpha: 0.72),
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -3923,11 +5256,12 @@ class _InfoChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return Container(
       constraints: const BoxConstraints(minWidth: 132),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF5F6F8),
+        color: colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -3936,7 +5270,7 @@ class _InfoChip extends StatelessWidget {
           Text(
             label,
             style: TextStyle(
-              color: Colors.grey.shade600,
+              color: colorScheme.onSurface.withValues(alpha: 0.62),
               fontSize: 11,
               fontWeight: FontWeight.w700,
             ),
@@ -3967,6 +5301,7 @@ class _ChapterGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -3992,8 +5327,8 @@ class _ChapterGrid extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
               color: isDownloaded
-                  ? const Color(0xFFE9F7EF)
-                  : const Color(0xFFF5F6F8),
+                  ? colorScheme.primaryContainer.withValues(alpha: 0.38)
+                  : colorScheme.surfaceContainerLow,
               borderRadius: BorderRadius.circular(18),
               border: isDownloaded
                   ? Border.all(color: const Color(0xFF18A558))
@@ -4039,6 +5374,7 @@ class _CachedComicCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
@@ -4125,7 +5461,10 @@ class _CachedComicCard extends StatelessWidget {
               '最近缓存：${item.chapters.first.chapterTitle}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+              style: TextStyle(
+                color: colorScheme.onSurface.withValues(alpha: 0.64),
+                fontSize: 11,
+              ),
             ),
           ],
         ],
@@ -4139,6 +5478,16 @@ class _ChapterPickerSection {
 
   final String label;
   final List<ChapterData> chapters;
+}
+
+class _AdjacentChapterLinks {
+  const _AdjacentChapterLinks({
+    this.prevHref = '',
+    this.nextHref = '',
+  });
+
+  final String prevHref;
+  final String nextHref;
 }
 
 class _PendingPageLoad {
@@ -4193,16 +5542,24 @@ class _PlaceholderImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const DecoratedBox(
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: <Color>[Color(0xFFE4E7ED), Color(0xFFD3D9E4)],
+          colors: <Color>[
+            colorScheme.surfaceContainerHigh,
+            colorScheme.surfaceContainerHighest,
+          ],
         ),
       ),
       child: Center(
-        child: Icon(Icons.image_outlined, size: 28, color: Color(0xFF5B6577)),
+        child: Icon(
+          Icons.image_outlined,
+          size: 28,
+          color: colorScheme.onSurface.withValues(alpha: 0.42),
+        ),
       ),
     );
   }

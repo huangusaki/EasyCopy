@@ -7,18 +7,96 @@ import 'package:path_provider/path_provider.dart';
 typedef ReaderProgressDirectoryProvider = Future<Directory> Function();
 typedef ReaderProgressNowProvider = DateTime Function();
 
+enum ReaderProgressMode { scroll, paged }
+
+@immutable
+class ReaderPosition {
+  const ReaderPosition({
+    required this.mode,
+    this.offset = 0,
+    this.pageIndex = 0,
+    this.pageOffset = 0,
+  });
+
+  factory ReaderPosition.scroll({double offset = 0}) {
+    return ReaderPosition(
+      mode: ReaderProgressMode.scroll,
+      offset: offset,
+    );
+  }
+
+  factory ReaderPosition.paged({
+    int pageIndex = 0,
+    double pageOffset = 0,
+  }) {
+    return ReaderPosition(
+      mode: ReaderProgressMode.paged,
+      pageIndex: pageIndex,
+      pageOffset: pageOffset,
+    );
+  }
+
+  factory ReaderPosition.fromJson(Map<String, Object?> json) {
+    final String rawMode = (json['mode'] as String?)?.trim() ?? '';
+    if (rawMode == 'paged' || json.containsKey('pageIndex')) {
+      return ReaderPosition.paged(
+        pageIndex: ((json['pageIndex'] as num?) ?? 0).round().clamp(0, 999999),
+        pageOffset: ((json['pageOffset'] as num?) ?? 0).toDouble(),
+      );
+    }
+    return ReaderPosition.scroll(
+      offset: ((json['offset'] as num?) ?? 0).toDouble(),
+    );
+  }
+
+  final ReaderProgressMode mode;
+  final double offset;
+  final int pageIndex;
+  final double pageOffset;
+
+  bool get isScroll => mode == ReaderProgressMode.scroll;
+
+  bool get isPaged => mode == ReaderProgressMode.paged;
+
+  ReaderPosition copyWith({
+    ReaderProgressMode? mode,
+    double? offset,
+    int? pageIndex,
+    double? pageOffset,
+  }) {
+    return ReaderPosition(
+      mode: mode ?? this.mode,
+      offset: offset ?? this.offset,
+      pageIndex: pageIndex ?? this.pageIndex,
+      pageOffset: pageOffset ?? this.pageOffset,
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'mode': switch (mode) {
+        ReaderProgressMode.scroll => 'scroll',
+        ReaderProgressMode.paged => 'paged',
+      },
+      'offset': offset,
+      'pageIndex': pageIndex,
+      'pageOffset': pageOffset,
+    };
+  }
+}
+
 @immutable
 class ReaderProgressEntry {
   const ReaderProgressEntry({
     required this.key,
-    required this.offset,
+    required this.position,
     required this.updatedAt,
   });
 
   factory ReaderProgressEntry.fromJson(Map<String, Object?> json) {
     return ReaderProgressEntry(
       key: (json['key'] as String?) ?? '',
-      offset: (json['offset'] as num?)?.toDouble() ?? 0,
+      position: ReaderPosition.fromJson(json),
       updatedAt:
           DateTime.tryParse((json['updatedAt'] as String?) ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
@@ -26,13 +104,16 @@ class ReaderProgressEntry {
   }
 
   final String key;
-  final double offset;
+  final ReaderPosition position;
   final DateTime updatedAt;
 
-  ReaderProgressEntry copyWith({double? offset, DateTime? updatedAt}) {
+  ReaderProgressEntry copyWith({
+    ReaderPosition? position,
+    DateTime? updatedAt,
+  }) {
     return ReaderProgressEntry(
       key: key,
-      offset: offset ?? this.offset,
+      position: position ?? this.position,
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
@@ -40,7 +121,7 @@ class ReaderProgressEntry {
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'key': key,
-      'offset': offset,
+      ...position.toJson(),
       'updatedAt': updatedAt.toIso8601String(),
     };
   }
@@ -67,43 +148,55 @@ class ReaderProgressStore {
     return _initialization ??= _initialize();
   }
 
-  Future<double?> readOffset(String key) async {
+  Future<ReaderPosition?> readPosition(String key) async {
     await ensureInitialized();
     final ReaderProgressEntry? match = _entryForKey(key);
     if (match == null) {
       return null;
     }
-    return match.offset;
+    return match.position;
   }
 
-  Future<void> writeOffset(String key, double offset) async {
+  Future<double?> readOffset(String key) async {
+    final ReaderPosition? position = await readPosition(key);
+    if (position == null || !position.isScroll) {
+      return null;
+    }
+    return position.offset;
+  }
+
+  Future<void> writePosition(String key, ReaderPosition position) async {
     await ensureInitialized();
     final String normalizedKey = key.trim();
     if (normalizedKey.isEmpty) {
       return;
     }
 
-    final double normalizedOffset = offset.isFinite && offset >= 0 ? offset : 0;
+    final ReaderPosition normalizedPosition = _normalizePosition(position);
     final DateTime now = _now();
     final int index = _entries.indexWhere(
       (ReaderProgressEntry entry) => entry.key == normalizedKey,
     );
     if (index >= 0) {
       _entries[index] = _entries[index].copyWith(
-        offset: normalizedOffset,
+        position: normalizedPosition,
         updatedAt: now,
       );
     } else {
       _entries.add(
         ReaderProgressEntry(
           key: normalizedKey,
-          offset: normalizedOffset,
+          position: normalizedPosition,
           updatedAt: now,
         ),
       );
     }
     _trim();
     await _persist();
+  }
+
+  Future<void> writeOffset(String key, double offset) {
+    return writePosition(key, ReaderPosition.scroll(offset: offset));
   }
 
   Future<void> remove(String key) async {
@@ -154,6 +247,22 @@ class ReaderProgressStore {
     final Directory directory = await _directoryProvider();
     return File(
       '${directory.path}${Platform.pathSeparator}reader_progress.json',
+    );
+  }
+
+  ReaderPosition _normalizePosition(ReaderPosition position) {
+    if (position.isPaged) {
+      return ReaderPosition.paged(
+        pageIndex: position.pageIndex < 0 ? 0 : position.pageIndex,
+        pageOffset: position.pageOffset.isFinite && position.pageOffset >= 0
+            ? position.pageOffset
+            : 0,
+      );
+    }
+    return ReaderPosition.scroll(
+      offset: position.offset.isFinite && position.offset >= 0
+          ? position.offset
+          : 0,
     );
   }
 

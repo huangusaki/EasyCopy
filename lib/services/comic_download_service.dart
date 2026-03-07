@@ -407,6 +407,78 @@ class ComicDownloadService {
         .toSet();
   }
 
+  Future<ReaderPageData?> loadCachedReaderPage(
+    String chapterHref, {
+    String prevHref = '',
+    String nextHref = '',
+    String catalogHref = '',
+  }) async {
+    final CachedChapterEntry? entry = await _findCachedChapter(chapterHref);
+    if (entry == null || entry.directoryPath.isEmpty) {
+      return null;
+    }
+
+    final File manifestFile = File(
+      _joinPath(<String>[entry.directoryPath, 'manifest.json']),
+    );
+    if (!await manifestFile.exists()) {
+      return null;
+    }
+
+    try {
+      final Object? decoded = jsonDecode(await manifestFile.readAsString());
+      if (decoded is! Map) {
+        return null;
+      }
+      final Map<String, Object?> manifest = decoded.map(
+        (Object? key, Object? value) => MapEntry(key.toString(), value),
+      );
+      final List<String> imageUrls =
+          ((manifest['files'] as List<Object?>?) ?? const <Object?>[])
+              .whereType<String>()
+              .map(
+                (String fileName) => Uri.file(
+                  _joinPath(<String>[entry.directoryPath, fileName]),
+                ).toString(),
+              )
+              .toList(growable: false);
+      if (imageUrls.isEmpty) {
+        return null;
+      }
+
+      final String sourceUri = _stringValue(manifest['sourceUri']);
+      final String manifestChapterHref = _stringValue(manifest['chapterHref']);
+      final String resolvedUri = sourceUri.isNotEmpty
+          ? _rewriteAllowedUri(sourceUri)
+          : (manifestChapterHref.isNotEmpty
+                ? _rewriteAllowedUri(manifestChapterHref)
+                : _rewriteAllowedUri(chapterHref));
+      final String resolvedCatalogHref = catalogHref.trim().isNotEmpty
+          ? catalogHref.trim()
+          : _rewriteAllowedUri(_stringValue(manifest['comicUri']));
+      final String chapterTitle = _stringValue(manifest['chapterTitle']);
+      final String chapterLabel = _stringValue(manifest['chapterLabel']);
+      final String progressLabel = _stringValue(manifest['progressLabel']);
+
+      return ReaderPageData(
+        title: chapterTitle.isNotEmpty
+            ? chapterTitle
+            : (chapterLabel.isNotEmpty ? chapterLabel : '已缓存章节'),
+        uri: resolvedUri,
+        comicTitle: _stringValue(manifest['comicTitle']),
+        chapterTitle: chapterTitle.isNotEmpty ? chapterTitle : chapterLabel,
+        progressLabel: progressLabel,
+        imageUrls: imageUrls,
+        prevHref: _rewriteAllowedUri(prevHref),
+        nextHref: _rewriteAllowedUri(nextHref),
+        catalogHref: resolvedCatalogHref,
+        contentKey: _pathKeyForUri(resolvedUri),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> deleteCachedComic(CachedComicLibraryEntry entry) async {
     if (entry.chapters.isEmpty) {
       await deleteComicCacheByTitle(entry.comicTitle);
@@ -425,6 +497,24 @@ class ComicDownloadService {
       return;
     }
     await deleteComicCacheByTitle(entry.comicTitle);
+  }
+
+  Future<CachedChapterEntry?> _findCachedChapter(String chapterHref) async {
+    final String targetPathKey = _pathKeyForUri(chapterHref);
+    if (targetPathKey.isEmpty) {
+      return null;
+    }
+    final List<CachedComicLibraryEntry> library = await loadCachedLibrary();
+    for (final CachedComicLibraryEntry comic in library) {
+      for (final CachedChapterEntry chapter in comic.chapters) {
+        final String chapterPathKey = _pathKeyForUri(chapter.chapterHref);
+        final String sourcePathKey = _pathKeyForUri(chapter.sourceUri);
+        if (chapterPathKey == targetPathKey || sourcePathKey == targetPathKey) {
+          return chapter;
+        }
+      }
+    }
+    return null;
   }
 
   Future<void> deleteComicCacheByTitle(String comicTitle) async {
