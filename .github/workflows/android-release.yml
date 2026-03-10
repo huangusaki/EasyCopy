@@ -126,7 +126,7 @@ jobs:
             [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64)
           )
 
-      - name: Build signed arm64-v8a APK
+      - name: Build signed APKs (armeabi-v7a, arm64-v8a, x86_64)
         shell: pwsh
         env:
           ANDROID_KEYSTORE_PATH: ${{ github.workspace }}\android\upload-keystore.jks
@@ -136,15 +136,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $symbolsDir = "release_symbols\${{ steps.meta.outputs.app_version }}\android-arm64-v8a"
-          New-Item -ItemType Directory -Path $symbolsDir -Force | Out-Null
-
           flutter build apk `
             --release `
-            --target-platform=android-arm64 `
+            --target-platform=android-arm,android-arm64,android-x64 `
             --split-per-abi `
-            --tree-shake-icons `
-            --split-debug-info="$symbolsDir"
+            --tree-shake-icons
 
       - name: Prepare release assets
         shell: pwsh
@@ -154,20 +150,22 @@ jobs:
           New-Item -ItemType Directory -Path dist -Force | Out-Null
 
           $version = "${{ steps.meta.outputs.app_version }}"
-          $apkSource = "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
-          $apkName = "EasyCopy-$version-android-arm64-v8a.apk"
-          $apkTarget = Join-Path "dist" $apkName
-          $symbolsTarget = Join-Path "dist" "EasyCopy-$version-android-arm64-v8a-symbols.zip"
+          $apkOutputs = @(
+            @{ abi = 'armeabi-v7a'; source = 'build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk' },
+            @{ abi = 'arm64-v8a';   source = 'build/app/outputs/flutter-apk/app-arm64-v8a-release.apk' },
+            @{ abi = 'x86_64';      source = 'build/app/outputs/flutter-apk/app-x86_64-release.apk' }
+          )
 
-          Copy-Item $apkSource $apkTarget -Force
-          Compress-Archive -Path "release_symbols\$version\android-arm64-v8a" -DestinationPath $symbolsTarget -Force
+          foreach ($apk in $apkOutputs) {
+            $source = $apk.source
+            if (-not (Test-Path $source)) {
+              throw "APK not found: $source"
+            }
 
-          $apkHash = (Get-FileHash $apkTarget -Algorithm SHA256).Hash.ToLower()
-          $symbolsHash = (Get-FileHash $symbolsTarget -Algorithm SHA256).Hash.ToLower()
-          @(
-            "$apkHash *$apkName"
-            "$symbolsHash *$([IO.Path]::GetFileName($symbolsTarget))"
-          ) | Set-Content -Path "dist/SHA256SUMS.txt"
+            $apkName = "EasyCopy-$version-android-$($apk.abi).apk"
+            $target = Join-Path "dist" $apkName
+            Copy-Item $source $target -Force
+          }
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -187,8 +185,6 @@ jobs:
           prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
           files: |
             dist/*.apk
-            dist/*.zip
-            dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
 
       - name: Create or update GitHub Release
@@ -202,6 +198,4 @@ jobs:
           prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
           files: |
             dist/*.apk
-            dist/*.zip
-            dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
