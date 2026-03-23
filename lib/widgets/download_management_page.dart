@@ -483,7 +483,7 @@ class _StorageSection extends StatelessWidget {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.drive_folder_upload_rounded),
-                    label: Text(state.isCustom ? '更换目录' : '选择外部目录'),
+                    label: Text(state.isCustom ? '更换位置' : '选择存储位置'),
                   ),
                   if (state.isCustom)
                     OutlinedButton.icon(

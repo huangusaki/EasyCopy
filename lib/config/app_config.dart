@@ -1,7 +1,7 @@
 import 'package:easy_copy/services/host_manager.dart';
 import 'package:flutter/material.dart';
 
-enum ProfileSubview { root, collections, history }
+enum ProfileSubview { root, collections, history, cached }
 
 class AppConfig {
   AppConfig._();
@@ -49,6 +49,8 @@ class AppConfig {
         return ProfileSubview.collections;
       case 'history':
         return ProfileSubview.history;
+      case 'cached':
+        return ProfileSubview.cached;
       default:
         return ProfileSubview.root;
     }
@@ -62,6 +64,8 @@ class AppConfig {
         return '我的收藏';
       case ProfileSubview.history:
         return '浏览历史';
+      case ProfileSubview.cached:
+        return '已缓存漫画';
     }
   }
 
@@ -148,6 +152,8 @@ class AppConfig {
         return 'collections';
       case ProfileSubview.history:
         return 'history';
+      case ProfileSubview.cached:
+        return 'cached';
     }
   }
 }

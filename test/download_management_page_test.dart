@@ -130,14 +130,14 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.scrollUntilVisible(
-      find.text('选择外部目录'),
+      find.text('选择存储位置'),
       200,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
 
     expect(find.textContaining('卸载应用后'), findsOneWidget);
-    await tester.tap(find.text('选择外部目录'));
+    await tester.tap(find.text('选择存储位置'));
     await tester.pump();
     expect(pickDirectoryTaps, 1);
   });

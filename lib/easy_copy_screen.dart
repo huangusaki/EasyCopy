@@ -35,7 +35,6 @@ import 'package:easy_copy/widgets/download_management_page.dart';
 import 'package:easy_copy/widgets/native_login_screen.dart';
 import 'package:easy_copy/widgets/profile_page_view.dart';
 import 'package:easy_copy/widgets/settings_ui.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
@@ -1294,23 +1293,27 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         !_canEditDownloadStorage()) {
       return;
     }
-    final DownloadStorageState currentState = _downloadStorageState;
-    final String? selectedPath = await getDirectoryPath(
-      confirmButtonText: '选择缓存目录',
-      initialDirectory: currentState.basePath.trim().isEmpty
-          ? null
-          : currentState.basePath,
-    );
-    if (selectedPath == null || selectedPath.trim().isEmpty || !mounted) {
+    final List<DownloadStorageState> candidates = await _downloadService
+        .loadCustomDirectoryCandidates();
+    if (!mounted) {
+      return;
+    }
+    if (candidates.isEmpty) {
+      _showSnackBar('当前设备没有可切换的可写存储位置');
+      return;
+    }
+    final DownloadStorageState? selectedState =
+        await _showDownloadStorageDirectoryPicker(candidates);
+    if (selectedState == null || !mounted) {
       return;
     }
     final DownloadPreferences nextPreferences = DownloadPreferences(
       mode: DownloadStorageMode.customDirectory,
-      customBasePath: selectedPath.trim(),
+      customBasePath: selectedState.basePath,
     );
     await _applyDownloadStoragePreferences(
       nextPreferences,
-      successMessage: '已切换到新的缓存目录',
+      successMessage: '已切换到新的存储位置',
     );
   }
 
@@ -1321,6 +1324,71 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     await _applyDownloadStoragePreferences(
       const DownloadPreferences(),
       successMessage: '已恢复默认缓存目录',
+    );
+  }
+
+  Future<DownloadStorageState?> _showDownloadStorageDirectoryPicker(
+    List<DownloadStorageState> candidates,
+  ) {
+    final String currentBasePath = _normalizedDownloadStoragePath(
+      _downloadStorageState.basePath,
+    );
+    return showModalBottomSheet<DownloadStorageState>(
+      context: context,
+      showDragHandle: true,
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            children: <Widget>[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(4, 0, 4, 8),
+                child: Text(
+                  '选择存储位置',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+                ),
+              ),
+              Text(
+                'Android 仅支持切换到应用可直接读写的存储位置，例如外置存储中的应用专属目录。',
+                style: TextStyle(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.72),
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 12),
+              ...candidates.map((DownloadStorageState candidate) {
+                final bool isCurrent =
+                    _normalizedDownloadStoragePath(candidate.basePath) ==
+                    currentBasePath;
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: ListTile(
+                    leading: Icon(
+                      Icons.sd_storage_rounded,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    title: Text(candidate.basePath),
+                    subtitle: Text(
+                      candidate.rootPath,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: isCurrent
+                        ? const Icon(Icons.check_circle_rounded)
+                        : const Icon(Icons.chevron_right_rounded),
+                    onTap: () {
+                      Navigator.of(context).pop(candidate);
+                    },
+                  ),
+                );
+              }),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1354,6 +1422,14 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     } finally {
       _downloadStorageBusyNotifier.value = false;
     }
+  }
+
+  String _normalizedDownloadStoragePath(String value) {
+    final String normalized = value.trim().replaceAll(
+      '/',
+      Platform.pathSeparator,
+    );
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
   }
 
   bool _shouldPauseActiveDownload(DownloadQueueTask task) {

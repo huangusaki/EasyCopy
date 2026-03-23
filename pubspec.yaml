@@ -39,7 +39,6 @@ dependencies:
   flutter_cache_manager: ^3.4.1
   flutter_displaymode: ^0.7.0
   flutter_secure_storage: ^9.2.4
-  file_selector: ^1.0.3
   html: ^0.15.6
   http: ^1.2.2
   path_provider: ^2.1.5

@@ -20,6 +20,7 @@ class ProfilePageView extends StatelessWidget {
     required this.onOpenHistory,
     required this.onOpenCollections,
     required this.onOpenHistoryPage,
+    required this.onOpenCachedComicPage,
     this.onOpenCachedComic,
     this.onDeleteCachedComic,
     this.currentHost = '',
@@ -44,6 +45,7 @@ class ProfilePageView extends StatelessWidget {
   final ValueChanged<ProfileHistoryItem> onOpenHistory;
   final VoidCallback onOpenCollections;
   final VoidCallback onOpenHistoryPage;
+  final VoidCallback onOpenCachedComicPage;
   final ValueChanged<String>? onOpenCachedComic;
   final ValueChanged<String>? onDeleteCachedComic;
   final String currentHost;
@@ -72,35 +74,40 @@ class ProfilePageView extends StatelessWidget {
         .map(_historyCardData)
         .toList(growable: false);
 
+    if (activeSubview == ProfileSubview.cached) {
+      return _buildComicCollectionSection(
+        context,
+        title: '已缓存漫画',
+        summary: '共 ${cachedComicCards.length} 部漫画',
+        items: cachedComicCards,
+        emptyMessage: '还没有缓存的漫画。',
+        onTap: onOpenCachedComic ?? onOpenComic,
+        onLongPress: onDeleteCachedComic,
+      );
+    }
+
     if (page.isLoggedIn && page.user != null) {
       switch (activeSubview) {
         case ProfileSubview.collections:
-          return Column(
-            children: <Widget>[
-              _buildComicCollectionSection(
-                context,
-                title: '我的收藏',
-                summary: '共 ${collectionCards.length} 部漫画',
-                items: collectionCards,
-                emptyMessage: '还没有收藏的漫画。',
-                onTap: onOpenComic,
-              ),
-            ],
+          return _buildComicCollectionSection(
+            context,
+            title: '我的收藏',
+            summary: '共 ${collectionCards.length} 部漫画',
+            items: collectionCards,
+            emptyMessage: '还没有收藏的漫画。',
+            onTap: onOpenComic,
           );
         case ProfileSubview.history:
-          return Column(
-            children: <Widget>[
-              _buildComicCollectionSection(
-                context,
-                title: '浏览历史',
-                summary: '共 ${historyCards.length} 条记录',
-                items: historyCards,
-                emptyMessage: '还没有浏览历史。',
-                onTap: onOpenComic,
-              ),
-            ],
+          return _buildComicCollectionSection(
+            context,
+            title: '浏览历史',
+            summary: '共 ${historyCards.length} 条记录',
+            items: historyCards,
+            emptyMessage: '还没有浏览历史。',
+            onTap: onOpenComic,
           );
         case ProfileSubview.root:
+        case ProfileSubview.cached:
           break;
       }
     }
@@ -146,17 +153,7 @@ class ProfilePageView extends StatelessWidget {
           title: '已缓存漫画',
           action: _SectionActionButton(
             semanticLabel: '查看全部缓存',
-            onTap: () {
-              _openComicCollectionPage(
-                context,
-                title: '已缓存漫画',
-                summary: '共 ${cachedComicCards.length} 部漫画',
-                items: cachedComicCards,
-                emptyMessage: '还没有缓存的漫画。',
-                onTap: onOpenCachedComic ?? onOpenComic,
-                onLongPress: onDeleteCachedComic,
-              );
-            },
+            onTap: onOpenCachedComicPage,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -334,39 +331,6 @@ class ProfilePageView extends StatelessWidget {
             emptyMessage: emptyMessage,
           ),
         ],
-      ),
-    );
-  }
-
-  void _openComicCollectionPage(
-    BuildContext context, {
-    required String title,
-    required String summary,
-    required List<ComicCardData> items,
-    required String emptyMessage,
-    required ValueChanged<String> onTap,
-    ValueChanged<String>? onLongPress,
-  }) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (BuildContext context) {
-          return _ProfileComicCollectionPage(
-            title: title,
-            summary: summary,
-            items: items,
-            emptyMessage: emptyMessage,
-            onTap: (String href) {
-              Navigator.of(context).pop();
-              onTap(href);
-            },
-            onLongPress: onLongPress == null
-                ? null
-                : (String href) {
-                    Navigator.of(context).pop();
-                    onLongPress(href);
-                  },
-          );
-        },
       ),
     );
   }
@@ -1247,61 +1211,6 @@ class _SectionActionButton extends StatelessWidget {
               color: colorScheme.onSurface,
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ProfileComicCollectionPage extends StatelessWidget {
-  const _ProfileComicCollectionPage({
-    required this.title,
-    required this.summary,
-    required this.items,
-    required this.emptyMessage,
-    required this.onTap,
-    this.onLongPress,
-  });
-
-  final String title;
-  final String summary;
-  final List<ComicCardData> items;
-  final String emptyMessage;
-  final ValueChanged<String> onTap;
-  final ValueChanged<String>? onLongPress;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: <Widget>[
-            AppSurfaceCard(
-              title: title,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    summary,
-                    style: TextStyle(
-                      color: colorScheme.onSurface.withValues(alpha: 0.7),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  ComicGrid(
-                    items: items,
-                    onTap: onTap,
-                    onLongPress: onLongPress,
-                    emptyMessage: emptyMessage,
-                  ),
-                ],
-              ),
-            ),
-          ],
         ),
       ),
     );

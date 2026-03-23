@@ -23,6 +23,10 @@ void main() {
       'https://www.2026copy.com/person/home?view=history',
     );
     expect(
+      AppConfig.buildProfileUri(view: ProfileSubview.cached).toString(),
+      'https://www.2026copy.com/person/home?view=cached',
+    );
+    expect(
       AppConfig.profileSubviewForUri(
         Uri.parse('https://www.2026copy.com/person/home?view=collections'),
       ),
@@ -36,11 +40,18 @@ void main() {
     );
     expect(
       AppConfig.profileSubviewForUri(
+        Uri.parse('https://www.2026copy.com/person/home?view=cached'),
+      ),
+      ProfileSubview.cached,
+    );
+    expect(
+      AppConfig.profileSubviewForUri(
         Uri.parse('https://www.2026copy.com/person/home?view=unknown'),
       ),
       ProfileSubview.root,
     );
     expect(AppConfig.profileSubviewTitle(ProfileSubview.collections), '我的收藏');
+    expect(AppConfig.profileSubviewTitle(ProfileSubview.cached), '已缓存漫画');
   });
 
   test('isAllowedNavigationUri blocks external domains and schemes', () {

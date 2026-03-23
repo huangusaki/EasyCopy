@@ -72,4 +72,55 @@ void main() {
     expect(state.isReady, isFalse);
     expect(state.errorMessage, isNotEmpty);
   });
+
+  test(
+    'loadCustomDirectoryCandidates excludes the default path and duplicate entries',
+    () async {
+      final Directory rootDir = await Directory.systemTemp.createTemp(
+        'easy_copy_storage_candidates_',
+      );
+      addTearDown(() => rootDir.delete(recursive: true));
+      final Directory defaultBase = Directory(
+        '${rootDir.path}${Platform.pathSeparator}default',
+      );
+      final Directory removableBase = Directory(
+        '${rootDir.path}${Platform.pathSeparator}sdcard',
+      );
+      final Directory secondaryBase = Directory(
+        '${rootDir.path}${Platform.pathSeparator}secondary',
+      );
+      await defaultBase.create(recursive: true);
+      await removableBase.create(recursive: true);
+      await secondaryBase.create(recursive: true);
+      final File invalidBase = File(
+        '${rootDir.path}${Platform.pathSeparator}not-a-directory.txt',
+      );
+      await invalidBase.writeAsString('demo');
+
+      final DownloadStorageService service = DownloadStorageService(
+        preferencesProvider: () async => const DownloadPreferences(),
+        defaultBaseDirectoryProvider: () async => defaultBase,
+        customBaseDirectoriesProvider: () async => <Directory>[
+          defaultBase,
+          removableBase,
+          removableBase,
+          Directory(invalidBase.path),
+          secondaryBase,
+        ],
+      );
+
+      final List<DownloadStorageState> candidates = await service
+          .loadCustomDirectoryCandidates();
+
+      expect(service.supportsCustomDirectorySelection, isTrue);
+      expect(
+        candidates.map((DownloadStorageState state) => state.basePath),
+        equals(<String>[removableBase.path, secondaryBase.path]..sort()),
+      );
+      expect(
+        candidates.every((DownloadStorageState state) => state.isReady),
+        isTrue,
+      );
+    },
+  );
 }

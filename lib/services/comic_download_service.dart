@@ -140,6 +140,10 @@ class ComicDownloadService {
     );
   }
 
+  Future<List<DownloadStorageState>> loadCustomDirectoryCandidates() {
+    return _storageService.loadCustomDirectoryCandidates();
+  }
+
   Future<ChapterDownloadResult> downloadChapter(
     ReaderPageData page, {
     String cookieHeader = '',

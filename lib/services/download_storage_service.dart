@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 typedef DownloadPreferencesProvider = Future<DownloadPreferences> Function();
 typedef DownloadBaseDirectoryProvider = Future<Directory> Function();
+typedef DownloadBaseDirectoriesProvider = Future<List<Directory>?> Function();
 
 @immutable
 class DownloadStorageState {
@@ -54,11 +55,16 @@ class DownloadStorageService {
     AppPreferencesController? preferencesController,
     DownloadPreferencesProvider? preferencesProvider,
     DownloadBaseDirectoryProvider? defaultBaseDirectoryProvider,
+    DownloadBaseDirectoriesProvider? customBaseDirectoriesProvider,
   }) : _preferencesController =
            preferencesController ?? AppPreferencesController.instance,
        _preferencesProvider = preferencesProvider,
        _defaultBaseDirectoryProvider =
-           defaultBaseDirectoryProvider ?? _defaultBaseDirectory;
+           defaultBaseDirectoryProvider ?? _defaultBaseDirectory,
+       _customBaseDirectoriesProvider =
+           customBaseDirectoriesProvider ?? _defaultCustomBaseDirectories,
+       _supportsCustomDirectorySelection =
+           Platform.isAndroid || customBaseDirectoriesProvider != null;
 
   static final DownloadStorageService instance = DownloadStorageService();
   static const String downloadsDirectoryName = 'EasyCopyDownloads';
@@ -66,8 +72,11 @@ class DownloadStorageService {
   final AppPreferencesController _preferencesController;
   final DownloadPreferencesProvider? _preferencesProvider;
   final DownloadBaseDirectoryProvider _defaultBaseDirectoryProvider;
+  final DownloadBaseDirectoriesProvider _customBaseDirectoriesProvider;
+  final bool _supportsCustomDirectorySelection;
 
-  bool get supportsCustomDirectorySelection => Platform.isAndroid;
+  bool get supportsCustomDirectorySelection =>
+      _supportsCustomDirectorySelection;
 
   Future<DownloadStorageState> resolveState({
     DownloadPreferences? preferences,
@@ -86,7 +95,10 @@ class DownloadStorageService {
         rootPath: '',
         isCustom: isCustom,
         isWritable: false,
-        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(isCustom: isCustom),
+        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(
+          isCustom: isCustom,
+          basePath: rawBasePath,
+        ),
         errorMessage: isCustom ? '尚未设置自定义缓存目录。' : '默认缓存目录不可用。',
       );
     }
@@ -106,7 +118,10 @@ class DownloadStorageService {
         rootPath: rootDirectory.path,
         isCustom: isCustom,
         isWritable: true,
-        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(isCustom: isCustom),
+        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(
+          isCustom: isCustom,
+          basePath: baseDirectory.path,
+        ),
       );
     } on FileSystemException catch (error) {
       return DownloadStorageState(
@@ -115,7 +130,10 @@ class DownloadStorageService {
         rootPath: rootDirectory.path,
         isCustom: isCustom,
         isWritable: false,
-        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(isCustom: isCustom),
+        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(
+          isCustom: isCustom,
+          basePath: baseDirectory.path,
+        ),
         errorMessage: error.message,
       );
     } catch (error) {
@@ -125,10 +143,64 @@ class DownloadStorageService {
         rootPath: rootDirectory.path,
         isCustom: isCustom,
         isWritable: false,
-        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(isCustom: isCustom),
+        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(
+          isCustom: isCustom,
+          basePath: baseDirectory.path,
+        ),
         errorMessage: error.toString(),
       );
     }
+  }
+
+  Future<List<DownloadStorageState>> loadCustomDirectoryCandidates() async {
+    if (!supportsCustomDirectorySelection) {
+      return const <DownloadStorageState>[];
+    }
+
+    final List<Directory> baseDirectories =
+        (await _customBaseDirectoriesProvider()) ?? const <Directory>[];
+    if (baseDirectories.isEmpty) {
+      return const <DownloadStorageState>[];
+    }
+
+    final DownloadStorageState defaultState = await resolveState(
+      preferences: const DownloadPreferences(),
+      verifyWritable: false,
+    );
+    final String normalizedDefaultBasePath = _normalizedPath(
+      defaultState.basePath,
+    );
+    final Set<String> seenPaths = <String>{};
+    final List<DownloadStorageState> candidates = <DownloadStorageState>[];
+
+    for (final Directory directory in baseDirectories) {
+      final String basePath = directory.path.trim();
+      if (basePath.isEmpty) {
+        continue;
+      }
+      final String normalizedBasePath = _normalizedPath(basePath);
+      if (!seenPaths.add(normalizedBasePath) ||
+          normalizedBasePath == normalizedDefaultBasePath) {
+        continue;
+      }
+
+      final DownloadStorageState candidate = await resolveState(
+        preferences: DownloadPreferences(
+          mode: DownloadStorageMode.customDirectory,
+          customBasePath: basePath,
+        ),
+        verifyWritable: true,
+      );
+      if (candidate.isReady) {
+        candidates.add(candidate);
+      }
+    }
+
+    candidates.sort(
+      (DownloadStorageState left, DownloadStorageState right) =>
+          left.basePath.compareTo(right.basePath),
+    );
+    return candidates;
   }
 
   String summarizePath(String path) {
@@ -159,11 +231,21 @@ class DownloadStorageService {
     return _preferencesController.downloadPreferences;
   }
 
-  bool _mayBeRemovedOnUninstall({required bool isCustom}) {
-    if (isCustom) {
-      return false;
+  bool _mayBeRemovedOnUninstall({
+    required bool isCustom,
+    required String basePath,
+  }) {
+    if (Platform.isAndroid) {
+      final String normalizedBasePath = _normalizedPath(basePath).toLowerCase();
+      final String appSpecificMarker =
+          '${Platform.pathSeparator}android${Platform.pathSeparator}'
+          'data${Platform.pathSeparator}';
+      if (normalizedBasePath.contains(appSpecificMarker)) {
+        return true;
+      }
+      return !isCustom;
     }
-    return Platform.isAndroid || Platform.isIOS;
+    return Platform.isIOS;
   }
 
   Future<void> _verifyWritable(Directory rootDirectory) async {
@@ -193,5 +275,20 @@ class DownloadStorageService {
           await getApplicationDocumentsDirectory();
     }
     return await getApplicationDocumentsDirectory();
+  }
+
+  static Future<List<Directory>?> _defaultCustomBaseDirectories() async {
+    if (!Platform.isAndroid) {
+      return const <Directory>[];
+    }
+    return getExternalStorageDirectories();
+  }
+
+  String _normalizedPath(String value) {
+    final String normalized = value.trim().replaceAll(
+      '/',
+      Platform.pathSeparator,
+    );
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
   }
 }

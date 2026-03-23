@@ -28,6 +28,7 @@ void main() {
               onOpenHistory: (_) {},
               onOpenCollections: () {},
               onOpenHistoryPage: () {},
+              onOpenCachedComicPage: () {},
             ),
           ),
         ),
@@ -60,6 +61,7 @@ void main() {
                 onOpenHistory: (_) {},
                 onOpenCollections: () {},
                 onOpenHistoryPage: () {},
+                onOpenCachedComicPage: () {},
                 themePreference: AppThemePreference.system,
                 onThemePreferenceChanged: (AppThemePreference value) {
                   selectedTheme = value;
@@ -99,6 +101,7 @@ void main() {
                 onOpenHistory: (_) {},
                 onOpenCollections: () {},
                 onOpenHistoryPage: () {},
+                onOpenCachedComicPage: () {},
                 afterContinueReading: const Text('下载管理'),
               ),
             ),
@@ -130,6 +133,7 @@ void main() {
               onOpenHistory: (_) {},
               onOpenCollections: () {},
               onOpenHistoryPage: () {},
+              onOpenCachedComicPage: () {},
               onOpenCachedComic: (String href) {
                 openedCachedComic = href;
               },
@@ -164,6 +168,59 @@ void main() {
     await tester.pumpAndSettle();
     expect(deletedCachedComic, 'https://www.2026copy.com/comic/cached');
   });
+
+  testWidgets(
+    'ProfilePageView forwards cached section action to the cached subview callback',
+    (WidgetTester tester) async {
+      String? openedPreviewComic;
+      int openedCachedPage = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: ProfilePageView(
+                page: ProfilePageData.loggedOut(
+                  uri: 'https://www.2026copy.com/person/home',
+                ),
+                onAuthenticate: () {},
+                onLogout: () {},
+                onOpenComic: (_) {},
+                onOpenHistory: (_) {},
+                onOpenCollections: () {},
+                onOpenHistoryPage: () {},
+                onOpenCachedComicPage: () {
+                  openedCachedPage += 1;
+                },
+                onOpenCachedComic: (String href) {
+                  openedPreviewComic = href;
+                },
+                cachedComicCards: const <ComicCardData>[
+                  ComicCardData(
+                    title: '缓存作品',
+                    subtitle: '12话',
+                    secondaryText: '最近缓存：第12话',
+                    coverUrl: '',
+                    href: 'https://www.2026copy.com/comic/cached',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.ensureVisible(find.text('缓存作品'));
+      await tester.tap(find.text('缓存作品'));
+      await tester.pumpAndSettle();
+      expect(openedPreviewComic, 'https://www.2026copy.com/comic/cached');
+      expect(openedCachedPage, 0);
+
+      await tester.tap(find.bySemanticsLabel('查看全部缓存'));
+      await tester.pump();
+      expect(openedCachedPage, 1);
+    },
+  );
 
   testWidgets(
     'ProfilePageView renders native profile sections when logged in',
@@ -232,6 +289,7 @@ void main() {
                 onOpenHistoryPage: () {
                   openedHistoryPage += 1;
                 },
+                onOpenCachedComicPage: () {},
               ),
             ),
           ),
@@ -305,6 +363,7 @@ void main() {
               onOpenHistory: (_) {},
               onOpenCollections: () {},
               onOpenHistoryPage: () {},
+              onOpenCachedComicPage: () {},
             ),
           ),
         ),
@@ -356,6 +415,7 @@ void main() {
               onOpenHistory: (_) {},
               onOpenCollections: () {},
               onOpenHistoryPage: () {},
+              onOpenCachedComicPage: () {},
             ),
           ),
         ),
@@ -369,6 +429,65 @@ void main() {
     await tester.tap(find.text('最近阅读'));
     await tester.pumpAndSettle();
     expect(openedComic, 'https://www.2026copy.com/comic/recent');
+  });
+
+  testWidgets('ProfilePageView renders cached subview in place', (
+    WidgetTester tester,
+  ) async {
+    String? openedCachedComic;
+    String? deletedCachedComic;
+
+    final ProfilePageData page = ProfilePageData.loggedOut(
+      uri: 'https://www.2026copy.com/person/home?view=cached',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ProfilePageView(
+              page: page,
+              activeSubview: ProfileSubview.cached,
+              onAuthenticate: () {},
+              onLogout: () {},
+              onOpenComic: (_) {},
+              onOpenHistory: (_) {},
+              onOpenCollections: () {},
+              onOpenHistoryPage: () {},
+              onOpenCachedComicPage: () {},
+              onOpenCachedComic: (String href) {
+                openedCachedComic = href;
+              },
+              onDeleteCachedComic: (String href) {
+                deletedCachedComic = href;
+              },
+              cachedComicCards: const <ComicCardData>[
+                ComicCardData(
+                  title: '缓存作品',
+                  subtitle: '12话',
+                  secondaryText: '最近缓存：第12话',
+                  coverUrl: '',
+                  href: 'https://www.2026copy.com/comic/cached',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('已缓存漫画'), findsOneWidget);
+    expect(find.text('共 1 部漫画'), findsOneWidget);
+    expect(find.text('缓存作品'), findsOneWidget);
+    expect(find.text('外观'), findsNothing);
+
+    await tester.tap(find.text('缓存作品'));
+    await tester.pumpAndSettle();
+    expect(openedCachedComic, 'https://www.2026copy.com/comic/cached');
+
+    await tester.longPress(find.text('缓存作品'));
+    await tester.pumpAndSettle();
+    expect(deletedCachedComic, 'https://www.2026copy.com/comic/cached');
   });
 
   testWidgets('ProfilePageView renders host settings and forwards actions', (
@@ -418,6 +537,7 @@ void main() {
               onOpenHistory: (_) {},
               onOpenCollections: () {},
               onOpenHistoryPage: () {},
+              onOpenCachedComicPage: () {},
               currentHost: 'beta.example',
               candidateHosts: const <String>[
                 'alpha.example',

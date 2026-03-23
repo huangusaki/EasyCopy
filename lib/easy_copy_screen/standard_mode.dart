@@ -300,6 +300,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
         onOpenCollections: () =>
             _openProfileSubview(ProfileSubview.collections),
         onOpenHistoryPage: () => _openProfileSubview(ProfileSubview.history),
+        onOpenCachedComicPage: () => _openProfileSubview(ProfileSubview.cached),
         currentHost: _hostManager.currentHost,
         candidateHosts: _hostManager.candidateHosts,
         hostSnapshot: _hostManager.probeSnapshot,
@@ -438,16 +439,17 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     if (item == null) {
       return;
     }
+    final String targetHref;
     if (item.comicHref.isNotEmpty) {
-      _navigateToHref(item.comicHref);
-      return;
-    }
-    if (item.chapters.isNotEmpty &&
+      targetHref = item.comicHref;
+    } else if (item.chapters.isNotEmpty &&
         item.chapters.first.chapterHref.isNotEmpty) {
-      _navigateToHref(item.chapters.first.chapterHref);
+      targetHref = item.chapters.first.chapterHref;
+    } else {
+      _showSnackBar('该缓存条目缺少可打开的链接');
       return;
     }
-    _showSnackBar('该缓存条目缺少可打开的链接');
+    _navigateToHref(targetHref);
   }
 
   void _deleteCachedComicFromProfile(String key) {
