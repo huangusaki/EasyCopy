@@ -80,6 +80,104 @@ const String _pageExtractionScriptTemplate = r"""
       return true;
     });
   };
+  const escapeRegExp = (value) =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parseJavaScriptStringLiteral = (source, start) => {
+    let index = start;
+    while (index < source.length && /\s/.test(source[index])) {
+      index += 1;
+    }
+
+    const quote = source[index];
+    if (quote !== "'" && quote !== '"' && quote !== '`') {
+      return null;
+    }
+    index += 1;
+
+    let result = '';
+    while (index < source.length) {
+      const char = source[index];
+      index += 1;
+      if (char === quote) {
+        return {
+          value: result,
+          end: index,
+        };
+      }
+      if (char !== '\\') {
+        result += char;
+        continue;
+      }
+
+      if (index >= source.length) {
+        return null;
+      }
+      const escape = source[index];
+      index += 1;
+      switch (escape) {
+        case '"':
+        case "'":
+        case '`':
+        case '\\':
+        case '/':
+          result += escape;
+          break;
+        case 'b':
+          result += '\b';
+          break;
+        case 'f':
+          result += '\f';
+          break;
+        case 'n':
+          result += '\n';
+          break;
+        case 'r':
+          result += '\r';
+          break;
+        case 't':
+          result += '\t';
+          break;
+        case 'u': {
+          const hex = source.slice(index, index + 4);
+          if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+            return null;
+          }
+          result += String.fromCharCode(parseInt(hex, 16));
+          index += 4;
+          break;
+        }
+        default:
+          result += escape;
+          break;
+      }
+    }
+
+    return null;
+  };
+  const extractAssignedString = (source, variableName) => {
+    const escapedName = escapeRegExp(variableName);
+    const patterns = [
+      new RegExp(
+        `(?:^|[;\\s])(?:var|let|const)\\s+${escapedName}\\s*=\\s*`,
+        'im',
+      ),
+      new RegExp(`(?:^|[;\\s])window\\.${escapedName}\\s*=\\s*`, 'im'),
+    ];
+    for (const pattern of patterns) {
+      const match = pattern.exec(source);
+      if (!match) {
+        continue;
+      }
+      const parsed = parseJavaScriptStringLiteral(
+        source,
+        match.index + match[0].length,
+      );
+      if (parsed && cleanText(parsed.value)) {
+        return cleanText(parsed.value);
+      }
+    }
+    return '';
+  };
   const buildComicCard = (anchor) => {
     const container =
       anchor.closest('.exemptComic_Item') ||
@@ -671,8 +769,7 @@ const String _pageExtractionScriptTemplate = r"""
       const allScriptText = Array.from(document.scripts)
         .map((script) => script.textContent || '')
         .join('\n');
-      const match = allScriptText.match(/var\s+contentKey\s*=\s*'([^']+)'/i);
-      return match ? cleanText(match[1]) : '';
+      return extractAssignedString(allScriptText, 'contentKey');
     })();
 
     return {

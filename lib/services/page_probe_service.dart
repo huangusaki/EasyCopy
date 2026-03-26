@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:easy_copy/models/page_models.dart';
 import 'package:easy_copy/services/host_manager.dart';
+import 'package:easy_copy/services/js_literal_utils.dart';
 import 'package:http/http.dart' as http;
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
@@ -200,11 +201,10 @@ class PageProbeService {
     final String progress = _nodeText(
       document.querySelector('.comicContent-footer-txt span'),
     );
-    final RegExpMatch? match = RegExp(
-      r"var\s+contentKey\s*=\s*'([^']+)'",
-      caseSensitive: false,
-    ).firstMatch(body);
-    final String contentKey = match?.group(1) ?? '';
+    final String contentKey = extractAssignedJavaScriptString(
+      body,
+      'contentKey',
+    );
     return <String>[uri.path, title, progress, contentKey].join('::');
   }
 

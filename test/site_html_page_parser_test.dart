@@ -63,6 +63,39 @@ void main() {
     },
   );
 
+  test('parses discover inline list with mixed quotes in titles', () async {
+    const String html = '''
+<!DOCTYPE html>
+<html lang="zh-hant">
+  <head>
+    <title>發現 - 拷貝漫畫 拷贝漫画</title>
+  </head>
+  <body>
+    <main class="content-box">
+      <div class="container exemptComicList">
+        <div class="row exemptComic-box" list="[{&#x27;path_word&#x27;: &#x27;queensorders&#x27;, &#x27;name&#x27;: &quot;碧藍航線 Queen&#x27;s Orders&quot;, &#x27;cover&#x27;: &#x27;https://sq.mangafunb.fun/q/queensorders/cover/1651100048.jpg.328x422.jpg&#x27;, &#x27;status&#x27;: 0, &#x27;author&#x27;: [{&#x27;name&#x27;: &#x27;槌居&#x27;, &#x27;path_word&#x27;: &#x27;槌居&#x27;}]}]"></div>
+      </div>
+    </main>
+  </body>
+</html>
+''';
+
+    final DiscoverPageData page =
+        await parser.parsePage(
+              Uri.parse('https://www.2026copy.com/comics'),
+              html,
+            )
+            as DiscoverPageData;
+
+    expect(page.items, hasLength(1));
+    expect(page.items.first.title, "碧藍航線 Queen's Orders");
+    expect(
+      page.items.first.href,
+      'https://www.2026copy.com/comic/queensorders',
+    );
+    expect(page.items.first.subtitle, '作者：槌居');
+  });
+
   test('parses rank fixture with active tabs and ranking cards', () async {
     final String html = await File(fixturePath('rank.html')).readAsString();
     final RankPageData page =
@@ -151,6 +184,49 @@ void main() {
     expect(page.contentKey, contentKey);
   });
 
+  test('parses reader pages from modern script assignments', () async {
+    const String cct = 'op0zzpvv.nmn.o0p';
+    final String contentKey = _encryptReaderPayload(cct, <Object?>[
+      <String, Object?>{'url': 'https://cdn.example.com/reader/modern.jpg'},
+    ]);
+    final String html =
+        '''
+<!DOCTYPE html>
+<html lang="zh-hant">
+  <head>
+    <title>夢醒後的灰 - 第06話 - 拷貝漫畫 拷贝漫画</title>
+  </head>
+  <body>
+    <h4 class="header">夢醒後的灰/第06話</h4>
+    <div class="container-fluid comicContent">
+      <div class="container comic-size-1">
+        <ul class="comicContent-list comic-size-1"></ul>
+      </div>
+    </div>
+    <div class="comicContent-footer-txt"><span>第7 / 7話</span></div>
+    <script>
+      const cct = "$cct";
+      window.contentKey = `$contentKey`;
+    </script>
+  </body>
+</html>
+''';
+
+    final ReaderPageData page =
+        await parser.parsePage(
+              Uri.parse(
+                'https://www.2026copy.com/comic/mongxinhoudehui/chapter/demo-modern',
+              ),
+              html,
+            )
+            as ReaderPageData;
+
+    expect(page.contentKey, contentKey);
+    expect(page.imageUrls, <String>[
+      'https://cdn.example.com/reader/modern.jpg',
+    ]);
+  });
+
   test('parses detail fixture and chapter endpoint payload together', () async {
     final String html = await File(fixturePath('series.html')).readAsString();
     final String encryptedResults = _encryptChapterPayload(
@@ -231,6 +307,75 @@ void main() {
     expect(page.chapterGroups.last.label, '番外篇');
     expect(page.chapterGroups.last.chapters.single.label, '出张版');
     expect(page.chapters, hasLength(3));
+  });
+
+  test('parses detail fallback with modern JS quoting', () async {
+    const String ccz = 'op0zzpvv.nzn.ocp';
+    final String encryptedResults = _encryptChapterPayload(
+      ccz,
+      <String, Object?>{
+        'build': <String, Object?>{
+          'path_word': 'demo-modern',
+          'type': <Object?>[
+            <String, Object?>{'id': 1, 'name': '話'},
+          ],
+        },
+        'groups': <String, Object?>{
+          'default': <String, Object?>{
+            'path_word': 'default',
+            'name': '默認',
+            'chapters': <Object?>[
+              <String, Object?>{
+                'type': 1,
+                'name': '第01話',
+                'id': 'chapter-modern-1',
+              },
+            ],
+          },
+        },
+      },
+    );
+    const String html =
+        '''
+<!DOCTYPE html>
+<html lang="zh-hant">
+  <head>
+    <title>測試作品 - 拷貝漫畫 拷贝漫画</title>
+  </head>
+  <body>
+    <div class="comicParticulars-title"></div>
+    <h6 title="測試作品"></h6>
+    <input id="dnt" value="3">
+    <a class="comicParticulars-botton collect" onclick='collect("comic-modern-id")'>
+      已在書架
+    </a>
+    <script>
+      const ccz = "$ccz";
+    </script>
+  </body>
+</html>
+''';
+
+    final DetailPageData page =
+        await parser.parsePage(
+              Uri.parse('https://www.2026copy.com/comic/demo-modern'),
+              html,
+              loadDetailChapterResults: (DetailChapterRequest request) async {
+                expect(request.slug, 'demo-modern');
+                expect(request.dnt, '3');
+                expect(request.ccz, ccz);
+                return encryptedResults;
+              },
+            )
+            as DetailPageData;
+
+    expect(page.comicId, 'comic-modern-id');
+    expect(page.isCollected, isTrue);
+    expect(page.chapterGroups, hasLength(1));
+    expect(
+      page.chapterGroups.first.chapters.first.href,
+      contains('chapter-modern-1'),
+    );
   });
 
   test('parses topic index and topic detail pages', () async {

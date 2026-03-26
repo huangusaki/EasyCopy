@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/page_models.dart';
+import 'package:easy_copy/services/js_literal_utils.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 import 'package:pointycastle/export.dart';
@@ -406,9 +407,10 @@ class SiteHtmlPageParser {
       '.comicParticulars-botton.collect',
     );
     final String collectText = _text(collectButton);
-    final RegExpMatch? collectMatch = RegExp(
-      r"collect\('([^']+)'\)",
-    ).firstMatch(_attr(collectButton, 'onclick'));
+    final String comicId = extractJavaScriptCallStringArgument(
+      _attr(collectButton, 'onclick'),
+      'collect',
+    );
     final dom.Element? authorRow = _rowByPrefix(infoRows, '作者');
 
     List<ChapterGroupData> chapterGroups = _parseDetailChapterGroupsFromDom(
@@ -473,7 +475,7 @@ class SiteHtmlPageParser {
           })
           .whereType<LinkAction>()
           .toList(growable: false),
-      comicId: collectMatch?.group(1)?.trim() ?? '',
+      comicId: comicId,
       isCollected:
           collectText.isNotEmpty &&
           !collectText.contains('加入書架') &&
@@ -501,10 +503,7 @@ class SiteHtmlPageParser {
     }
     final String slug = _cleanText(segments[1]);
     final String dnt = _attr(document.querySelector('#dnt'), 'value');
-    final RegExpMatch? cczMatch = RegExp(
-      r"var\s+ccz\s*=\s*'([^']+)'",
-    ).firstMatch(html);
-    final String ccz = _cleanText(cczMatch?.group(1));
+    final String ccz = _cleanText(extractAssignedJavaScriptString(html, 'ccz'));
     if (slug.isEmpty || dnt.isEmpty || ccz.isEmpty) {
       return null;
     }
@@ -959,7 +958,12 @@ class SiteHtmlPageParser {
       return const <ComicCardData>[];
     }
 
-    final Object? decoded = jsonDecode(rawList.replaceAll("'", '"'));
+    final Object? decoded;
+    try {
+      decoded = parseJavaScriptLiteral(rawList);
+    } on FormatException {
+      return const <ComicCardData>[];
+    }
     if (decoded is! List) {
       return const <ComicCardData>[];
     }
@@ -1161,20 +1165,7 @@ class SiteHtmlPageParser {
   }
 
   String _scriptStringValue(String html, String variableName) {
-    final List<RegExp> patterns = <RegExp>[
-      RegExp("var\\s+$variableName\\s*=\\s*'([^']+)'", caseSensitive: false),
-      RegExp('var\\s+$variableName\\s*=\\s*"([^"]+)"', caseSensitive: false),
-      RegExp("window\\.$variableName\\s*=\\s*'([^']+)'", caseSensitive: false),
-      RegExp('window\\.$variableName\\s*=\\s*"([^"]+)"', caseSensitive: false),
-    ];
-    for (final RegExp pattern in patterns) {
-      final RegExpMatch? match = pattern.firstMatch(html);
-      final String value = _cleanText(match?.group(1));
-      if (value.isNotEmpty) {
-        return value;
-      }
-    }
-    return '';
+    return _cleanText(extractAssignedJavaScriptString(html, variableName));
   }
 
   String _pageTitle(dom.Document document) {

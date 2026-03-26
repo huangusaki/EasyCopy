@@ -73,6 +73,43 @@ void main() {
     expect(parts[3], startsWith('nFRYsol9gpyEe16B'));
   });
 
+  test(
+    'page probe extracts reader contentKey fingerprint from modern assignment',
+    () async {
+      const String readerHtml = '''
+<!DOCTYPE html>
+<html lang="zh-hant">
+  <head>
+    <title>測試閱讀頁 - 拷貝漫畫 拷贝漫画</title>
+  </head>
+  <body>
+    <h4 class="header">測試作品/第01話</h4>
+    <div class="comicContent-footer-txt"><span>第1 / 1話</span></div>
+    <script>
+      const contentKey = "modern-reader-key";
+    </script>
+  </body>
+</html>
+''';
+      final PageProbeService service = PageProbeService(
+        client: MockClient((http.Request request) async {
+          return http.Response.bytes(utf8.encode(readerHtml), 200);
+        }),
+        now: () => DateTime(2026, 3, 6, 12),
+        userAgent: 'test-agent',
+      );
+
+      final PageProbeResult reader = await service.probe(
+        Uri.parse('https://www.2026copy.com/comic/demo/chapter/modern'),
+      );
+
+      final List<String> parts = reader.fingerprint.split('::');
+      expect(reader.pageType, EasyCopyPageType.reader);
+      expect(parts, hasLength(4));
+      expect(parts[3], 'modern-reader-key');
+    },
+  );
+
   test('page probe fingerprints discover filters and comic cards', () async {
     final String discoverHtml = await File(
       fixturePath('comics.html'),
