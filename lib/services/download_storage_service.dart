@@ -8,6 +8,8 @@ import 'package:path_provider/path_provider.dart';
 typedef DownloadPreferencesProvider = Future<DownloadPreferences> Function();
 typedef DownloadBaseDirectoryProvider = Future<Directory> Function();
 typedef DownloadBaseDirectoriesProvider = Future<List<Directory>?> Function();
+typedef DownloadExternalStorageDirectoriesProvider =
+    Future<List<Directory>?> Function(StorageDirectory? type);
 
 @immutable
 class DownloadStorageState {
@@ -56,15 +58,26 @@ class DownloadStorageService {
     DownloadPreferencesProvider? preferencesProvider,
     DownloadBaseDirectoryProvider? defaultBaseDirectoryProvider,
     DownloadBaseDirectoriesProvider? customBaseDirectoriesProvider,
+    DownloadExternalStorageDirectoriesProvider?
+    androidExternalStorageDirectoriesProvider,
+    DownloadBaseDirectoriesProvider? androidExternalCacheDirectoriesProvider,
   }) : _preferencesController =
            preferencesController ?? AppPreferencesController.instance,
        _preferencesProvider = preferencesProvider,
        _defaultBaseDirectoryProvider =
            defaultBaseDirectoryProvider ?? _defaultBaseDirectory,
-       _customBaseDirectoriesProvider =
-           customBaseDirectoriesProvider ?? _defaultCustomBaseDirectories,
+       _customBaseDirectoriesProvider = customBaseDirectoriesProvider,
+       _androidExternalStorageDirectoriesProvider =
+           androidExternalStorageDirectoriesProvider ??
+           _defaultAndroidExternalStorageDirectories,
+       _androidExternalCacheDirectoriesProvider =
+           androidExternalCacheDirectoriesProvider ??
+           _defaultAndroidExternalCacheDirectories,
        _supportsCustomDirectorySelection =
-           Platform.isAndroid || customBaseDirectoriesProvider != null;
+           Platform.isAndroid ||
+           customBaseDirectoriesProvider != null ||
+           androidExternalStorageDirectoriesProvider != null ||
+           androidExternalCacheDirectoriesProvider != null;
 
   static final DownloadStorageService instance = DownloadStorageService();
   static const String downloadsDirectoryName = 'EasyCopyDownloads';
@@ -72,7 +85,11 @@ class DownloadStorageService {
   final AppPreferencesController _preferencesController;
   final DownloadPreferencesProvider? _preferencesProvider;
   final DownloadBaseDirectoryProvider _defaultBaseDirectoryProvider;
-  final DownloadBaseDirectoriesProvider _customBaseDirectoriesProvider;
+  final DownloadBaseDirectoriesProvider? _customBaseDirectoriesProvider;
+  final DownloadExternalStorageDirectoriesProvider
+  _androidExternalStorageDirectoriesProvider;
+  final DownloadBaseDirectoriesProvider
+  _androidExternalCacheDirectoriesProvider;
   final bool _supportsCustomDirectorySelection;
 
   bool get supportsCustomDirectorySelection =>
@@ -157,8 +174,7 @@ class DownloadStorageService {
       return const <DownloadStorageState>[];
     }
 
-    final List<Directory> baseDirectories =
-        (await _customBaseDirectoriesProvider()) ?? const <Directory>[];
+    final List<Directory> baseDirectories = await _loadCustomBaseDirectories();
     if (baseDirectories.isEmpty) {
       return const <DownloadStorageState>[];
     }
@@ -231,6 +247,24 @@ class DownloadStorageService {
     return _preferencesController.downloadPreferences;
   }
 
+  Future<List<Directory>> _loadCustomBaseDirectories() async {
+    final DownloadBaseDirectoriesProvider? customProvider =
+        _customBaseDirectoriesProvider;
+    if (customProvider != null) {
+      return (await customProvider()) ?? const <Directory>[];
+    }
+    if (!Platform.isAndroid &&
+        !_supportsCustomDirectorySelectionForInjectedAndroidProviders) {
+      return const <Directory>[];
+    }
+    return _defaultCustomBaseDirectories(
+      externalStorageDirectoriesProvider:
+          _androidExternalStorageDirectoriesProvider,
+      externalCacheDirectoriesProvider:
+          _androidExternalCacheDirectoriesProvider,
+    );
+  }
+
   bool _mayBeRemovedOnUninstall({
     required bool isCustom,
     required String basePath,
@@ -277,11 +311,52 @@ class DownloadStorageService {
     return await getApplicationDocumentsDirectory();
   }
 
-  static Future<List<Directory>?> _defaultCustomBaseDirectories() async {
-    if (!Platform.isAndroid) {
-      return const <Directory>[];
+  bool get _supportsCustomDirectorySelectionForInjectedAndroidProviders =>
+      _androidExternalStorageDirectoriesProvider !=
+          _defaultAndroidExternalStorageDirectories ||
+      _androidExternalCacheDirectoriesProvider !=
+          _defaultAndroidExternalCacheDirectories;
+
+  static Future<List<Directory>> _defaultCustomBaseDirectories({
+    required DownloadExternalStorageDirectoriesProvider
+    externalStorageDirectoriesProvider,
+    required DownloadBaseDirectoriesProvider externalCacheDirectoriesProvider,
+  }) async {
+    final Set<String> seenPaths = <String>{};
+    final List<Directory> directories = <Directory>[];
+
+    void addAll(List<Directory>? values) {
+      for (final Directory directory in values ?? const <Directory>[]) {
+        final String path = directory.path.trim();
+        if (path.isEmpty || !seenPaths.add(path)) {
+          continue;
+        }
+        directories.add(directory);
+      }
     }
-    return getExternalStorageDirectories();
+
+    addAll(await externalStorageDirectoriesProvider(null));
+    addAll(await externalCacheDirectoriesProvider());
+    for (final StorageDirectory type in const <StorageDirectory>[
+      StorageDirectory.downloads,
+      StorageDirectory.documents,
+      StorageDirectory.pictures,
+      StorageDirectory.movies,
+      StorageDirectory.dcim,
+    ]) {
+      addAll(await externalStorageDirectoriesProvider(type));
+    }
+    return directories;
+  }
+
+  static Future<List<Directory>?> _defaultAndroidExternalStorageDirectories(
+    StorageDirectory? type,
+  ) {
+    return getExternalStorageDirectories(type: type);
+  }
+
+  static Future<List<Directory>?> _defaultAndroidExternalCacheDirectories() {
+    return getExternalCacheDirectories();
   }
 
   String _normalizedPath(String value) {

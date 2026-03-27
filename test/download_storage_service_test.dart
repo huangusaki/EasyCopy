@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:easy_copy/models/app_preferences.dart';
 import 'package:easy_copy/services/download_storage_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() {
   test('download storage service resolves the default cache root', () async {
@@ -116,6 +117,67 @@ void main() {
       expect(
         candidates.map((DownloadStorageState state) => state.basePath),
         equals(<String>[removableBase.path, secondaryBase.path]..sort()),
+      );
+      expect(
+        candidates.every((DownloadStorageState state) => state.isReady),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'loadCustomDirectoryCandidates keeps Android subdirectories when only one external root exists',
+    () async {
+      final Directory rootDir = await Directory.systemTemp.createTemp(
+        'easy_copy_storage_android_candidates_',
+      );
+      addTearDown(() => rootDir.delete(recursive: true));
+      final Directory defaultBase = Directory(
+        '${rootDir.path}${Platform.pathSeparator}primary',
+      );
+      final Directory downloadsBase = Directory(
+        '${defaultBase.path}${Platform.pathSeparator}Download',
+      );
+      final Directory documentsBase = Directory(
+        '${defaultBase.path}${Platform.pathSeparator}Documents',
+      );
+      final Directory cacheBase = Directory(
+        '${rootDir.path}${Platform.pathSeparator}cache',
+      );
+      await defaultBase.create(recursive: true);
+
+      final DownloadStorageService service = DownloadStorageService(
+        preferencesProvider: () async => const DownloadPreferences(),
+        defaultBaseDirectoryProvider: () async => defaultBase,
+        androidExternalStorageDirectoriesProvider:
+            (StorageDirectory? type) async {
+              switch (type) {
+                case null:
+                  return <Directory>[defaultBase];
+                case StorageDirectory.downloads:
+                  return <Directory>[downloadsBase];
+                case StorageDirectory.documents:
+                  return <Directory>[documentsBase];
+                default:
+                  return const <Directory>[];
+              }
+            },
+        androidExternalCacheDirectoriesProvider: () async => <Directory>[
+          cacheBase,
+        ],
+      );
+
+      final List<DownloadStorageState> candidates = await service
+          .loadCustomDirectoryCandidates();
+
+      expect(service.supportsCustomDirectorySelection, isTrue);
+      expect(
+        candidates.map((DownloadStorageState state) => state.basePath).toSet(),
+        equals(<String>{
+          downloadsBase.path,
+          documentsBase.path,
+          cacheBase.path,
+        }),
       );
       expect(
         candidates.every((DownloadStorageState state) => state.isReady),
