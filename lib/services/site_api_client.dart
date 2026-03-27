@@ -366,25 +366,6 @@ class SiteApiClient {
     );
   }
 
-  Future<Map<String, Object?>> _getJsonOrEmpty(List<String> paths) async {
-    Object? lastError;
-    for (final String path in paths) {
-      try {
-        return await _getJson(path);
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    if (lastError is SiteApiException && lastError.message.contains('登录已失效')) {
-      throw lastError;
-    }
-    return const <String, Object?>{
-      'code': 200,
-      'message': '请求成功',
-      'results': <String, Object?>{'list': <Object?>[]},
-    };
-  }
-
   Future<List<Map<String, Object?>>> _getPagedListOrEmpty(
     List<String> paths,
   ) async {
