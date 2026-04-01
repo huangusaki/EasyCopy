@@ -2322,7 +2322,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     }
     await _session.updateFromCookieHeader(result.cookieHeader);
     await _session.saveToken(token!, cookies: result.cookies);
-    await _hostManager.pinSessionHost(_hostManager.currentHost);
     await _syncSessionCookiesToCurrentHost();
     await _loadProfilePage(
       forceRefresh: true,
@@ -2335,7 +2334,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _resetStandardScrollPosition();
     await _pageRepository.removeAuthenticatedEntries();
     await _session.clear();
-    await _hostManager.clearSessionPin();
     await _cookieManager.clearCookies();
     _mutateSessionState(() {
       for (int index = 0; index < appDestinations.length; index += 1) {

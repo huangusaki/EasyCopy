@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:easy_copy/services/site_api_client.dart';
+import 'package:easy_copy/services/login_credentials_store.dart';
 import 'package:easy_copy/widgets/auth_webview_screen.dart';
 import 'package:flutter/material.dart';
 
@@ -6,11 +9,13 @@ class NativeLoginScreen extends StatefulWidget {
   const NativeLoginScreen({
     required this.loginUri,
     required this.userAgent,
+    this.credentialsStore,
     super.key,
   });
 
   final Uri loginUri;
   final String userAgent;
+  final LoginCredentialsStore? credentialsStore;
 
   @override
   State<NativeLoginScreen> createState() => _NativeLoginScreenState();
@@ -20,15 +25,41 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
+  late final LoginCredentialsStore _credentialsStore;
   bool _isSubmitting = false;
+  bool _isLoadingSavedCredentials = true;
   bool _obscurePassword = true;
+  bool _rememberPassword = false;
   String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _credentialsStore =
+        widget.credentialsStore ?? LoginCredentialsStore.instance;
+    unawaited(_restoreSavedCredentials());
+  }
 
   @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _restoreSavedCredentials() async {
+    final SavedLoginCredentials? credentials = await _credentialsStore.read();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (credentials != null) {
+        _usernameController.text = credentials.username;
+        _passwordController.text = credentials.password;
+        _rememberPassword = true;
+      }
+      _isLoadingSavedCredentials = false;
+    });
   }
 
   Future<void> _submit() async {
@@ -51,6 +82,11 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
         username: username,
         password: password,
       );
+      if (_rememberPassword) {
+        await _credentialsStore.save(username: username, password: password);
+      } else {
+        await _credentialsStore.clear();
+      }
       if (!mounted) {
         return;
       }
@@ -106,19 +142,9 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  const Text(
-                    '原生登录',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '直接调用站点登录接口，避免网页登录在手机上布局错位。',
-                    style: TextStyle(color: Colors.grey.shade700, height: 1.5),
-                  ),
-                  const SizedBox(height: 20),
                   TextField(
                     controller: _usernameController,
-                    enabled: !_isSubmitting,
+                    enabled: !_isSubmitting && !_isLoadingSavedCredentials,
                     textInputAction: TextInputAction.next,
                     decoration: const InputDecoration(
                       labelText: '账号',
@@ -128,7 +154,7 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
                   const SizedBox(height: 14),
                   TextField(
                     controller: _passwordController,
-                    enabled: !_isSubmitting,
+                    enabled: !_isSubmitting && !_isLoadingSavedCredentials,
                     obscureText: _obscurePassword,
                     onSubmitted: (_) => _submit(),
                     decoration: InputDecoration(
@@ -148,6 +174,25 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    value: _rememberPassword,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    dense: true,
+                    title: const Text('记住密码'),
+                    onChanged: (_isSubmitting || _isLoadingSavedCredentials)
+                        ? null
+                        : (bool? value) {
+                            final bool nextValue = value ?? false;
+                            setState(() {
+                              _rememberPassword = nextValue;
+                            });
+                            if (!nextValue) {
+                              unawaited(_credentialsStore.clear());
+                            }
+                          },
+                  ),
                   if ((_errorMessage ?? '').isNotEmpty) ...<Widget>[
                     const SizedBox(height: 12),
                     Text(
@@ -162,7 +207,9 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
-                      onPressed: _isSubmitting ? null : _submit,
+                      onPressed: (_isSubmitting || _isLoadingSavedCredentials)
+                          ? null
+                          : _submit,
                       child: _isSubmitting
                           ? const SizedBox(
                               width: 18,
@@ -176,7 +223,9 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: TextButton(
-                      onPressed: _isSubmitting ? null : _openWebLogin,
+                      onPressed: (_isSubmitting || _isLoadingSavedCredentials)
+                          ? null
+                          : _openWebLogin,
                       child: const Text('使用网页登录 / 注册'),
                     ),
                   ),

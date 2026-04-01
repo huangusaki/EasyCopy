@@ -55,6 +55,7 @@ class HostProbeSnapshot {
   });
 
   factory HostProbeSnapshot.fromJson(Map<String, Object?> json) {
+    final String pinMode = (json['pinMode'] as String?)?.trim() ?? '';
     return HostProbeSnapshot(
       selectedHost: (json['selectedHost'] as String?) ?? '',
       checkedAt:
@@ -70,7 +71,9 @@ class HostProbeSnapshot {
             ),
           )
           .toList(growable: false),
-      sessionPinnedHost: json['sessionPinnedHost'] as String?,
+      sessionPinnedHost: pinMode == 'manual'
+          ? json['sessionPinnedHost'] as String?
+          : null,
     );
   }
 
@@ -83,6 +86,7 @@ class HostProbeSnapshot {
     return <String, Object?>{
       'selectedHost': selectedHost,
       'checkedAt': checkedAt.toIso8601String(),
+      'pinMode': sessionPinnedHost == null ? '' : 'manual',
       'sessionPinnedHost': sessionPinnedHost,
       'probes': probes.map((HostProbeRecord probe) => probe.toJson()).toList(),
     };
