@@ -5,6 +5,7 @@ import 'package:easy_copy/models/app_preferences.dart';
 import 'package:easy_copy/models/page_models.dart';
 import 'package:easy_copy/services/app_preferences_controller.dart';
 import 'package:easy_copy/services/comic_download_service.dart';
+import 'package:easy_copy/services/download_storage_migration_store.dart';
 import 'package:easy_copy/services/download_storage_service.dart';
 import 'package:easy_copy/services/download_queue_store.dart';
 import 'package:flutter/foundation.dart';
@@ -30,12 +31,15 @@ class DownloadQueueManager {
     required ComicDownloadService downloadService,
     required DownloadQueueStore queueStore,
     required DownloadTaskRunner taskRunner,
+    DownloadStorageMigrationStore? migrationStore,
     DownloadQueueLibraryChangedCallback? onLibraryChanged,
     DownloadQueueNoticeCallback? onNotice,
   }) : _preferencesController = preferencesController,
        _downloadService = downloadService,
        _queueStore = queueStore,
        _taskRunner = taskRunner,
+       _migrationStore =
+           migrationStore ?? DownloadStorageMigrationStore.instance,
        _onLibraryChanged = onLibraryChanged,
        _onNotice = onNotice;
 
@@ -43,6 +47,7 @@ class DownloadQueueManager {
   final ComicDownloadService _downloadService;
   final DownloadQueueStore _queueStore;
   final DownloadTaskRunner _taskRunner;
+  final DownloadStorageMigrationStore _migrationStore;
   final DownloadQueueLibraryChangedCallback? _onLibraryChanged;
   final DownloadQueueNoticeCallback? _onNotice;
 
@@ -51,6 +56,9 @@ class DownloadQueueManager {
   final ValueNotifier<DownloadStorageState> storageStateNotifier =
       ValueNotifier<DownloadStorageState>(const DownloadStorageState.loading());
   final ValueNotifier<bool> storageBusyNotifier = ValueNotifier<bool>(false);
+  final ValueNotifier<DownloadStorageMigrationProgress?>
+  storageMigrationProgressNotifier =
+      ValueNotifier<DownloadStorageMigrationProgress?>(null);
 
   final Map<String, List<DownloadQueueTask>> _pendingCancelledTaskCleanups =
       <String, List<DownloadQueueTask>>{};
@@ -59,6 +67,9 @@ class DownloadQueueManager {
 
   bool _isProcessingQueue = false;
   bool _disposed = false;
+  String? _runningTaskId;
+  String? _runningComicKey;
+  Object? _activeStorageCleanupToken;
 
   DownloadQueueSnapshot get snapshot => snapshotNotifier.value;
 
@@ -82,6 +93,79 @@ class DownloadQueueManager {
       return;
     }
     snapshotNotifier.value = await _queueStore.read();
+  }
+
+  Future<void> recoverInterruptedStorageMigration() async {
+    await _migrationStore.ensureInitialized();
+    final PendingDownloadStorageMigration? pendingMigration =
+        await _migrationStore.read();
+    if (pendingMigration == null || _disposed) {
+      return;
+    }
+
+    final DownloadPreferences currentPreferences =
+        _preferencesController.downloadPreferences;
+    if (currentPreferences.hasSameStorageLocation(pendingMigration.to)) {
+      await _migrationStore.clear();
+      return;
+    }
+    if (!currentPreferences.hasSameStorageLocation(pendingMigration.from)) {
+      await _migrationStore.clear();
+      return;
+    }
+
+    final DownloadStorageState currentState = await _downloadService
+        .resolveStorageState(
+          preferences: currentPreferences,
+          verifyWritable: false,
+        );
+    if (!_disposed) {
+      storageStateNotifier.value = currentState;
+    }
+    if (!_disposed) {
+      storageBusyNotifier.value = true;
+    }
+    Future<String>? cleanupFuture;
+    try {
+      final DownloadStorageMigrationResult result = await _downloadService
+          .migrateCacheRoot(
+            from: pendingMigration.from,
+            to: pendingMigration.to,
+            onProgress: (DownloadStorageMigrationProgress progress) {
+              if (_disposed) {
+                return;
+              }
+              storageMigrationProgressNotifier.value = progress;
+            },
+          );
+      await _preferencesController.updateDownloadPreferences(
+        (_) => pendingMigration.to,
+      );
+      await _migrationStore.clear();
+      if (!_disposed) {
+        storageStateNotifier.value = result.storageState;
+      }
+      await _notifyLibraryChanged();
+      cleanupFuture = result.cleanupFuture;
+      final String message = result.cleanupWarning.isEmpty
+          ? '已恢复上次未完成的缓存目录迁移'
+          : '已恢复上次未完成的缓存目录迁移，${result.cleanupWarning}';
+      _notify(message);
+      if (cleanupFuture != null) {
+        unawaited(_watchStorageCleanup(cleanupFuture));
+      }
+    } catch (_) {
+      await _migrationStore.clear();
+      await refreshStorageState(preferences: currentPreferences);
+      _notify('检测到上次缓存目录迁移未完成，请重新选择缓存目录。');
+    } finally {
+      if (!_disposed) {
+        storageBusyNotifier.value = false;
+        if (cleanupFuture == null) {
+          storageMigrationProgressNotifier.value = null;
+        }
+      }
+    }
   }
 
   Future<void> refreshStorageState({DownloadPreferences? preferences}) async {
@@ -191,50 +275,95 @@ class DownloadQueueManager {
   }
 
   Future<void> removeQueuedComic(DownloadQueueTask task) async {
-    final bool removesActiveComic =
-        snapshot.activeTask?.comicKey == task.comicKey;
+    final bool removesRunningComic = _isComicRunning(task.comicKey);
     final List<DownloadQueueTask> removedTasks = await _removeComicFromQueue(
       task.comicKey,
+      deferCleanupToRunningTask: removesRunningComic,
     );
-    if (!removesActiveComic) {
+    if (!removesRunningComic) {
       await _downloadService.cleanupIncompleteTasks(removedTasks);
       await _notifyLibraryChanged();
     }
   }
 
   Future<void> removeQueuedTask(DownloadQueueTask task) async {
-    final bool removesActiveTask = snapshot.activeTask?.id == task.id;
-    await _removeTaskFromQueue(task);
-    if (!removesActiveTask) {
+    final bool removesRunningTask = _isTaskRunning(task.id);
+    await _removeTaskFromQueue(
+      task,
+      deferCleanupToRunningTask: removesRunningTask,
+    );
+    if (!removesRunningTask) {
       await _downloadService.cleanupIncompleteTasks(<DownloadQueueTask>[task]);
       await _notifyLibraryChanged();
     }
+  }
+
+  Future<void> removeComicAndDeleteCache(DownloadQueueTask task) async {
+    final bool removesRunningComic = _isComicRunning(task.comicKey);
+    final List<DownloadQueueTask> removedTasks = await _removeComicFromQueue(
+      task.comicKey,
+      deferCleanupToRunningTask: removesRunningComic,
+    );
+
+    if (removesRunningComic) {
+      if (_runningTaskId != null) {
+        _pendingCancelledComicDeletions[_runningTaskId!] = task.comicTitle;
+      }
+      return;
+    }
+
+    await _downloadService.cleanupIncompleteTasks(removedTasks);
+    await _deleteCachedComicByKeyOrTitle(
+      comicKey: task.comicKey,
+      fallbackTitle: task.comicTitle,
+    );
+    await _notifyLibraryChanged();
+  }
+
+  Future<void> clearQueue() async {
+    final DownloadQueueSnapshot currentSnapshot = snapshot;
+    if (currentSnapshot.isEmpty) {
+      return;
+    }
+
+    final List<DownloadQueueTask> removedTasks = currentSnapshot.tasks;
+    final String? runningTaskId = _runningTaskId;
+    await _persistSnapshot(const DownloadQueueSnapshot());
+
+    if (runningTaskId != null) {
+      _pendingCancelledTaskCleanups[runningTaskId] = removedTasks;
+      return;
+    }
+
+    await _downloadService.cleanupIncompleteTasks(removedTasks);
+    await _notifyLibraryChanged();
   }
 
   Future<void> deleteCachedComic(
     CachedComicLibraryEntry entry, {
     required String comicKey,
   }) async {
-    final DownloadQueueTask? activeTask = snapshot.activeTask;
-    final bool removesActiveComic = activeTask?.comicKey == comicKey;
+    final bool removesRunningComic = _isComicRunning(comicKey);
     final List<DownloadQueueTask> removedTasks = await _removeComicFromQueue(
       comicKey,
+      deferCleanupToRunningTask: removesRunningComic,
     );
 
-    if (!removesActiveComic) {
+    if (!removesRunningComic) {
       await _downloadService.cleanupIncompleteTasks(removedTasks);
       await _downloadService.deleteCachedComic(entry);
       await _notifyLibraryChanged();
       return;
     }
 
-    if (activeTask != null) {
-      _pendingCancelledComicDeletions[activeTask.id] = entry.comicTitle;
+    if (_runningTaskId != null) {
+      _pendingCancelledComicDeletions[_runningTaskId!] = entry.comicTitle;
     }
   }
 
   String? storageEditBlockReason() {
-    if (storageBusyNotifier.value) {
+    if (storageBusyNotifier.value ||
+        storageMigrationProgressNotifier.value != null) {
       return '正在切换缓存目录，请稍后再试';
     }
     if (snapshot.isNotEmpty && !snapshot.isPaused) {
@@ -259,23 +388,49 @@ class DownloadQueueManager {
     if (!_disposed) {
       storageBusyNotifier.value = true;
     }
+    Future<String>? cleanupFuture;
     try {
+      await _migrationStore.write(
+        PendingDownloadStorageMigration(
+          from: currentPreferences,
+          to: nextPreferences,
+          createdAt: DateTime.now(),
+        ),
+      );
       final DownloadStorageMigrationResult result = await _downloadService
-          .migrateCacheRoot(from: currentPreferences, to: nextPreferences);
+          .migrateCacheRoot(
+            from: currentPreferences,
+            to: nextPreferences,
+            onProgress: (DownloadStorageMigrationProgress progress) {
+              if (_disposed) {
+                return;
+              }
+              storageMigrationProgressNotifier.value = progress;
+            },
+          );
       await _preferencesController.updateDownloadPreferences(
         (_) => nextPreferences,
       );
+      await _migrationStore.clear();
       if (!_disposed) {
         storageStateNotifier.value = result.storageState;
       }
       await _notifyLibraryChanged();
+      cleanupFuture = result.cleanupFuture;
+      if (cleanupFuture != null) {
+        unawaited(_watchStorageCleanup(cleanupFuture));
+      }
       return result;
     } catch (_) {
+      await _migrationStore.clear();
       await refreshStorageState();
       rethrow;
     } finally {
       if (!_disposed) {
         storageBusyNotifier.value = false;
+        if (cleanupFuture == null) {
+          storageMigrationProgressNotifier.value = null;
+        }
       }
     }
   }
@@ -283,6 +438,7 @@ class DownloadQueueManager {
   Future<void> ensureRunning() async {
     if (_disposed ||
         _isProcessingQueue ||
+        storageBusyNotifier.value ||
         snapshot.isPaused ||
         snapshot.isEmpty) {
       return;
@@ -323,6 +479,7 @@ class DownloadQueueManager {
     snapshotNotifier.dispose();
     storageStateNotifier.dispose();
     storageBusyNotifier.dispose();
+    storageMigrationProgressNotifier.dispose();
   }
 
   Future<void> _persistSnapshot(DownloadQueueSnapshot nextSnapshot) async {
@@ -337,7 +494,10 @@ class DownloadQueueManager {
     await _queueStore.write(nextSnapshot);
   }
 
-  Future<List<DownloadQueueTask>> _removeComicFromQueue(String comicKey) async {
+  Future<List<DownloadQueueTask>> _removeComicFromQueue(
+    String comicKey, {
+    bool deferCleanupToRunningTask = false,
+  }) async {
     final DownloadQueueSnapshot currentSnapshot = snapshot;
     if (currentSnapshot.isEmpty) {
       return const <DownloadQueueTask>[];
@@ -350,14 +510,12 @@ class DownloadQueueManager {
       return const <DownloadQueueTask>[];
     }
 
-    final DownloadQueueTask? activeTask = currentSnapshot.activeTask;
-    final bool removesActiveComic = activeTask?.comicKey == comicKey;
     final List<DownloadQueueTask> remainingTasks = currentSnapshot.tasks
         .where((DownloadQueueTask task) => task.comicKey != comicKey)
         .toList(growable: false);
 
-    if (removesActiveComic && activeTask != null) {
-      _pendingCancelledTaskCleanups[activeTask.id] = removedTasks;
+    if (deferCleanupToRunningTask && _runningTaskId != null) {
+      _pendingCancelledTaskCleanups[_runningTaskId!] = removedTasks;
     }
 
     await _persistSnapshot(
@@ -369,7 +527,10 @@ class DownloadQueueManager {
     return removedTasks;
   }
 
-  Future<void> _removeTaskFromQueue(DownloadQueueTask task) async {
+  Future<void> _removeTaskFromQueue(
+    DownloadQueueTask task, {
+    bool deferCleanupToRunningTask = false,
+  }) async {
     final DownloadQueueSnapshot currentSnapshot = snapshot;
     if (currentSnapshot.isEmpty) {
       return;
@@ -382,11 +543,10 @@ class DownloadQueueManager {
       return;
     }
 
-    final bool removesActiveTask = currentSnapshot.activeTask?.id == task.id;
     final List<DownloadQueueTask> remainingTasks = currentSnapshot.tasks
         .where((DownloadQueueTask item) => item.id != task.id)
         .toList(growable: false);
-    if (removesActiveTask) {
+    if (deferCleanupToRunningTask) {
       _pendingCancelledTaskCleanups[task.id] = <DownloadQueueTask>[task];
     }
     await _persistSnapshot(
@@ -433,26 +593,31 @@ class DownloadQueueManager {
   }
 
   bool _shouldPauseActiveDownload(DownloadQueueTask task) {
-    return !_disposed && snapshot.isPaused && _taskById(task.id) != null;
+    return !_disposed &&
+        _isTaskRunning(task.id) &&
+        snapshot.isPaused &&
+        _taskById(task.id) != null;
   }
 
   bool _shouldCancelActiveDownload(DownloadQueueTask task) {
-    return _disposed || _taskById(task.id) == null;
+    return _disposed || (_isTaskRunning(task.id) && _taskById(task.id) == null);
   }
 
   Future<void> _runTask(DownloadQueueTask task) async {
-    await _updateTask(
-      task.copyWith(
-        status: DownloadQueueTaskStatus.parsing,
-        progressLabel: '正在解析 ${task.chapterLabel}',
-        completedImages: 0,
-        totalImages: 0,
-        errorMessage: '',
-        updatedAt: DateTime.now(),
-      ),
-    );
-
+    _runningTaskId = task.id;
+    _runningComicKey = task.comicKey;
     try {
+      await _updateTask(
+        task.copyWith(
+          status: DownloadQueueTaskStatus.parsing,
+          progressLabel: '正在解析 ${task.chapterLabel}',
+          completedImages: 0,
+          totalImages: 0,
+          errorMessage: '',
+          updatedAt: DateTime.now(),
+        ),
+      );
+
       final ReaderPageData readerPage = await _taskRunner.prepare(task);
 
       if (_shouldCancelActiveDownload(task)) {
@@ -507,6 +672,16 @@ class DownloadQueueManager {
           tasks: remainingTasks,
         ),
       );
+      final List<DownloadQueueTask>? tasksToCleanup =
+          _pendingCancelledTaskCleanups.remove(task.id);
+      final String? comicDeletionTitle = _pendingCancelledComicDeletions.remove(
+        task.id,
+      );
+      if (comicDeletionTitle != null) {
+        await _downloadService.deleteComicCacheByTitle(comicDeletionTitle);
+      } else if (tasksToCleanup != null) {
+        await _downloadService.cleanupIncompleteTasks(tasksToCleanup);
+      }
       await _notifyLibraryChanged();
 
       if (remainingTasks.isEmpty) {
@@ -543,6 +718,22 @@ class DownloadQueueManager {
     } catch (error) {
       final DownloadQueueTask? latestTask = _taskById(task.id);
       final String message = _formatDownloadError(error);
+      if (latestTask == null) {
+        final List<DownloadQueueTask>? tasksToCleanup =
+            _pendingCancelledTaskCleanups.remove(task.id);
+        final String? comicDeletionTitle = _pendingCancelledComicDeletions
+            .remove(task.id);
+        if (comicDeletionTitle != null) {
+          await _downloadService.deleteComicCacheByTitle(comicDeletionTitle);
+          await _notifyLibraryChanged();
+          return;
+        }
+        if (tasksToCleanup != null) {
+          await _downloadService.cleanupIncompleteTasks(tasksToCleanup);
+          await _notifyLibraryChanged();
+          return;
+        }
+      }
       if (latestTask != null) {
         final DownloadQueueSnapshot currentSnapshot = snapshot;
         final List<DownloadQueueTask> tasks = currentSnapshot.tasks
@@ -563,7 +754,66 @@ class DownloadQueueManager {
         );
       }
       _notify('缓存失败：$message');
+    } finally {
+      if (_runningTaskId == task.id) {
+        _runningTaskId = null;
+        _runningComicKey = null;
+      }
     }
+  }
+
+  bool _isTaskRunning(String taskId) => _runningTaskId == taskId;
+
+  bool _isComicRunning(String comicKey) => _runningComicKey == comicKey;
+
+  Future<void> _watchStorageCleanup(Future<String> cleanupFuture) async {
+    final Object token = Object();
+    _activeStorageCleanupToken = token;
+    try {
+      final String cleanupWarning = await cleanupFuture;
+      if (_disposed || _activeStorageCleanupToken != token) {
+        return;
+      }
+      if (cleanupWarning.isNotEmpty) {
+        _notify(cleanupWarning);
+      }
+    } finally {
+      if (!_disposed && _activeStorageCleanupToken == token) {
+        _activeStorageCleanupToken = null;
+        storageMigrationProgressNotifier.value = null;
+      }
+    }
+  }
+
+  Future<void> _deleteCachedComicByKeyOrTitle({
+    required String comicKey,
+    required String fallbackTitle,
+  }) async {
+    final List<CachedComicLibraryEntry> library = await _downloadService
+        .loadCachedLibrary();
+    final CachedComicLibraryEntry? match = library
+        .cast<CachedComicLibraryEntry?>()
+        .firstWhere(
+          (CachedComicLibraryEntry? entry) =>
+              entry != null &&
+              entry.comicHref.isNotEmpty &&
+              Uri.tryParse(entry.comicHref) != null &&
+              _comicKey(entry.comicHref) == comicKey,
+          orElse: () => null,
+        );
+    if (match != null) {
+      await _downloadService.deleteCachedComic(match);
+      return;
+    }
+    await _downloadService.deleteComicCacheByTitle(fallbackTitle);
+  }
+
+  String _comicKey(String value) {
+    final Uri? uri = Uri.tryParse(value);
+    if (uri == null) {
+      return value.trim();
+    }
+    return Uri(path: uri.path).toString();
   }
 
   Future<void> _notifyLibraryChanged() async {

@@ -3,6 +3,8 @@ package com.huangusaki.easycopy
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.DocumentsContract
 import android.webkit.MimeTypeMap
 import androidx.activity.ComponentActivity
@@ -11,8 +13,14 @@ import androidx.documentfile.provider.DocumentFile
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.concurrent.Executors
 
 class DocumentTreeStorageBridge(
     private val activity: ComponentActivity,
@@ -22,6 +30,8 @@ class DocumentTreeStorageBridge(
         MethodChannel(binaryMessenger, CHANNEL_NAME).also {
             it.setMethodCallHandler(this)
         }
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val ioExecutor = Executors.newSingleThreadExecutor()
 
     private var pendingPickResult: MethodChannel.Result? = null
 
@@ -77,6 +87,9 @@ class DocumentTreeStorageBridge(
                 "resolveDirectory" -> handleResolveDirectory(call, result)
                 "writeBytes" -> handleWriteBytes(call, result)
                 "writeText" -> handleWriteText(call, result)
+                "importDirectoryFromPath" -> handleImportDirectoryFromPath(call, result)
+                "exportDirectoryToPath" -> handleExportDirectoryToPath(call, result)
+                "copyDirectoryToTree" -> handleCopyDirectoryToTree(call, result)
                 "readText" -> handleReadText(call, result)
                 "readBytes" -> handleReadBytes(call, result)
                 "readBytesFromUri" -> handleReadBytesFromUri(call, result)
@@ -102,6 +115,7 @@ class DocumentTreeStorageBridge(
         )
         pendingPickResult = null
         methodChannel.setMethodCallHandler(null)
+        ioExecutor.shutdown()
     }
 
     private fun handlePickDirectory(call: MethodCall, result: MethodChannel.Result) {
@@ -181,6 +195,78 @@ class DocumentTreeStorageBridge(
         result.success(null)
     }
 
+    private fun handleImportDirectoryFromPath(call: MethodCall, result: MethodChannel.Result) {
+        runAsync(result) {
+            val treeUri = call.requireString("treeUri")
+            val sourcePath = call.requireString("sourcePath")
+            val relativePath = call.argument<String>("relativePath")?.trim().orEmpty()
+            val operationId = call.argument<String>("operationId")?.trim().orEmpty()
+            val sourceDirectory = File(sourcePath)
+            require(sourceDirectory.exists()) { "Source directory does not exist: $sourcePath" }
+            require(sourceDirectory.isDirectory) { "Source path is not a directory: $sourcePath" }
+            val targetRoot = resolveTargetDirectory(treeUri, relativePath)
+            val progressReporter =
+                ProgressReporter(
+                    operationId = operationId,
+                    totalCount = countMigratableFilesInDirectory(sourceDirectory),
+                )
+            progressReporter.dispatch(force = true)
+            copyFileSystemDirectoryToDocumentTree(sourceDirectory, targetRoot, progressReporter)
+            progressReporter.complete()
+            null
+        }
+    }
+
+    private fun handleExportDirectoryToPath(call: MethodCall, result: MethodChannel.Result) {
+        runAsync(result) {
+            val treeUri = call.requireString("treeUri")
+            val destinationPath = call.requireString("destinationPath")
+            val relativePath = call.argument<String>("relativePath")?.trim().orEmpty()
+            val operationId = call.argument<String>("operationId")?.trim().orEmpty()
+            val sourceRoot = resolveSourceDirectory(treeUri, relativePath)
+            val destinationDirectory = File(destinationPath)
+            destinationDirectory.mkdirs()
+            require(destinationDirectory.exists()) {
+                "Destination directory could not be created: $destinationPath"
+            }
+            require(destinationDirectory.isDirectory) {
+                "Destination path is not a directory: $destinationPath"
+            }
+            val progressReporter =
+                ProgressReporter(
+                    operationId = operationId,
+                    totalCount = countMigratableFilesInDocumentTree(sourceRoot),
+                )
+            progressReporter.dispatch(force = true)
+            copyDocumentTreeDirectoryToFileSystem(sourceRoot, destinationDirectory, progressReporter)
+            progressReporter.complete()
+            null
+        }
+    }
+
+    private fun handleCopyDirectoryToTree(call: MethodCall, result: MethodChannel.Result) {
+        runAsync(result) {
+            val sourceTreeUri = call.requireString("sourceTreeUri")
+            val targetTreeUri = call.requireString("targetTreeUri")
+            val sourceRelativePath =
+                call.argument<String>("sourceRelativePath")?.trim().orEmpty()
+            val targetRelativePath =
+                call.argument<String>("targetRelativePath")?.trim().orEmpty()
+            val operationId = call.argument<String>("operationId")?.trim().orEmpty()
+            val sourceRoot = resolveSourceDirectory(sourceTreeUri, sourceRelativePath)
+            val targetRoot = resolveTargetDirectory(targetTreeUri, targetRelativePath)
+            val progressReporter =
+                ProgressReporter(
+                    operationId = operationId,
+                    totalCount = countMigratableFilesInDocumentTree(sourceRoot),
+                )
+            progressReporter.dispatch(force = true)
+            copyDocumentTreeDirectoryToDocumentTree(sourceRoot, targetRoot, progressReporter)
+            progressReporter.complete()
+            null
+        }
+    }
+
     private fun handleReadText(call: MethodCall, result: MethodChannel.Result) {
         val treeUri = call.requireString("treeUri")
         val relativePath = call.requireString("relativePath")
@@ -247,15 +333,56 @@ class DocumentTreeStorageBridge(
     }
 
     private fun handleDeletePath(call: MethodCall, result: MethodChannel.Result) {
-        val treeUri = call.requireString("treeUri")
-        val relativePath = call.requireString("relativePath")
-        if (relativePath.isBlank()) {
-            result.success(false)
-            return
+        runAsync(result) {
+            val treeUri = call.requireString("treeUri")
+            val relativePath = call.requireString("relativePath")
+            val operationId = call.argument<String>("operationId")?.trim().orEmpty()
+            if (relativePath.isBlank()) {
+                return@runAsync false
+            }
+            val tree = requireTree(treeUri)
+            val document = resolveDocument(tree, splitRelativePath(relativePath))
+            if (document == null || !document.exists()) {
+                return@runAsync false
+            }
+            if (operationId.isBlank()) {
+                return@runAsync document.delete()
+            }
+            val progressReporter =
+                ProgressReporter(
+                    operationId = operationId,
+                    totalCount = countFilesForDeletion(document),
+                )
+            progressReporter.dispatch(force = true)
+            val deleted = deleteDocumentRecursively(document, relativePath, progressReporter)
+            progressReporter.complete()
+            deleted
         }
-        val tree = requireTree(treeUri)
-        val document = resolveDocument(tree, splitRelativePath(relativePath))
-        result.success(document?.delete() == true)
+    }
+
+    private fun runAsync(result: MethodChannel.Result, block: () -> Any?) {
+        ioExecutor.execute {
+            try {
+                val value = block()
+                postSuccess(result, value)
+            } catch (error: Throwable) {
+                postError(result, error)
+            }
+        }
+    }
+
+    private fun postSuccess(result: MethodChannel.Result, value: Any?) {
+        mainHandler.post { result.success(value) }
+    }
+
+    private fun postError(result: MethodChannel.Result, error: Throwable) {
+        mainHandler.post {
+            result.error(
+                "document_tree_error",
+                error.message ?: error.toString(),
+                null,
+            )
+        }
     }
 
     private fun writeBytes(treeUri: String, relativePath: String, bytes: ByteArray) {
@@ -284,6 +411,287 @@ class DocumentTreeStorageBridge(
             output.write(bytes)
             output.flush()
         } ?: throw IOException("Failed to open document for writing: $relativePath")
+    }
+
+    private fun resolveTargetDirectory(treeUri: String, relativePath: String): DocumentFile {
+        val tree = requireTree(treeUri)
+        return if (relativePath.isBlank()) {
+            tree
+        } else {
+            ensureDirectory(tree, splitRelativePath(relativePath))
+        }
+    }
+
+    private fun resolveSourceDirectory(treeUri: String, relativePath: String): DocumentFile {
+        val tree = requireTree(treeUri)
+        val document =
+            if (relativePath.isBlank()) {
+                tree
+            } else {
+                resolveDocument(tree, splitRelativePath(relativePath))
+            }
+        require(document != null && document.exists()) {
+            "Source directory is no longer available."
+        }
+        require(document.isDirectory) { "Source path is not a directory." }
+        return document
+    }
+
+    private fun copyFileSystemDirectoryToDocumentTree(
+        source: File,
+        target: DocumentFile,
+        progressReporter: ProgressReporter,
+        relativePath: String = "",
+    ) {
+        val children = source.listFiles()?.sortedBy { it.name.lowercase() } ?: emptyList()
+        for (child in children) {
+            if (shouldSkipMigrationFile(child.name)) {
+                continue
+            }
+            val childRelativePath =
+                if (relativePath.isEmpty()) {
+                    child.name
+                } else {
+                    "$relativePath/${child.name}"
+                }
+            if (child.isDirectory) {
+                val targetDirectory = ensureChildDirectory(target, child.name)
+                copyFileSystemDirectoryToDocumentTree(
+                    child,
+                    targetDirectory,
+                    progressReporter,
+                    childRelativePath,
+                )
+                continue
+            }
+            if (child.isFile) {
+                copyFileToDocumentTree(child, target)
+                progressReporter.advance(childRelativePath)
+            }
+        }
+    }
+
+    private fun copyDocumentTreeDirectoryToFileSystem(
+        source: DocumentFile,
+        target: File,
+        progressReporter: ProgressReporter,
+        relativePath: String = "",
+    ) {
+        val children = source.listFiles().sortedBy { it.name?.lowercase().orEmpty() }
+        for (child in children) {
+            val childName = child.name?.trim().orEmpty()
+            if (childName.isEmpty() || shouldSkipMigrationFile(childName)) {
+                continue
+            }
+            val childRelativePath =
+                if (relativePath.isEmpty()) {
+                    childName
+                } else {
+                    "$relativePath/$childName"
+                }
+            if (child.isDirectory) {
+                val targetDirectory = File(target, childName)
+                targetDirectory.mkdirs()
+                copyDocumentTreeDirectoryToFileSystem(
+                    child,
+                    targetDirectory,
+                    progressReporter,
+                    childRelativePath,
+                )
+                continue
+            }
+            copyDocumentTreeFileToFileSystem(child, File(target, childName))
+            progressReporter.advance(childRelativePath)
+        }
+    }
+
+    private fun copyDocumentTreeDirectoryToDocumentTree(
+        source: DocumentFile,
+        target: DocumentFile,
+        progressReporter: ProgressReporter,
+        relativePath: String = "",
+    ) {
+        val children = source.listFiles().sortedBy { it.name?.lowercase().orEmpty() }
+        for (child in children) {
+            val childName = child.name?.trim().orEmpty()
+            if (childName.isEmpty() || shouldSkipMigrationFile(childName)) {
+                continue
+            }
+            val childRelativePath =
+                if (relativePath.isEmpty()) {
+                    childName
+                } else {
+                    "$relativePath/$childName"
+                }
+            if (child.isDirectory) {
+                val targetDirectory = ensureChildDirectory(target, childName)
+                copyDocumentTreeDirectoryToDocumentTree(
+                    child,
+                    targetDirectory,
+                    progressReporter,
+                    childRelativePath,
+                )
+                continue
+            }
+            copyDocumentTreeFileToDocumentTree(child, target)
+            progressReporter.advance(childRelativePath)
+        }
+    }
+
+    private fun copyFileToDocumentTree(source: File, targetDirectory: DocumentFile) {
+        val targetFile = ensureChildFile(targetDirectory, source.name)
+        FileInputStream(source).use { input ->
+            activity.contentResolver.openOutputStream(targetFile.uri, "rwt")?.use { output ->
+                copyStreams(input, output)
+            } ?: throw IOException("Failed to open destination document: ${source.name}")
+        }
+    }
+
+    private fun copyDocumentTreeFileToFileSystem(source: DocumentFile, target: File) {
+        target.parentFile?.mkdirs()
+        activity.contentResolver.openInputStream(source.uri)?.use { input ->
+            FileOutputStream(target, false).use { output ->
+                copyStreams(input, output)
+            }
+        } ?: throw IOException("Failed to open source document: ${source.name ?: source.uri}")
+    }
+
+    private fun copyDocumentTreeFileToDocumentTree(
+        source: DocumentFile,
+        targetDirectory: DocumentFile,
+    ) {
+        val sourceName = source.name?.trim().orEmpty()
+        require(sourceName.isNotEmpty()) { "Source document name is empty." }
+        val targetFile = ensureChildFile(targetDirectory, sourceName)
+        activity.contentResolver.openInputStream(source.uri)?.use { input ->
+            activity.contentResolver.openOutputStream(targetFile.uri, "rwt")?.use { output ->
+                copyStreams(input, output)
+            } ?: throw IOException("Failed to open destination document: $sourceName")
+        } ?: throw IOException("Failed to open source document: $sourceName")
+    }
+
+    private fun ensureChildDirectory(parent: DocumentFile, name: String): DocumentFile {
+        val existing = parent.findFile(name)
+        return when {
+            existing == null ->
+                parent.createDirectory(name)
+                    ?: throw IOException("Failed to create directory: $name")
+            existing.isDirectory -> existing
+            else -> throw IOException("Path segment is not a directory: $name")
+        }
+    }
+
+    private fun ensureChildFile(parent: DocumentFile, fileName: String): DocumentFile {
+        val existing = parent.findFile(fileName)
+        return when {
+            existing == null ->
+                parent.createFile(detectMimeType(fileName), fileName)
+                    ?: throw IOException("Failed to create document: $fileName")
+            existing.isFile -> existing
+            else -> throw IOException("Target path is not a file: $fileName")
+        }
+    }
+
+    private fun copyStreams(input: InputStream, output: OutputStream) {
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) {
+                break
+            }
+            output.write(buffer, 0, read)
+        }
+        output.flush()
+    }
+
+    private fun countMigratableFilesInDirectory(directory: File): Int {
+        var count = 0
+        val children = directory.listFiles() ?: return 0
+        for (child in children) {
+            if (shouldSkipMigrationFile(child.name)) {
+                continue
+            }
+            count +=
+                when {
+                    child.isDirectory -> countMigratableFilesInDirectory(child)
+                    child.isFile -> 1
+                    else -> 0
+                }
+        }
+        return count
+    }
+
+    private fun countMigratableFilesInDocumentTree(directory: DocumentFile): Int {
+        var count = 0
+        for (child in directory.listFiles()) {
+            val childName = child.name?.trim().orEmpty()
+            if (childName.isEmpty() || shouldSkipMigrationFile(childName)) {
+                continue
+            }
+            count +=
+                when {
+                    child.isDirectory -> countMigratableFilesInDocumentTree(child)
+                    child.isFile -> 1
+                    else -> 0
+                }
+        }
+        return count
+    }
+
+    private fun countFilesForDeletion(document: DocumentFile): Int {
+        if (document.isFile) {
+            return 1
+        }
+        var count = 0
+        for (child in document.listFiles()) {
+            val childName = child.name?.trim().orEmpty()
+            if (childName.isEmpty()) {
+                continue
+            }
+            count += countFilesForDeletion(child)
+        }
+        return count
+    }
+
+    private fun deleteDocumentRecursively(
+        document: DocumentFile,
+        relativePath: String,
+        progressReporter: ProgressReporter,
+    ): Boolean {
+        if (document.isDirectory) {
+            for (child in document.listFiles()) {
+                val childName = child.name?.trim().orEmpty()
+                if (childName.isEmpty()) {
+                    continue
+                }
+                val childRelativePath =
+                    if (relativePath.isEmpty()) {
+                        childName
+                    } else {
+                        "$relativePath/$childName"
+                    }
+                if (!deleteDocumentRecursively(child, childRelativePath, progressReporter)) {
+                    return false
+                }
+            }
+            return document.delete()
+        }
+
+        val deleted = document.delete()
+        if (deleted) {
+            progressReporter.advance(relativePath)
+        }
+        return deleted
+    }
+
+    private fun shouldSkipMigrationFile(fileName: String): Boolean {
+        val normalized = fileName.trim().lowercase()
+        if (normalized.isEmpty()) {
+            return false
+        }
+        return normalized.endsWith(".part") ||
+            normalized.endsWith(".migrate_tmp") ||
+            normalized.startsWith(".storage_probe_")
     }
 
     private fun requireTree(treeUri: String): DocumentFile {
@@ -418,6 +826,68 @@ class DocumentTreeStorageBridge(
     private fun MethodCall.requireString(name: String): String {
         return argument<String>(name)?.trim().orEmpty().also { value ->
             require(value.isNotEmpty()) { "Missing argument: $name" }
+        }
+    }
+
+    private inner class ProgressReporter(
+        private val operationId: String,
+        private val totalCount: Int,
+    ) {
+        private var completedCount = 0
+        private var lastDispatchedAtMillis = 0L
+
+        fun advance(currentItemPath: String) {
+            completedCount += 1
+            dispatch(currentItemPath)
+        }
+
+        fun complete() {
+            if (completedCount < totalCount) {
+                completedCount = totalCount
+            }
+            dispatch(force = true)
+        }
+
+        fun dispatch(currentItemPath: String = "", force: Boolean = false) {
+            if (operationId.isBlank()) {
+                return
+            }
+            val now = System.currentTimeMillis()
+            val shouldDispatch =
+                force ||
+                    completedCount >= totalCount ||
+                    completedCount <= 3 ||
+                    completedCount % 16 == 0 ||
+                    now - lastDispatchedAtMillis >= 80
+            if (!shouldDispatch) {
+                return
+            }
+            lastDispatchedAtMillis = now
+            emitProgress(
+                operationId = operationId,
+                completedCount = completedCount,
+                totalCount = totalCount,
+                currentItemPath = currentItemPath,
+            )
+        }
+    }
+
+    private fun emitProgress(
+        operationId: String,
+        completedCount: Int,
+        totalCount: Int,
+        currentItemPath: String,
+    ) {
+        mainHandler.post {
+            methodChannel.invokeMethod(
+                "documentTreeProgress",
+                mapOf(
+                    "operationId" to operationId,
+                    "completedCount" to completedCount,
+                    "totalCount" to totalCount,
+                    "currentItemPath" to currentItemPath.replace('\\', '/'),
+                ),
+            )
         }
     }
 

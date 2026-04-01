@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -75,18 +77,70 @@ class DocumentTreeEntry {
   }
 }
 
+@immutable
+class DocumentTreeTransferProgress {
+  const DocumentTreeTransferProgress({
+    required this.completedCount,
+    required this.totalCount,
+    this.currentItemPath = '',
+  });
+
+  final int completedCount;
+  final int totalCount;
+  final String currentItemPath;
+
+  factory DocumentTreeTransferProgress.fromMap(Map<Object?, Object?> map) {
+    return DocumentTreeTransferProgress(
+      completedCount: ((map['completedCount'] as num?) ?? 0).round(),
+      totalCount: ((map['totalCount'] as num?) ?? 0).round(),
+      currentItemPath: (map['currentItemPath'] as String?)?.trim() ?? '',
+    );
+  }
+}
+
+typedef DocumentTreeProgressCallback =
+    FutureOr<void> Function(DocumentTreeTransferProgress progress);
+
 class AndroidDocumentTreeBridge {
   AndroidDocumentTreeBridge({MethodChannel? methodChannel})
     : _methodChannel =
           methodChannel ??
-          const MethodChannel('easy_copy/download_storage/methods');
+          const MethodChannel('easy_copy/download_storage/methods') {
+    _methodChannel.setMethodCallHandler(_handleMethodCall);
+  }
 
   static final AndroidDocumentTreeBridge instance = AndroidDocumentTreeBridge();
 
   final MethodChannel _methodChannel;
+  final Map<String, DocumentTreeProgressCallback> _progressCallbacks =
+      <String, DocumentTreeProgressCallback>{};
+  int _nextOperationId = 0;
 
   bool get isSupported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  Future<void> _handleMethodCall(MethodCall call) async {
+    if (call.method != 'documentTreeProgress') {
+      return;
+    }
+    final Map<Object?, Object?> rawArgs =
+        (call.arguments as Map<Object?, Object?>?) ?? const <Object?, Object?>{};
+    final String operationId = (rawArgs['operationId'] as String?)?.trim() ?? '';
+    if (operationId.isEmpty) {
+      return;
+    }
+    final DocumentTreeProgressCallback? callback =
+        _progressCallbacks[operationId];
+    if (callback == null) {
+      return;
+    }
+    await callback(DocumentTreeTransferProgress.fromMap(rawArgs));
+  }
+
+  String _allocateOperationId() {
+    _nextOperationId += 1;
+    return '${DateTime.now().microsecondsSinceEpoch}_$_nextOperationId';
+  }
 
   Future<PickedDocumentTreeDirectory?> pickDirectory() async {
     if (!isSupported) {
@@ -129,6 +183,95 @@ class AndroidDocumentTreeBridge {
       'relativePath': relativePath,
       'bytes': bytes,
     });
+  }
+
+  Future<void> importDirectoryFromPath({
+    required String treeUri,
+    required String sourcePath,
+    String relativePath = '',
+    DocumentTreeProgressCallback? onProgress,
+  }) async {
+    final String? operationId = onProgress == null
+        ? null
+        : _allocateOperationId();
+    if (operationId != null) {
+      _progressCallbacks[operationId] = onProgress!;
+    }
+    try {
+      await _methodChannel.invokeMethod<void>(
+        'importDirectoryFromPath',
+        <String, Object?>{
+          'treeUri': treeUri,
+          'sourcePath': sourcePath,
+          'relativePath': relativePath,
+          if (operationId != null) 'operationId': operationId,
+        },
+      );
+    } finally {
+      if (operationId != null) {
+        _progressCallbacks.remove(operationId);
+      }
+    }
+  }
+
+  Future<void> exportDirectoryToPath({
+    required String treeUri,
+    required String destinationPath,
+    String relativePath = '',
+    DocumentTreeProgressCallback? onProgress,
+  }) async {
+    final String? operationId = onProgress == null
+        ? null
+        : _allocateOperationId();
+    if (operationId != null) {
+      _progressCallbacks[operationId] = onProgress!;
+    }
+    try {
+      await _methodChannel.invokeMethod<void>(
+        'exportDirectoryToPath',
+        <String, Object?>{
+          'treeUri': treeUri,
+          'destinationPath': destinationPath,
+          'relativePath': relativePath,
+          if (operationId != null) 'operationId': operationId,
+        },
+      );
+    } finally {
+      if (operationId != null) {
+        _progressCallbacks.remove(operationId);
+      }
+    }
+  }
+
+  Future<void> copyDirectoryToTree({
+    required String sourceTreeUri,
+    required String targetTreeUri,
+    String sourceRelativePath = '',
+    String targetRelativePath = '',
+    DocumentTreeProgressCallback? onProgress,
+  }) async {
+    final String? operationId = onProgress == null
+        ? null
+        : _allocateOperationId();
+    if (operationId != null) {
+      _progressCallbacks[operationId] = onProgress!;
+    }
+    try {
+      await _methodChannel.invokeMethod<void>(
+        'copyDirectoryToTree',
+        <String, Object?>{
+          'sourceTreeUri': sourceTreeUri,
+          'targetTreeUri': targetTreeUri,
+          'sourceRelativePath': sourceRelativePath,
+          'targetRelativePath': targetRelativePath,
+          if (operationId != null) 'operationId': operationId,
+        },
+      );
+    } finally {
+      if (operationId != null) {
+        _progressCallbacks.remove(operationId);
+      }
+    }
   }
 
   Future<void> writeText({
@@ -208,11 +351,28 @@ class AndroidDocumentTreeBridge {
   Future<bool> deletePath({
     required String treeUri,
     required String relativePath,
+    DocumentTreeProgressCallback? onProgress,
   }) async {
-    return await _methodChannel.invokeMethod<bool>(
-          'deletePath',
-          <String, Object?>{'treeUri': treeUri, 'relativePath': relativePath},
-        ) ??
-        false;
+    final String? operationId = onProgress == null
+        ? null
+        : _allocateOperationId();
+    if (operationId != null) {
+      _progressCallbacks[operationId] = onProgress!;
+    }
+    try {
+      return await _methodChannel.invokeMethod<bool>(
+            'deletePath',
+            <String, Object?>{
+              'treeUri': treeUri,
+              'relativePath': relativePath,
+              if (operationId != null) 'operationId': operationId,
+            },
+          ) ??
+          false;
+    } finally {
+      if (operationId != null) {
+        _progressCallbacks.remove(operationId);
+      }
+    }
   }
 }

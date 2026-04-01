@@ -1,3 +1,4 @@
+import 'package:easy_copy/services/comic_download_service.dart';
 import 'package:easy_copy/services/download_queue_store.dart';
 import 'package:easy_copy/services/download_storage_service.dart';
 import 'package:easy_copy/widgets/settings_ui.dart';
@@ -10,12 +11,14 @@ class DownloadManagementEntryCard extends StatelessWidget {
     required this.queueLabel,
     required this.pathLabel,
     required this.onTap,
+    this.noteLabel,
     super.key,
   });
 
   final String statusLabel;
   final String queueLabel;
   final String pathLabel;
+  final String? noteLabel;
   final VoidCallback onTap;
 
   @override
@@ -51,6 +54,29 @@ class DownloadManagementEntryCard extends StatelessWidget {
               ),
             ],
           ),
+          if (noteLabel != null && noteLabel!.trim().isNotEmpty) ...<Widget>[
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Icon(
+                  Icons.sync_rounded,
+                  size: 18,
+                  color: colorScheme.secondary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    noteLabel!,
+                    style: TextStyle(
+                      color: colorScheme.onSurface.withValues(alpha: 0.76),
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
@@ -71,10 +97,13 @@ class DownloadManagementPage extends StatelessWidget {
     required this.queueListenable,
     required this.storageStateListenable,
     required this.storageBusyListenable,
+    required this.migrationProgressListenable,
     required this.supportsCustomDirectorySelection,
     required this.onPauseQueue,
     required this.onResumeQueue,
+    required this.onClearQueue,
     required this.onStopComicTasks,
+    required this.onRemoveComic,
     required this.onRemoveTask,
     required this.onRetryTask,
     this.onPickStorageDirectory,
@@ -85,10 +114,14 @@ class DownloadManagementPage extends StatelessWidget {
   final ValueListenable<DownloadQueueSnapshot> queueListenable;
   final ValueListenable<DownloadStorageState> storageStateListenable;
   final ValueListenable<bool> storageBusyListenable;
+  final ValueListenable<DownloadStorageMigrationProgress?>
+  migrationProgressListenable;
   final bool supportsCustomDirectorySelection;
   final VoidCallback onPauseQueue;
   final VoidCallback onResumeQueue;
+  final VoidCallback onClearQueue;
   final ValueChanged<DownloadQueueTask> onStopComicTasks;
+  final ValueChanged<DownloadQueueTask> onRemoveComic;
   final ValueChanged<DownloadQueueTask> onRemoveTask;
   final ValueChanged<DownloadQueueTask> onRetryTask;
   final VoidCallback? onPickStorageDirectory;
@@ -123,36 +156,58 @@ class DownloadManagementPage extends StatelessWidget {
                                 bool storageBusy,
                                 Widget? _,
                               ) {
-                                final bool storageEditingAllowed =
-                                    snapshot.isEmpty || snapshot.isPaused;
-                                return ListView(
-                                  padding: const EdgeInsets.all(16),
-                                  children: <Widget>[
-                                    _CurrentTaskSection(
-                                      snapshot: snapshot,
-                                      onPauseQueue: onPauseQueue,
-                                      onResumeQueue: onResumeQueue,
-                                    ),
-                                    const SizedBox(height: 16),
-                                    _QueueSection(
-                                      snapshot: snapshot,
-                                      onStopComicTasks: onStopComicTasks,
-                                      onRemoveTask: onRemoveTask,
-                                      onRetryTask: onRetryTask,
-                                    ),
-                                    const SizedBox(height: 16),
-                                    _StorageSection(
-                                      state: storageState,
-                                      busy: storageBusy,
-                                      editingAllowed: storageEditingAllowed,
-                                      supportsCustomDirectorySelection:
-                                          supportsCustomDirectorySelection,
-                                      onPickStorageDirectory:
-                                          onPickStorageDirectory,
-                                      onResetStorageDirectory:
-                                          onResetStorageDirectory,
-                                    ),
-                                  ],
+                                return ValueListenableBuilder<
+                                  DownloadStorageMigrationProgress?
+                                >(
+                                  valueListenable: migrationProgressListenable,
+                                  builder:
+                                      (
+                                        BuildContext context,
+                                        DownloadStorageMigrationProgress?
+                                        migrationProgress,
+                                        Widget? _,
+                                      ) {
+                                        final bool storageEditingAllowed =
+                                            snapshot.isEmpty ||
+                                            snapshot.isPaused;
+                                        return ListView(
+                                          padding: const EdgeInsets.all(16),
+                                          children: <Widget>[
+                                            _CurrentTaskSection(
+                                              snapshot: snapshot,
+                                              onPauseQueue: onPauseQueue,
+                                              onResumeQueue: onResumeQueue,
+                                            ),
+                                            const SizedBox(height: 16),
+                                            _QueueSection(
+                                              snapshot: snapshot,
+                                              onPauseQueue: onPauseQueue,
+                                              onResumeQueue: onResumeQueue,
+                                              onClearQueue: onClearQueue,
+                                              onStopComicTasks:
+                                                  onStopComicTasks,
+                                              onRemoveComic: onRemoveComic,
+                                              onRemoveTask: onRemoveTask,
+                                              onRetryTask: onRetryTask,
+                                            ),
+                                            const SizedBox(height: 16),
+                                            _StorageSection(
+                                              state: storageState,
+                                              busy: storageBusy,
+                                              migrationProgress:
+                                                  migrationProgress,
+                                              editingAllowed:
+                                                  storageEditingAllowed,
+                                              supportsCustomDirectorySelection:
+                                                  supportsCustomDirectorySelection,
+                                              onPickStorageDirectory:
+                                                  onPickStorageDirectory,
+                                              onResetStorageDirectory:
+                                                  onResetStorageDirectory,
+                                            ),
+                                          ],
+                                        );
+                                      },
                                 );
                               },
                         );
@@ -243,13 +298,21 @@ class _CurrentTaskSection extends StatelessWidget {
 class _QueueSection extends StatelessWidget {
   const _QueueSection({
     required this.snapshot,
+    required this.onPauseQueue,
+    required this.onResumeQueue,
+    required this.onClearQueue,
     required this.onStopComicTasks,
+    required this.onRemoveComic,
     required this.onRemoveTask,
     required this.onRetryTask,
   });
 
   final DownloadQueueSnapshot snapshot;
+  final VoidCallback onPauseQueue;
+  final VoidCallback onResumeQueue;
+  final VoidCallback onClearQueue;
   final ValueChanged<DownloadQueueTask> onStopComicTasks;
+  final ValueChanged<DownloadQueueTask> onRemoveComic;
   final ValueChanged<DownloadQueueTask> onRemoveTask;
   final ValueChanged<DownloadQueueTask> onRetryTask;
 
@@ -267,6 +330,16 @@ class _QueueSection extends StatelessWidget {
 
     return AppSurfaceCard(
       title: '缓存队列',
+      action: Wrap(
+        spacing: 4,
+        children: <Widget>[
+          TextButton(
+            onPressed: snapshot.isPaused ? onResumeQueue : onPauseQueue,
+            child: Text(snapshot.isPaused ? '继续全部' : '停止全部'),
+          ),
+          TextButton(onPressed: onClearQueue, child: const Text('移除全部')),
+        ],
+      ),
       child: Column(
         children: grouped.entries
             .map((MapEntry<String, List<DownloadQueueTask>> entry) {
@@ -274,41 +347,95 @@ class _QueueSection extends StatelessWidget {
               final DownloadQueueTask displayTask = tasks.first;
               final bool isActiveComic =
                   snapshot.activeTask?.comicKey == displayTask.comicKey;
+              final int failedCount = tasks
+                  .where(
+                    (DownloadQueueTask task) =>
+                        task.status == DownloadQueueTaskStatus.failed,
+                  )
+                  .length;
+              final int visibleTaskCount = tasks.length > 6 ? 6 : tasks.length;
+              final List<DownloadQueueTask> visibleTasks = _visibleQueueTasks(
+                tasks,
+                maxCount: visibleTaskCount,
+              );
+              final int hiddenCount = tasks.length - visibleTasks.length;
+              final String subtitle = isActiveComic
+                  ? (snapshot.activeTask?.progressLabel.trim().isNotEmpty ??
+                            false)
+                        ? snapshot.activeTask!.progressLabel
+                        : '当前正在处理'
+                  : failedCount > 0
+                  ? '${tasks.length} 话待处理，其中 $failedCount 话失败'
+                  : '${tasks.length} 话待处理';
               return Padding(
                 padding: const EdgeInsets.only(bottom: 12),
-                child: Material(
-                  color: Theme.of(context).colorScheme.surfaceContainerLow,
-                  borderRadius: BorderRadius.circular(18),
-                  child: ExpansionTile(
-                    tilePadding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-                    childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                    initiallyExpanded: isActiveComic,
-                    leading: CircleAvatar(child: Text('${tasks.length}')),
-                    title: Text(
-                      displayTask.comicTitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        isActiveComic
-                            ? (snapshot.activeTask?.progressLabel.isEmpty ??
-                                      true)
-                                  ? '进行中'
-                                  : snapshot.activeTask!.progressLabel
-                            : '${tasks.length} 话待处理',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          CircleAvatar(child: Text('${tasks.length}')),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                Text(
+                                  displayTask.comicTitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  subtitle,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: <Widget>[
+                                    _SummaryChip(
+                                      label: '等待',
+                                      value:
+                                          '${tasks.where((DownloadQueueTask task) => task.status == DownloadQueueTaskStatus.queued).length}',
+                                    ),
+                                    _SummaryChip(
+                                      label: '失败',
+                                      value: '$failedCount',
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: '停止',
+                            onPressed: () => onStopComicTasks(displayTask),
+                            icon: const Icon(Icons.stop_circle_outlined),
+                          ),
+                          IconButton(
+                            tooltip: '移除',
+                            onPressed: () => onRemoveComic(displayTask),
+                            icon: const Icon(Icons.delete_outline_rounded),
+                          ),
+                        ],
                       ),
-                    ),
-                    trailing: TextButton(
-                      onPressed: () => onStopComicTasks(displayTask),
-                      child: const Text('停止'),
-                    ),
-                    children: tasks
-                        .map((DownloadQueueTask task) {
+                      if (visibleTasks.isNotEmpty) ...<Widget>[
+                        const SizedBox(height: 12),
+                        ...visibleTasks.map((DownloadQueueTask task) {
                           return _QueueTaskTile(
                             task: task,
                             onRemoveTask: () => onRemoveTask(task),
@@ -317,8 +444,20 @@ class _QueueSection extends StatelessWidget {
                                 ? () => onRetryTask(task)
                                 : null,
                           );
-                        })
-                        .toList(growable: false),
+                        }),
+                      ],
+                      if (hiddenCount > 0) ...<Widget>[
+                        const SizedBox(height: 10),
+                        Text(
+                          '另外 $hiddenCount 话已折叠，不再逐条展示。',
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withValues(alpha: 0.72),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               );
@@ -327,6 +466,40 @@ class _QueueSection extends StatelessWidget {
       ),
     );
   }
+}
+
+List<DownloadQueueTask> _visibleQueueTasks(
+  List<DownloadQueueTask> tasks, {
+  int maxCount = 6,
+}) {
+  final List<DownloadQueueTask> prioritized = <DownloadQueueTask>[];
+
+  void addTask(DownloadQueueTask task) {
+    if (prioritized.any((DownloadQueueTask item) => item.id == task.id)) {
+      return;
+    }
+    prioritized.add(task);
+  }
+
+  for (final DownloadQueueTask task in tasks) {
+    if (task.status == DownloadQueueTaskStatus.downloading ||
+        task.status == DownloadQueueTaskStatus.parsing ||
+        task.status == DownloadQueueTaskStatus.failed) {
+      addTask(task);
+    }
+    if (prioritized.length >= maxCount) {
+      return prioritized.take(maxCount).toList(growable: false);
+    }
+  }
+
+  for (final DownloadQueueTask task in tasks) {
+    addTask(task);
+    if (prioritized.length >= maxCount) {
+      break;
+    }
+  }
+
+  return prioritized.take(maxCount).toList(growable: false);
 }
 
 class _QueueTaskTile extends StatelessWidget {
@@ -394,8 +567,8 @@ class _QueueTaskTile extends StatelessWidget {
                 onPressed: onRemoveTask,
                 child: Text(
                   task.status == DownloadQueueTaskStatus.downloading
-                      ? '停止本话'
-                      : '移出',
+                      ? '停止'
+                      : '移除',
                 ),
               ),
             ],
@@ -410,6 +583,7 @@ class _StorageSection extends StatelessWidget {
   const _StorageSection({
     required this.state,
     required this.busy,
+    required this.migrationProgress,
     required this.editingAllowed,
     required this.supportsCustomDirectorySelection,
     this.onPickStorageDirectory,
@@ -418,6 +592,7 @@ class _StorageSection extends StatelessWidget {
 
   final DownloadStorageState state;
   final bool busy;
+  final DownloadStorageMigrationProgress? migrationProgress;
   final bool editingAllowed;
   final bool supportsCustomDirectorySelection;
   final VoidCallback? onPickStorageDirectory;
@@ -429,34 +604,37 @@ class _StorageSection extends StatelessWidget {
     final String retentionText = state.mayBeRemovedOnUninstall
         ? '卸载应用后，这个目录中的缓存通常会一起删除。'
         : '卸载应用后，这个目录中的缓存通常会保留。';
-    final bool canEdit = editingAllowed && !busy;
+    final bool canEdit = editingAllowed && !busy && migrationProgress == null;
+    final bool showLoadingState = state.isLoading && migrationProgress == null;
     return AppSurfaceCard(
       title: '缓存目录',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          if (state.isLoading)
+          if (showLoadingState)
             const Text('正在读取缓存目录…')
           else ...<Widget>[
-            _InfoRow(
-              icon: Icons.folder_rounded,
-              text: state.displayPath.isEmpty ? '当前目录不可用' : state.displayPath,
-            ),
-            const SizedBox(height: 8),
-            _InfoRow(
-              icon: state.isCustom
-                  ? Icons.sd_storage_rounded
-                  : Icons.phone_android_rounded,
-              text: state.isCustom ? '当前使用自定义目录' : '当前使用默认目录',
-            ),
-            const SizedBox(height: 8),
-            _InfoRow(icon: Icons.info_outline_rounded, text: retentionText),
-            if (state.errorMessage.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 10),
-              Text(
-                state.errorMessage,
-                style: TextStyle(color: colorScheme.error, height: 1.4),
+            if (!state.isLoading) ...<Widget>[
+              _InfoRow(
+                icon: Icons.folder_rounded,
+                text: state.displayPath.isEmpty ? '当前目录不可用' : state.displayPath,
               ),
+              const SizedBox(height: 8),
+              _InfoRow(
+                icon: state.isCustom
+                    ? Icons.sd_storage_rounded
+                    : Icons.phone_android_rounded,
+                text: state.isCustom ? '当前使用自定义目录' : '当前使用默认目录',
+              ),
+              const SizedBox(height: 8),
+              _InfoRow(icon: Icons.info_outline_rounded, text: retentionText),
+              if (state.errorMessage.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 10),
+                Text(
+                  state.errorMessage,
+                  style: TextStyle(color: colorScheme.error, height: 1.4),
+                ),
+              ],
             ],
             if (!editingAllowed) ...<Widget>[
               const SizedBox(height: 10),
@@ -494,6 +672,80 @@ class _StorageSection extends StatelessWidget {
                 ],
               ),
             ],
+            if (!state.isLoading) ...<Widget>[
+              const SizedBox(height: 10),
+              Text(
+                '切换目录时会自动迁移已有缓存；迁移期间请勿退出应用。',
+                style: TextStyle(
+                  color: colorScheme.onSurface.withValues(alpha: 0.72),
+                  height: 1.4,
+                ),
+              ),
+            ],
+            if (migrationProgress != null) ...<Widget>[
+              const SizedBox(height: 14),
+              _MigrationProgressPanel(progress: migrationProgress!),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MigrationProgressPanel extends StatelessWidget {
+  const _MigrationProgressPanel({required this.progress});
+
+  final DownloadStorageMigrationProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final String title = switch (progress.phase) {
+      DownloadStorageMigrationPhase.preparing => '准备迁移',
+      DownloadStorageMigrationPhase.migrating => '迁移缓存中',
+      DownloadStorageMigrationPhase.cleaning => '清理旧目录',
+    };
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colorScheme.secondaryContainer.withValues(alpha: 0.42),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(Icons.sync_rounded, color: colorScheme.secondary),
+              const SizedBox(width: 8),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(progress.message, style: const TextStyle(height: 1.4)),
+          const SizedBox(height: 10),
+          LinearProgressIndicator(
+            value: progress.fraction,
+            minHeight: 6,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          const SizedBox(height: 10),
+          _InfoRow(
+            icon: Icons.folder_open_rounded,
+            text: '来源：${progress.fromPath}',
+          ),
+          const SizedBox(height: 6),
+          _InfoRow(
+            icon: Icons.drive_folder_upload_rounded,
+            text: '目标：${progress.toPath}',
+          ),
+          if (progress.currentItemPath.trim().isNotEmpty) ...<Widget>[
+            const SizedBox(height: 6),
+            _InfoRow(
+              icon: Icons.description_outlined,
+              text: progress.currentItemPath,
+            ),
           ],
         ],
       ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -14,6 +15,8 @@ typedef ChapterDownloadProgressCallback =
     Future<void> Function(ChapterDownloadProgress progress);
 typedef ChapterDownloadPauseChecker = bool Function();
 typedef ChapterDownloadCancelChecker = bool Function();
+typedef DownloadStorageMigrationProgressCallback =
+    FutureOr<void> Function(DownloadStorageMigrationProgress progress);
 
 class ChapterDownloadProgress {
   const ChapterDownloadProgress({
@@ -50,10 +53,49 @@ class DownloadStorageMigrationResult {
   const DownloadStorageMigrationResult({
     required this.storageState,
     this.cleanupWarning = '',
+    this.cleanupFuture,
   });
 
   final DownloadStorageState storageState;
   final String cleanupWarning;
+  final Future<String>? cleanupFuture;
+}
+
+enum DownloadStorageMigrationPhase { preparing, migrating, cleaning }
+
+class DownloadStorageMigrationProgress {
+  const DownloadStorageMigrationProgress({
+    required this.phase,
+    required this.fromPath,
+    required this.toPath,
+    required this.message,
+    this.currentItemPath = '',
+    this.completedItems = 0,
+    this.totalItems = 0,
+  });
+
+  final DownloadStorageMigrationPhase phase;
+  final String fromPath;
+  final String toPath;
+  final String message;
+  final String currentItemPath;
+  final int completedItems;
+  final int totalItems;
+
+  bool get hasDeterminateProgress => totalItems > 0;
+
+  double? get fraction {
+    if (!hasDeterminateProgress) {
+      return null;
+    }
+    if (completedItems <= 0) {
+      return 0;
+    }
+    if (completedItems >= totalItems) {
+      return 1;
+    }
+    return completedItems / totalItems;
+  }
 }
 
 class DownloadPausedException implements Exception {
@@ -313,32 +355,9 @@ class ComicDownloadService {
       final _ResolvedStorageRoot root = await _resolveStorageRoot(
         verifyWritable: false,
       );
-      final List<Map<String, Object?>> manifests = <Map<String, Object?>>[];
-      final List<_StorageEntry> entries = await root.listEntries(
-        '',
-        recursive: true,
+      final List<Map<String, Object?>> manifests = await _loadLibraryManifests(
+        root,
       );
-      for (final _StorageEntry entry in entries) {
-        if (entry.isDirectory || entry.name != 'manifest.json') {
-          continue;
-        }
-        try {
-          final Object? decoded = jsonDecode(
-            await root.readString(entry.relativePath),
-          );
-          if (decoded is! Map) {
-            continue;
-          }
-          manifests.add(<String, Object?>{
-            ...decoded.map(
-              (Object? key, Object? value) => MapEntry(key.toString(), value),
-            ),
-            '__directoryPath': _parentRelativePath(entry.relativePath),
-          });
-        } catch (_) {
-          continue;
-        }
-      }
 
       final Map<String, List<CachedChapterEntry>> grouped =
           <String, List<CachedChapterEntry>>{};
@@ -425,6 +444,55 @@ class ComicDownloadService {
     } catch (_) {
       return const <CachedComicLibraryEntry>[];
     }
+  }
+
+  Future<List<Map<String, Object?>>> _loadLibraryManifests(
+    _ResolvedStorageRoot root,
+  ) async {
+    final List<Map<String, Object?>> manifests = <Map<String, Object?>>[];
+    final List<_StorageEntry> comicEntries = await root.listEntries(
+      '',
+      recursive: false,
+    );
+    for (final _StorageEntry comicEntry in comicEntries) {
+      if (!comicEntry.isDirectory || comicEntry.relativePath.trim().isEmpty) {
+        continue;
+      }
+      final List<_StorageEntry> chapterEntries = await root.listEntries(
+        comicEntry.relativePath,
+        recursive: false,
+      );
+      for (final _StorageEntry chapterEntry in chapterEntries) {
+        if (!chapterEntry.isDirectory ||
+            chapterEntry.relativePath.trim().isEmpty) {
+          continue;
+        }
+        final String manifestRelativePath = _joinRelativePath(<String>[
+          chapterEntry.relativePath,
+          'manifest.json',
+        ]);
+        if (!await root.exists(manifestRelativePath)) {
+          continue;
+        }
+        try {
+          final Object? decoded = jsonDecode(
+            await root.readString(manifestRelativePath),
+          );
+          if (decoded is! Map) {
+            continue;
+          }
+          manifests.add(<String, Object?>{
+            ...decoded.map(
+              (Object? key, Object? value) => MapEntry(key.toString(), value),
+            ),
+            '__directoryPath': chapterEntry.relativePath,
+          });
+        } catch (_) {
+          continue;
+        }
+      }
+    }
+    return manifests;
   }
 
   Future<Set<String>> loadDownloadedChapterPathKeysForComic(
@@ -654,6 +722,7 @@ class ComicDownloadService {
   Future<DownloadStorageMigrationResult> migrateCacheRoot({
     required DownloadPreferences from,
     required DownloadPreferences to,
+    DownloadStorageMigrationProgressCallback? onProgress,
   }) async {
     final DownloadStorageState fromState = await resolveStorageState(
       preferences: from,
@@ -671,6 +740,9 @@ class ComicDownloadService {
     if (_sameStorageLocation(fromState, toState)) {
       return DownloadStorageMigrationResult(storageState: toState);
     }
+    if (_storageRootsOverlap(fromState, toState)) {
+      throw const FileSystemException('目标缓存目录不能位于当前缓存目录内部，也不能包含当前缓存目录。');
+    }
     final _ResolvedStorageRoot sourceRoot = await _resolveStorageRoot(
       preferences: from,
       verifyWritable: false,
@@ -679,33 +751,37 @@ class ComicDownloadService {
       preferences: to,
       verifyWritable: true,
     );
+    final _MigrationProgressController progressController =
+        _MigrationProgressController(
+          fromPath: fromState.displayPath,
+          toPath: toState.displayPath,
+          onProgress: onProgress,
+        );
+    await progressController.emitPreparing();
     final List<_StorageEntry> sourceEntries = await sourceRoot.listEntries(
       '',
-      recursive: true,
+      recursive: false,
     );
-    if (sourceEntries.isEmpty) {
+    final bool hasMigratableEntries = sourceEntries.any(
+      (_StorageEntry entry) =>
+          entry.isDirectory || !_shouldSkipMigrationFile(entry.name),
+    );
+    if (!hasMigratableEntries) {
       return DownloadStorageMigrationResult(storageState: toState);
     }
 
-    for (final _StorageEntry entry in sourceEntries) {
-      if (entry.isDirectory || _shouldSkipMigrationFile(entry.name)) {
-        continue;
-      }
-      await targetRoot.writeBytes(
-        entry.relativePath,
-        await sourceRoot.readBytes(entry.relativePath),
-      );
-    }
+    await _migrateStorageContents(
+      sourceRoot,
+      targetRoot,
+      progressController: progressController,
+    );
 
-    String cleanupWarning = '';
-    try {
-      await _clearStorageRoot(sourceRoot);
-    } catch (_) {
-      cleanupWarning = '旧缓存目录未能自动清理，可稍后手动删除。';
-    }
     return DownloadStorageMigrationResult(
       storageState: toState,
-      cleanupWarning: cleanupWarning,
+      cleanupFuture: _cleanupStorageRootSafely(
+        sourceRoot,
+        progressController: progressController,
+      ),
     );
   }
 
@@ -882,6 +958,32 @@ class ComicDownloadService {
     return _normalizedPath(left.rootPath) == _normalizedPath(right.rootPath);
   }
 
+  bool _storageRootsOverlap(
+    DownloadStorageState left,
+    DownloadStorageState right,
+  ) {
+    final String leftRoot = _normalizedComparableRoot(left.rootPath);
+    final String rightRoot = _normalizedComparableRoot(right.rootPath);
+    if (leftRoot.isEmpty || rightRoot.isEmpty) {
+      return false;
+    }
+    return _isNestedStoragePath(leftRoot, rightRoot) ||
+        _isNestedStoragePath(rightRoot, leftRoot);
+  }
+
+  String _normalizedComparableRoot(String value) {
+    String normalized = _normalizedPath(value);
+    while (normalized.endsWith(Platform.pathSeparator)) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized;
+  }
+
+  bool _isNestedStoragePath(String candidate, String parent) {
+    return candidate == parent ||
+        candidate.startsWith('$parent${Platform.pathSeparator}');
+  }
+
   Future<ChapterDownloadResult?> _loadCompletedChapterFromManifest({
     required _ResolvedStorageRoot root,
     required String manifestRelativePath,
@@ -965,6 +1067,258 @@ class ComicDownloadService {
     }
   }
 
+  Future<String> _cleanupStorageRootSafely(
+    _ResolvedStorageRoot root, {
+    required _MigrationProgressController progressController,
+  }) async {
+    try {
+      await progressController.emitCleaning();
+      await _clearStorageRoot(root);
+      return '';
+    } catch (_) {
+      return '旧缓存目录未能自动清理，可稍后手动删除。';
+    }
+  }
+
+  Future<void> _migrateStorageContents(
+    _ResolvedStorageRoot sourceRoot,
+    _ResolvedStorageRoot targetRoot, {
+    required _MigrationProgressController progressController,
+  }) async {
+    if (sourceRoot is _FileStorageRoot && targetRoot is _FileStorageRoot) {
+      await progressController.startMigrating(
+        totalItems: await _countMigratableFilesInDirectory(
+          sourceRoot.rootDirectory,
+        ),
+      );
+      await _moveFileSystemDirectoryContents(
+        sourceRoot.rootDirectory,
+        targetRoot.rootDirectory,
+        progressController: progressController,
+      );
+      return;
+    }
+    if (sourceRoot is _FileStorageRoot &&
+        targetRoot is _DocumentTreeStorageRoot) {
+      await progressController.startMigrating();
+      await targetRoot.importFromDirectory(
+        sourceRoot.rootDirectory,
+        onProgress: (DocumentTreeTransferProgress progress) {
+          return progressController.syncMigrating(
+            completedItems: progress.completedCount,
+            totalItems: progress.totalCount,
+            currentItemPath: progress.currentItemPath,
+          );
+        },
+      );
+      await progressController.markMigratingComplete();
+      return;
+    }
+    if (sourceRoot is _DocumentTreeStorageRoot &&
+        targetRoot is _FileStorageRoot) {
+      await progressController.startMigrating();
+      await sourceRoot.exportToDirectory(
+        targetRoot.rootDirectory,
+        onProgress: (DocumentTreeTransferProgress progress) {
+          return progressController.syncMigrating(
+            completedItems: progress.completedCount,
+            totalItems: progress.totalCount,
+            currentItemPath: progress.currentItemPath,
+          );
+        },
+      );
+      await progressController.markMigratingComplete();
+      return;
+    }
+    if (sourceRoot is _DocumentTreeStorageRoot &&
+        targetRoot is _DocumentTreeStorageRoot) {
+      await progressController.startMigrating();
+      await sourceRoot.copyToDocumentTree(
+        targetRoot,
+        onProgress: (DocumentTreeTransferProgress progress) {
+          return progressController.syncMigrating(
+            completedItems: progress.completedCount,
+            totalItems: progress.totalCount,
+            currentItemPath: progress.currentItemPath,
+          );
+        },
+      );
+      await progressController.markMigratingComplete();
+      return;
+    }
+    await _copyStorageEntryByEntry(
+      sourceRoot,
+      targetRoot,
+      progressController: progressController,
+    );
+  }
+
+  Future<void> _copyStorageEntryByEntry(
+    _ResolvedStorageRoot sourceRoot,
+    _ResolvedStorageRoot targetRoot, {
+    required _MigrationProgressController progressController,
+  }) async {
+    final List<_StorageEntry> sourceEntries = await sourceRoot.listEntries(
+      '',
+      recursive: true,
+    );
+    final List<_StorageEntry> fileEntries = sourceEntries
+        .where(
+          (_StorageEntry entry) =>
+              !entry.isDirectory && !_shouldSkipMigrationFile(entry.name),
+        )
+        .toList(growable: false);
+    await progressController.startMigrating(totalItems: fileEntries.length);
+    for (final _StorageEntry entry in fileEntries) {
+      await targetRoot.writeBytes(
+        entry.relativePath,
+        await sourceRoot.readBytes(entry.relativePath),
+      );
+      await progressController.advance(currentItemPath: entry.relativePath);
+    }
+  }
+
+  Future<void> _moveFileSystemDirectoryContents(
+    Directory source,
+    Directory target, {
+    required _MigrationProgressController progressController,
+  }) async {
+    await target.create(recursive: true);
+    final List<FileSystemEntity> children = await source
+        .list(recursive: false, followLinks: false)
+        .toList();
+    for (final FileSystemEntity child in children) {
+      final String name = _fileSystemEntityName(child);
+      if (name.isEmpty || _shouldSkipMigrationFile(name)) {
+        continue;
+      }
+      if (child is Directory) {
+        await _moveDirectoryEntity(
+          child,
+          Directory(_joinFileSystemPath(target.path, name)),
+          progressController: progressController,
+        );
+        continue;
+      }
+      if (child is File) {
+        await _moveFileEntity(
+          child,
+          File(_joinFileSystemPath(target.path, name)),
+          progressController: progressController,
+        );
+      }
+    }
+  }
+
+  Future<void> _moveDirectoryEntity(
+    Directory source,
+    Directory target, {
+    required _MigrationProgressController progressController,
+  }) async {
+    if (!await target.exists()) {
+      final int subtreeFileCount = await _countMigratableFilesInDirectory(
+        source,
+      );
+      try {
+        await source.rename(target.path);
+        await progressController.advance(
+          count: subtreeFileCount,
+          currentItemPath: target.path,
+        );
+        return;
+      } on FileSystemException {
+        // Fall back to streamed copy when the directory cannot be moved directly.
+      }
+    }
+    await target.create(recursive: true);
+    final List<FileSystemEntity> children = await source
+        .list(recursive: false, followLinks: false)
+        .toList();
+    for (final FileSystemEntity child in children) {
+      final String name = _fileSystemEntityName(child);
+      if (name.isEmpty || _shouldSkipMigrationFile(name)) {
+        continue;
+      }
+      if (child is Directory) {
+        await _moveDirectoryEntity(
+          child,
+          Directory(_joinFileSystemPath(target.path, name)),
+          progressController: progressController,
+        );
+        continue;
+      }
+      if (child is File) {
+        await _moveFileEntity(
+          child,
+          File(_joinFileSystemPath(target.path, name)),
+          progressController: progressController,
+        );
+      }
+    }
+    if (await source.exists()) {
+      await source.delete(recursive: true);
+    }
+  }
+
+  Future<void> _moveFileEntity(
+    File source,
+    File target, {
+    required _MigrationProgressController progressController,
+  }) async {
+    await target.parent.create(recursive: true);
+    if (!await target.exists()) {
+      try {
+        await source.rename(target.path);
+        await progressController.advance(currentItemPath: target.path);
+        return;
+      } on FileSystemException {
+        // Fall back to streamed copy when the file cannot be moved directly.
+      }
+    }
+    await _copyFile(source, target);
+    if (await source.exists()) {
+      await source.delete();
+    }
+    await progressController.advance(currentItemPath: target.path);
+  }
+
+  Future<void> _copyFile(File source, File target) async {
+    await target.parent.create(recursive: true);
+    final IOSink sink = target.openWrite();
+    try {
+      await sink.addStream(source.openRead());
+    } finally {
+      await sink.close();
+    }
+  }
+
+  String _fileSystemEntityName(FileSystemEntity entity) {
+    final String path = entity.path.replaceAll('\\', '/');
+    final int separatorIndex = path.lastIndexOf('/');
+    return separatorIndex >= 0 ? path.substring(separatorIndex + 1) : path;
+  }
+
+  String _joinFileSystemPath(String basePath, String name) {
+    return '$basePath${Platform.pathSeparator}$name';
+  }
+
+  Future<int> _countMigratableFilesInDirectory(Directory directory) async {
+    int count = 0;
+    await for (final FileSystemEntity entity in directory.list(
+      recursive: true,
+      followLinks: false,
+    )) {
+      if (entity is! File) {
+        continue;
+      }
+      if (_shouldSkipMigrationFile(_fileSystemEntityName(entity))) {
+        continue;
+      }
+      count += 1;
+    }
+    return count;
+  }
+
   bool _shouldSkipMigrationFile(String fileName) {
     final String normalized = fileName.trim().toLowerCase();
     if (normalized.isEmpty) {
@@ -998,6 +1352,109 @@ class _StorageEntry {
   final String uri;
   final bool isDirectory;
   final int size;
+}
+
+class _MigrationProgressController {
+  _MigrationProgressController({
+    required this.fromPath,
+    required this.toPath,
+    this.onProgress,
+  });
+
+  final String fromPath;
+  final String toPath;
+  final DownloadStorageMigrationProgressCallback? onProgress;
+
+  int _completedItems = 0;
+  int _totalItems = 0;
+
+  Future<void> emitPreparing() {
+    return _emit(DownloadStorageMigrationPhase.preparing, message: '正在准备迁移缓存…');
+  }
+
+  Future<void> startMigrating({int totalItems = 0}) {
+    _completedItems = 0;
+    _totalItems = totalItems;
+    return _emit(
+      DownloadStorageMigrationPhase.migrating,
+      message: _migratingMessage(),
+    );
+  }
+
+  Future<void> advance({int count = 1, String currentItemPath = ''}) {
+    if (count > 0) {
+      _completedItems += count;
+      if (_totalItems > 0 && _completedItems > _totalItems) {
+        _completedItems = _totalItems;
+      }
+    }
+    return _emit(
+      DownloadStorageMigrationPhase.migrating,
+      currentItemPath: currentItemPath,
+      message: _migratingMessage(),
+    );
+  }
+
+  Future<void> markMigratingComplete() {
+    if (_totalItems > 0) {
+      _completedItems = _totalItems;
+    }
+    return _emit(
+      DownloadStorageMigrationPhase.migrating,
+      message: _migratingMessage(),
+    );
+  }
+
+  Future<void> syncMigrating({
+    required int completedItems,
+    required int totalItems,
+    String currentItemPath = '',
+  }) {
+    _completedItems = completedItems < 0 ? 0 : completedItems;
+    if (totalItems > 0) {
+      _totalItems = totalItems;
+      if (_completedItems > _totalItems) {
+        _completedItems = _totalItems;
+      }
+    }
+    return _emit(
+      DownloadStorageMigrationPhase.migrating,
+      currentItemPath: currentItemPath,
+      message: _migratingMessage(),
+    );
+  }
+
+  Future<void> emitCleaning() {
+    return _emit(DownloadStorageMigrationPhase.cleaning, message: '正在清理旧缓存目录…');
+  }
+
+  String _migratingMessage() {
+    if (_totalItems > 0) {
+      return '正在迁移缓存 $_completedItems/$_totalItems…';
+    }
+    return '正在迁移缓存，请勿退出应用…';
+  }
+
+  Future<void> _emit(
+    DownloadStorageMigrationPhase phase, {
+    required String message,
+    String currentItemPath = '',
+  }) async {
+    if (onProgress == null) {
+      return;
+    }
+    await onProgress!(
+      DownloadStorageMigrationProgress(
+        phase: phase,
+        fromPath: fromPath,
+        toPath: toPath,
+        message: message,
+        currentItemPath: currentItemPath,
+        completedItems: _completedItems,
+        totalItems: _totalItems,
+      ),
+    );
+  }
 }
 
 abstract class _ResolvedStorageRoot {
@@ -1159,6 +1616,43 @@ class _DocumentTreeStorageRoot implements _ResolvedStorageRoot {
   final AndroidDocumentTreeBridge bridge;
   final String treeUri;
   final String rootRelativePath;
+
+  Future<void> importFromDirectory(
+    Directory source, {
+    DocumentTreeProgressCallback? onProgress,
+  }) {
+    return bridge.importDirectoryFromPath(
+      treeUri: treeUri,
+      sourcePath: source.path,
+      relativePath: rootRelativePath,
+      onProgress: onProgress,
+    );
+  }
+
+  Future<void> exportToDirectory(
+    Directory destination, {
+    DocumentTreeProgressCallback? onProgress,
+  }) {
+    return bridge.exportDirectoryToPath(
+      treeUri: treeUri,
+      destinationPath: destination.path,
+      relativePath: rootRelativePath,
+      onProgress: onProgress,
+    );
+  }
+
+  Future<void> copyToDocumentTree(
+    _DocumentTreeStorageRoot target, {
+    DocumentTreeProgressCallback? onProgress,
+  }) {
+    return bridge.copyDirectoryToTree(
+      sourceTreeUri: treeUri,
+      targetTreeUri: target.treeUri,
+      sourceRelativePath: rootRelativePath,
+      targetRelativePath: target.rootRelativePath,
+      onProgress: onProgress,
+    );
+  }
 
   @override
   Future<void> writeBytes(String relativePath, Uint8List bytes) {

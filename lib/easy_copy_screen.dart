@@ -202,6 +202,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   ValueListenable<bool> get _downloadStorageBusyNotifier =>
       _downloadQueueManager.storageBusyNotifier;
 
+  ValueListenable<DownloadStorageMigrationProgress?>
+  get _downloadStorageMigrationProgressNotifier =>
+      _downloadQueueManager.storageMigrationProgressNotifier;
+
   @override
   void initState() {
     super.initState();
@@ -567,9 +571,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       _preferencesController.ensureInitialized(),
       _readerProgressStore.ensureInitialized(),
     ]);
+    await _downloadQueueManager.recoverInterruptedStorageMigration();
     await _refreshDownloadStorageState();
     await _restoreDownloadQueue();
-    await _refreshCachedComics();
     final Uri homeUri = appDestinations.first.uri;
     if (!mounted) {
       return;
@@ -579,6 +583,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     });
     _syncSearchController();
     await _loadUri(homeUri, historyMode: NavigationIntent.resetToRoot);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_refreshCachedComics());
+    });
     unawaited(_ensureDownloadQueueRunning());
   }
 
@@ -875,9 +882,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     });
   }
 
-  DownloadStorageState get _downloadStorageState =>
-      _downloadStorageStateNotifier.value;
-
   Future<void> _refreshDownloadStorageState({
     DownloadPreferences? preferences,
   }) async {
@@ -1093,6 +1097,62 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _showSnackBar('已移出 ${task.comicTitle} 的缓存任务');
   }
 
+  Future<void> _confirmRemoveQueuedComicAndCache(DownloadQueueTask task) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('移除漫画缓存'),
+          content: Text('确认停止《${task.comicTitle}》的后台缓存，并删除这部漫画已缓存的章节吗？'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('移除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    await _downloadQueueManager.removeComicAndDeleteCache(task);
+    _showSnackBar('已移除 ${task.comicTitle} 的下载任务和本地缓存');
+  }
+
+  Future<void> _confirmClearDownloadQueue() async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('移除全部下载任务'),
+          content: const Text('确认清空当前下载队列，并清理未完成文件吗？'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('清空'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    await _downloadQueueManager.clearQueue();
+    _showSnackBar('已清空下载队列');
+  }
+
   Future<void> _confirmRemoveQueuedTask(DownloadQueueTask task) async {
     final bool? confirmed = await showDialog<bool>(
       context: context,
@@ -1154,34 +1214,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         nextPreferences,
         successMessage: '已切换到新的存储位置',
       );
-      return;
     }
-
-    final List<DownloadStorageState> candidates = await _downloadQueueManager
-        .loadStorageCandidates();
-    if (!mounted) {
-      return;
-    }
-    if (candidates.isEmpty) {
-      _showSnackBar('当前设备没有可切换的可写存储位置');
-      return;
-    }
-    final DownloadStorageState? selectedState =
-        await _showDownloadStorageDirectoryPicker(candidates);
-    if (selectedState == null || !mounted) {
-      return;
-    }
-    final DownloadPreferences nextPreferences = DownloadPreferences(
-      mode: DownloadStorageMode.customDirectory,
-      customBasePath: selectedState.basePath,
-      customTreeUri: '',
-      customDisplayPath: selectedState.basePath,
-      usePickedDirectoryAsRoot: true,
-    );
-    await _applyDownloadStoragePreferences(
-      nextPreferences,
-      successMessage: '已切换到新的存储位置',
-    );
   }
 
   Future<void> _resetDownloadStorageDirectory() async {
@@ -1191,71 +1224,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     await _applyDownloadStoragePreferences(
       const DownloadPreferences(),
       successMessage: '已恢复默认缓存目录',
-    );
-  }
-
-  Future<DownloadStorageState?> _showDownloadStorageDirectoryPicker(
-    List<DownloadStorageState> candidates,
-  ) {
-    final String currentBasePath = _normalizedDownloadStoragePath(
-      _downloadStorageState.basePath,
-    );
-    return showModalBottomSheet<DownloadStorageState>(
-      context: context,
-      showDragHandle: true,
-      builder: (BuildContext context) {
-        return SafeArea(
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            children: <Widget>[
-              const Padding(
-                padding: EdgeInsets.fromLTRB(4, 0, 4, 8),
-                child: Text(
-                  '选择存储位置',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-                ),
-              ),
-              Text(
-                'Android 仅支持切换到应用可直接读写的存储位置，例如外置存储中的应用专属目录。',
-                style: TextStyle(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withValues(alpha: 0.72),
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 12),
-              ...candidates.map((DownloadStorageState candidate) {
-                final bool isCurrent =
-                    _normalizedDownloadStoragePath(candidate.basePath) ==
-                    currentBasePath;
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  child: ListTile(
-                    leading: Icon(
-                      Icons.sd_storage_rounded,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                    title: Text(candidate.basePath),
-                    subtitle: Text(
-                      candidate.rootPath,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: isCurrent
-                        ? const Icon(Icons.check_circle_rounded)
-                        : const Icon(Icons.chevron_right_rounded),
-                    onTap: () {
-                      Navigator.of(context).pop(candidate);
-                    },
-                  ),
-                );
-              }),
-            ],
-          ),
-        );
-      },
     );
   }
 
@@ -1277,14 +1245,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       await _refreshDownloadStorageState();
       _showSnackBar(_formatDownloadError(error));
     }
-  }
-
-  String _normalizedDownloadStoragePath(String value) {
-    final String normalized = value.trim().replaceAll(
-      '/',
-      Platform.pathSeparator,
-    );
-    return Platform.isWindows ? normalized.toLowerCase() : normalized;
   }
 
   Future<void> _ensureDownloadQueueRunning() async {

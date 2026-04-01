@@ -351,16 +351,34 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                     final String queueLabel = queueSnapshot.isEmpty
                         ? '0 话'
                         : '${queueSnapshot.remainingCount} 话';
-                    final String pathLabel = storageState.isLoading
-                        ? '正在读取缓存目录…'
-                        : storageState.errorMessage.isNotEmpty
-                        ? '目录异常：${storageState.errorMessage}'
-                        : '当前目录：${_downloadStorageService.summarizePath(storageState.displayPath)}';
-                    return DownloadManagementEntryCard(
-                      statusLabel: statusLabel,
-                      queueLabel: queueLabel,
-                      pathLabel: pathLabel,
-                      onTap: _openDownloadManagementPage,
+                    return ValueListenableBuilder<
+                      DownloadStorageMigrationProgress?
+                    >(
+                      valueListenable:
+                          _downloadStorageMigrationProgressNotifier,
+                      builder:
+                          (
+                            BuildContext context,
+                            DownloadStorageMigrationProgress? migrationProgress,
+                            Widget? _,
+                          ) {
+                            final String pathLabel = migrationProgress != null
+                                ? '当前目录：${_downloadStorageService.summarizePath(migrationProgress.toPath.isNotEmpty ? migrationProgress.toPath : storageState.displayPath)}'
+                                : storageState.isLoading
+                                ? '正在读取缓存目录…'
+                                : storageState.errorMessage.isNotEmpty
+                                ? '目录异常：${storageState.errorMessage}'
+                                : '当前目录：${_downloadStorageService.summarizePath(storageState.displayPath)}';
+                            return DownloadManagementEntryCard(
+                              statusLabel: migrationProgress != null
+                                  ? '迁移中'
+                                  : statusLabel,
+                              queueLabel: queueLabel,
+                              pathLabel: pathLabel,
+                              noteLabel: migrationProgress?.message,
+                              onTap: _openDownloadManagementPage,
+                            );
+                          },
                     );
                   },
             );
@@ -376,6 +394,8 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             queueListenable: _downloadQueueSnapshotNotifier,
             storageStateListenable: _downloadStorageStateNotifier,
             storageBusyListenable: _downloadStorageBusyNotifier,
+            migrationProgressListenable:
+                _downloadStorageMigrationProgressNotifier,
             supportsCustomDirectorySelection:
                 _downloadService.supportsCustomStorageSelection,
             onPauseQueue: () {
@@ -384,8 +404,14 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             onResumeQueue: () {
               unawaited(_resumeDownloadQueue());
             },
+            onClearQueue: () {
+              unawaited(_confirmClearDownloadQueue());
+            },
             onStopComicTasks: (DownloadQueueTask task) {
               unawaited(_confirmRemoveQueuedComic(task));
+            },
+            onRemoveComic: (DownloadQueueTask task) {
+              unawaited(_confirmRemoveQueuedComicAndCache(task));
             },
             onRemoveTask: (DownloadQueueTask task) {
               unawaited(_confirmRemoveQueuedTask(task));
@@ -766,7 +792,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             ),
             const SizedBox(height: 16),
             Text(
-              '正在整理可读内容',
+              '加载中……',
               style: TextStyle(
                 color: colorScheme.onSurface.withValues(alpha: 0.88),
                 fontSize: 16,
