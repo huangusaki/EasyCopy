@@ -69,16 +69,6 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                   Expanded(
                     child: ListView(
                       children: <Widget>[
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(4, 0, 4, 16),
-                          child: Text(
-                            '菜单',
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
                         SettingsSection(
                           children: <Widget>[
                             SettingsSelectRow<ReaderScreenOrientation>(
@@ -228,6 +218,21 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                         SettingsSection(
                           children: <Widget>[
                             SettingsSwitchRow(
+                              label: '显示评论页',
+                              value: preferences.showChapterComments,
+                              onChanged: (bool value) {
+                                unawaited(
+                                  _preferencesController
+                                      .updateReaderPreferences(
+                                        (ReaderPreferences current) =>
+                                            current.copyWith(
+                                              showChapterComments: value,
+                                            ),
+                                      ),
+                                );
+                              },
+                            ),
+                            SettingsSwitchRow(
                               label: '屏幕常亮',
                               value: preferences.keepScreenOn,
                               onChanged: (bool value) {
@@ -290,9 +295,9 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                         (ReaderPreferences current) => current
                                             .copyWith(showPageGap: value),
                                       ),
-                                );
-                              },
-                            ),
+                                  );
+                                },
+                              ),
                             if (_readerPlatformBridge.isAndroidSupported)
                               SettingsSwitchRow(
                                 label: '使用音量键翻页',
@@ -381,6 +386,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                 foregroundColor: colorScheme.onSurface,
               ),
             ),
+          if (page.nextHref.trim().isNotEmpty)
+            _buildReaderNextChapterCueOverlay(context, page),
         ],
       ),
     );
@@ -398,6 +405,10 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       return '-- / --';
     }
     if (_readerPreferences.isPaged) {
+      if (_shouldShowReaderCommentTailPage(page) &&
+          _currentReaderPageIndex >= page.imageUrls.length) {
+        return '评论页';
+      }
       return '${_currentReaderPageIndex + 1} / ${page.imageUrls.length}';
     }
     final int visibleIndex = _currentVisibleReaderImageIndex.clamp(
@@ -507,6 +518,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   ) {
     final bool showGap = _readerPreferences.showPageGap;
     final double topPadding = _readerPreferences.fullscreen && showGap ? 0 : 8;
+    final bool showCommentTail = _shouldShowReaderCommentTailPage(page);
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
     return RefreshIndicator(
       onRefresh: _retryCurrentPage,
@@ -521,17 +533,20 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         },
         child: ListView.builder(
           key: ValueKey<String>(
-            'reader-scroll-${page.uri}-${_readerPreferences.pageFit.name}-$showGap',
+            'reader-scroll-${page.uri}-${_readerPreferences.pageFit.name}-$showGap-$showCommentTail',
           ),
           controller: _readerScrollController,
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
           padding: EdgeInsets.only(top: topPadding, bottom: 16),
-          itemCount: page.imageUrls.length + (hasNextChapter ? 1 : 0),
+          itemCount:
+              page.imageUrls.length + (showCommentTail || hasNextChapter ? 1 : 0),
           itemBuilder: (BuildContext context, int index) {
             if (index >= page.imageUrls.length) {
-              return _buildReaderNextChapterFooter(context, page);
+              return showCommentTail
+                  ? _buildReaderCommentTailPage(context, page)
+                  : _buildReaderNextChapterFooter(context, page);
             }
             return Padding(
               key: _readerImageItemKeyFor(index),
@@ -557,11 +572,12 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         ReaderReadingDirection.rightToLeft;
     final double topPadding =
         _readerPreferences.fullscreen && _readerPreferences.showPageGap ? 0 : 8;
+    final bool showCommentTail = _shouldShowReaderCommentTailPage(page);
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
         final bool isLastReaderPage =
-            _currentReaderPageIndex >= page.imageUrls.length - 1;
+            _currentReaderPageIndex >= _readerPagedPageCount(page) - 1;
         if (isLastReaderPage && hasNextChapter) {
           _handleReaderNextChapterPullNotification(
             notification,
@@ -574,7 +590,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       },
       child: PageView.builder(
         key: ValueKey<String>(
-          'reader-paged-${page.uri}-${_readerPreferences.readingDirection.name}-${_readerPreferences.pageFit.name}-${_readerPreferences.showPageGap}',
+          'reader-paged-${page.uri}-${_readerPreferences.readingDirection.name}-${_readerPreferences.pageFit.name}-${_readerPreferences.showPageGap}-$showCommentTail',
         ),
         controller: _readerPageController,
         physics: const _ReaderPagedScrollPhysics(
@@ -582,33 +598,45 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
           parent: BouncingScrollPhysics(),
         ),
         reverse: reverse,
-        itemCount: page.imageUrls.length,
+        itemCount: _readerPagedPageCount(page),
         onPageChanged: _handleReaderPageChanged,
         itemBuilder: (BuildContext context, int index) {
           final ScrollController scrollController =
               _readerPageScrollControllerFor(index);
-          final bool isLastReaderPage = index == page.imageUrls.length - 1;
+          final bool isCommentPage = index >= page.imageUrls.length;
           return LayoutBuilder(
             builder: (BuildContext context, BoxConstraints constraints) {
-              final Widget pageBody = _buildReaderPagedPageBody(
-                context,
-                page: page,
-                imageUrl: page.imageUrls[index],
-                constraints: constraints,
-                showNextChapterFooter: isLastReaderPage && hasNextChapter,
-              );
+              final Widget pageBody = isCommentPage
+                  ? _buildReaderCommentTailPage(
+                      context,
+                      page,
+                      minHeight: constraints.maxHeight,
+                    )
+                  : _buildReaderPagedPageBody(
+                      context,
+                      page: page,
+                      imageUrl: page.imageUrls[index],
+                      constraints: constraints,
+                      showNextChapterFooter:
+                          !showCommentTail &&
+                          hasNextChapter &&
+                          index == page.imageUrls.length - 1,
+                    );
+              final Widget wrappedBody = isCommentPage
+                  ? pageBody
+                  : NotificationListener<ScrollNotification>(
+                      onNotification: _handleReaderScrollNotification,
+                      child: SingleChildScrollView(
+                        controller: scrollController,
+                        physics: const BouncingScrollPhysics(),
+                        child: pageBody,
+                      ),
+                    );
               return Padding(
                 padding: _readerPreferences.showPageGap
                     ? EdgeInsets.only(top: topPadding, bottom: 8)
                     : EdgeInsets.zero,
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: _handleReaderScrollNotification,
-                  child: SingleChildScrollView(
-                    controller: scrollController,
-                    physics: const BouncingScrollPhysics(),
-                    child: pageBody,
-                  ),
-                ),
+                child: wrappedBody,
               );
             },
           );
@@ -730,125 +758,480 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     );
   }
 
+  Widget _buildReaderCommentTailPage(
+    BuildContext context,
+    ReaderPageData page, {
+    double minHeight = 0,
+  }) {
+    final List<ChapterComment> comments = _readerCommentsChapterId ==
+            _readerChapterIdForPage(page)
+        ? _readerChapterComments.take(28).toList(growable: false)
+        : const <ChapterComment>[];
+    final Size screenSize = MediaQuery.sizeOf(context);
+    final bool isPagedCommentPage = minHeight > 0;
+    final double resolvedHeight = isPagedCommentPage
+        ? minHeight
+        : screenSize.height * 0.8;
+    final double panelHeight = isPagedCommentPage
+        ? resolvedHeight
+        : (screenSize.height * (2 / 3)).clamp(280.0, 520.0).toDouble();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 12, 10, 16),
+      child: SizedBox(
+        height: resolvedHeight,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: SizedBox(
+            height: panelHeight,
+            child: Column(
+              children: <Widget>[
+                Expanded(
+                  child: _buildReaderCommentCloud(
+                    context,
+                    page,
+                    comments: comments,
+                    absorbScrollNotifications: !isPagedCommentPage,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _buildReaderCommentComposer(context, page),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReaderCommentComposer(BuildContext context, ReaderPageData page) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final bool isAuthenticated =
+        _session.isAuthenticated && (_session.token ?? '').isNotEmpty;
+    final Widget actionButton = isAuthenticated
+        ? FilledButton(
+            onPressed: _isReaderCommentSubmitting
+                ? null
+                : () => unawaited(_submitReaderComment(page)),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(0, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(_isReaderCommentSubmitting ? '发送中' : '发送'),
+          )
+        : TextButton(
+            onPressed: () => unawaited(_openAuthFlow()),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('登录'),
+          );
+    return Stack(
+      alignment: Alignment.bottomRight,
+      children: <Widget>[
+        TextField(
+          controller: _readerCommentController,
+          enabled: !_isReaderCommentSubmitting,
+          readOnly: !isAuthenticated,
+          onTap: !isAuthenticated ? () => unawaited(_openAuthFlow()) : null,
+          maxLines: 3,
+          minLines: 2,
+          textInputAction: TextInputAction.newline,
+          decoration: InputDecoration(
+            hintText: isAuthenticated ? '说点什么...' : '登录后评论',
+            filled: true,
+            fillColor: colorScheme.surface,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: colorScheme.outlineVariant),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: colorScheme.outlineVariant),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: colorScheme.primary, width: 1.2),
+            ),
+            contentPadding: const EdgeInsets.fromLTRB(12, 10, 90, 12),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(right: 8, bottom: 8),
+          child: actionButton,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReaderCommentCloud(
+    BuildContext context,
+    ReaderPageData page, {
+    required List<ChapterComment> comments,
+    bool absorbScrollNotifications = false,
+  }) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    if (_isReaderCommentsLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_readerCommentsError.isNotEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              _readerCommentsError,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colorScheme.onSurface.withValues(alpha: 0.78),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () => unawaited(_loadReaderComments(page)),
+              child: const Text('重试'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (comments.isEmpty) {
+      return Center(
+        child: Text(
+          '暂无评论',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: colorScheme.onSurface.withValues(alpha: 0.72),
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double bubbleMaxWidth = constraints.maxWidth > 360
+            ? constraints.maxWidth * 0.44
+            : constraints.maxWidth * 0.68;
+        final Widget cloud = Align(
+          alignment: Alignment.topCenter,
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: comments
+                .asMap()
+                .entries
+                .map(
+                  (MapEntry<int, ChapterComment> entry) =>
+                      _buildReaderCommentBubble(
+                        context,
+                        entry.value,
+                        index: entry.key,
+                        maxWidth: bubbleMaxWidth,
+                      ),
+                )
+                .toList(growable: false),
+          ),
+        );
+        final Widget scrollView = SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: cloud,
+        );
+        if (!absorbScrollNotifications) {
+          return scrollView;
+        }
+        return NotificationListener<ScrollNotification>(
+          onNotification: (ScrollNotification notification) => true,
+          child: scrollView,
+        );
+      },
+    );
+  }
+
+  Widget _buildReaderCommentBubble(
+    BuildContext context,
+    ChapterComment comment, {
+    required int index,
+    required double maxWidth,
+  }) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final List<Color> bubbleColors = <Color>[
+      colorScheme.secondaryContainer.withValues(alpha: 0.96),
+      colorScheme.tertiaryContainer.withValues(alpha: 0.96),
+      colorScheme.primaryContainer.withValues(alpha: 0.94),
+      colorScheme.surfaceContainerHigh.withValues(alpha: 0.98),
+    ];
+    final Color backgroundColor = bubbleColors[index % bubbleColors.length];
+    final Color foregroundColor = ThemeData.estimateBrightnessForColor(
+              backgroundColor,
+            ) ==
+            Brightness.dark
+        ? Colors.white
+        : colorScheme.onSurface;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 7, 8, 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              _buildReaderCommentAvatar(comment.avatarUrl),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: <Widget>[
+                    Text(
+                      comment.message,
+                      style: TextStyle(
+                        color: foregroundColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1.25,
+                      ),
+                    ),
+                    if (comment.likeCount != null)
+                      Text(
+                        '${comment.likeCount}',
+                        style: TextStyle(
+                          color: foregroundColor.withValues(alpha: 0.74),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReaderCommentAvatar(String avatarUrl) {
+    if (avatarUrl.trim().isEmpty) {
+      return const CircleAvatar(
+        radius: 12,
+        child: Icon(Icons.person_rounded, size: 14),
+      );
+    }
+    return ClipOval(
+      child: CachedNetworkImage(
+        imageUrl: avatarUrl,
+        width: 24,
+        height: 24,
+        fit: BoxFit.cover,
+        cacheManager: EasyCopyImageCaches.readerCache,
+        errorWidget: (BuildContext context, String url, Object error) {
+          return const CircleAvatar(
+            radius: 12,
+            child: Icon(Icons.person_rounded, size: 14),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildReaderNextChapterFooter(
     BuildContext context,
     ReaderPageData page,
   ) {
+    return SizedBox(
+      height: _readerPreferences.isPaged ? 92 : 112,
+      child: Center(
+        child: _buildReaderNextChapterCue(
+          context,
+          compact: false,
+          forceVisible: true,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReaderNextChapterCueOverlay(
+    BuildContext context,
+    ReaderPageData page,
+  ) {
+    final bool showIdleCue = _readerPreferences.isPaged
+        ? _currentReaderPageIndex >= _readerPagedPageCount(page) - 1
+        : _readerScrollController.hasClients &&
+              _readerScrollController.position.maxScrollExtent -
+                      _readerScrollController.offset <=
+                  _readerNextChapterPullActivationExtent * 1.5;
+    final bool isVisible =
+        showIdleCue ||
+        _readerNextChapterPullDistance > 0 ||
+        _isReaderNextChapterLoading;
+    final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
+    final Alignment alignment;
+    final EdgeInsets padding;
+    if (_readerPreferences.isPaged) {
+      final bool nextOnRight =
+          _readerPreferences.readingDirection ==
+          ReaderReadingDirection.rightToLeft;
+      alignment = nextOnRight ? Alignment.centerRight : Alignment.centerLeft;
+      padding = EdgeInsets.only(
+        left: nextOnRight ? 0 : viewPadding.left + 14,
+        right: nextOnRight ? viewPadding.right + 14 : 0,
+      );
+    } else {
+      alignment = Alignment.bottomCenter;
+      padding = EdgeInsets.only(
+        bottom: (viewPadding.bottom > 0 ? viewPadding.bottom : 0) + 18,
+      );
+    }
+    return Positioned.fill(
+      child: Align(
+        alignment: alignment,
+        child: Padding(
+          padding: padding,
+          child: _buildReaderNextChapterCue(
+            context,
+            compact: true,
+            forceVisible: isVisible,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReaderNextChapterCue(
+    BuildContext context, {
+    required bool compact,
+    required bool forceVisible,
+  }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final bool isLoading = _isReaderNextChapterLoading;
     final bool isReady = _readerNextChapterPullReady && !isLoading;
-    final Axis gestureAxis = _readerNextChapterGestureAxis;
-    final IconData directionIcon = switch ((
-      _readerPreferences.isPaged,
-      _readerPreferences.readingDirection,
-    )) {
-      (true, ReaderReadingDirection.leftToRight) =>
-        Icons.keyboard_double_arrow_left_rounded,
-      (true, ReaderReadingDirection.rightToLeft) =>
-        Icons.keyboard_double_arrow_right_rounded,
-      _ => Icons.keyboard_double_arrow_up_rounded,
-    };
     final double progress =
         (_readerNextChapterPullDistance / _readerNextChapterTriggerDistance)
             .clamp(0, 1)
             .toDouble();
-    final String title;
-    final String subtitle;
-    if (isLoading) {
-      title = '正在进入下一话';
-      subtitle = page.chapterTitle.isEmpty ? '请稍候' : page.chapterTitle;
-    } else if (isReady) {
-      title = '松手进入下一话';
-      subtitle = '已达到触发阈值';
-    } else {
-      title = switch ((
-        _readerPreferences.isPaged,
-        _readerPreferences.readingDirection,
-      )) {
-        (true, ReaderReadingDirection.leftToRight) => '继续向左滑，进入下一话',
-        (true, ReaderReadingDirection.rightToLeft) => '继续向右滑，进入下一话',
-        _ => '继续上拉，进入下一话',
-      };
-      subtitle = switch (gestureAxis) {
-        Axis.horizontal => '到末页后继续按翻页方向滑动即可自动切换',
-        Axis.vertical => '滑到底后继续上拉即可自动切换',
-      };
-    }
-    final Color backgroundColor = isLoading
-        ? colorScheme.primaryContainer
-        : isReady
-        ? colorScheme.secondaryContainer
-        : colorScheme.surfaceContainerHigh;
-    final Color foregroundColor = isLoading
-        ? colorScheme.onPrimaryContainer
-        : isReady
-        ? colorScheme.onSecondaryContainer
-        : colorScheme.onSurface;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: foregroundColor.withValues(alpha: 0.12)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  SizedBox.square(
-                    dimension: 24,
-                    child: isLoading
-                        ? CircularProgressIndicator(
-                            strokeWidth: 2.2,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              foregroundColor,
-                            ),
-                          )
-                        : Icon(directionIcon, color: foregroundColor),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Text(
-                          title,
-                          style: TextStyle(
-                            color: foregroundColor,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          subtitle,
-                          style: TextStyle(
-                            color: foregroundColor.withValues(alpha: 0.72),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+    final bool isVisible = forceVisible || isLoading || progress > 0;
+    final IconData directionIcon = switch ((
+      _readerPreferences.isPaged,
+      _readerPreferences.readingDirection,
+    )) {
+      (true, ReaderReadingDirection.leftToRight) => Icons.chevron_left_rounded,
+      (true, ReaderReadingDirection.rightToLeft) =>
+        Icons.chevron_right_rounded,
+      _ => Icons.keyboard_arrow_up_rounded,
+    };
+    final Axis axis = _readerNextChapterGestureAxis;
+    final double direction = switch ((_readerPreferences.isPaged, axis)) {
+      (false, Axis.vertical) => -1,
+      (true, Axis.horizontal) when
+          _readerPreferences.readingDirection ==
+              ReaderReadingDirection.rightToLeft =>
+        1,
+      (true, Axis.horizontal) => -1,
+      _ => -1,
+    };
+    final double size = compact ? 54 : 72;
+    final double ringSize = compact ? 42 : 58;
+    final double chevronSpacing = compact ? 7 : 9;
+    final Color accentColor = isReady
+        ? colorScheme.secondary
+        : colorScheme.primary;
+    final Color surfaceColor = colorScheme.surface.withValues(
+      alpha: compact ? 0.88 : 0.94,
+    );
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOutCubic,
+      opacity: !isVisible
+          ? 0
+          : (isLoading || progress > 0 ? 1 : (compact ? 0.34 : 0.72)),
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutBack,
+        scale: isReady ? 1.08 : 0.94 + (progress * 0.1),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: surfaceColor,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: accentColor.withValues(
+                alpha: 0.22 + (progress * (isReady ? 0.34 : 0.22)),
               ),
-              const SizedBox(height: 12),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(999),
-                child: LinearProgressIndicator(
-                  minHeight: 6,
-                  value: isLoading ? null : progress,
-                  backgroundColor: foregroundColor.withValues(alpha: 0.12),
-                  valueColor: AlwaysStoppedAnimation<Color>(foregroundColor),
+            ),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: accentColor.withValues(
+                  alpha: isReady ? 0.24 : 0.12 + (progress * 0.1),
                 ),
+                blurRadius: compact ? 16 : 22,
+                spreadRadius: compact ? 1 : 2,
               ),
             ],
+          ),
+          child: SizedBox.square(
+            dimension: size,
+            child: Stack(
+              alignment: Alignment.center,
+              children: <Widget>[
+                SizedBox.square(
+                  dimension: ringSize,
+                  child: CircularProgressIndicator(
+                    strokeWidth: compact ? 2.4 : 2.8,
+                    value: isLoading ? null : (forceVisible ? progress : null),
+                    backgroundColor: accentColor.withValues(alpha: 0.14),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      accentColor.withValues(alpha: 0.92),
+                    ),
+                  ),
+                ),
+                for (int index = 0; index < 3; index += 1)
+                  Transform.translate(
+                    offset: axis == Axis.horizontal
+                        ? Offset(
+                            direction *
+                                (index - 1) *
+                                chevronSpacing *
+                                (0.82 + (progress * 0.36)),
+                            0,
+                          )
+                        : Offset(
+                            0,
+                            direction *
+                                (index - 1) *
+                                chevronSpacing *
+                                (0.82 + (progress * 0.36)),
+                          ),
+                    child: Opacity(
+                      opacity: isLoading
+                          ? 0.28 + (index * 0.12)
+                          : (0.18 +
+                                  (((progress * 1.2) - (index * 0.18))
+                                              .clamp(0, 1)
+                                              .toDouble() *
+                                          0.78))
+                              .clamp(0, 1)
+                              .toDouble(),
+                      child: Icon(
+                        directionIcon,
+                        size: compact ? 18 : 22,
+                        color: accentColor,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),

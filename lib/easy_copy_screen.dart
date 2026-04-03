@@ -6,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:crypto/crypto.dart';
 import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/app_preferences.dart';
+import 'package:easy_copy/models/chapter_comment.dart';
 import 'package:easy_copy/models/page_models.dart';
 import 'package:easy_copy/page_transition_scope.dart';
 import 'package:easy_copy/services/android_document_tree_bridge.dart';
@@ -55,8 +56,9 @@ part 'easy_copy_screen/widgets.dart';
 const Duration _pageFadeTransitionDuration = Duration(milliseconds: 200);
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
 const String _detailAllChapterTabKey = '__detail_all__';
-const double _readerNextChapterPullTriggerDistance = 48;
-const double _readerNextChapterPullActivationExtent = 32;
+const double _readerNextChapterPullTriggerDistance = 92;
+const double _readerNextChapterPagedTriggerDistance = 56;
+const double _readerNextChapterPullActivationExtent = 56;
 
 Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
   return FadeTransition(
@@ -121,6 +123,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   late final AppPreferencesController _preferencesController;
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _readerCommentController =
+      TextEditingController();
   final ScrollController _standardScrollController = ScrollController();
   final ScrollController _readerScrollController = ScrollController();
   final GlobalKey _readerViewportKey = GlobalKey();
@@ -168,11 +172,15 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   bool _isReaderChapterControlsVisible = false;
   bool _isReaderExitTransitionActive = false;
   bool _isReaderNextChapterLoading = false;
+  bool _isReaderCommentsLoading = false;
+  bool _isReaderCommentSubmitting = false;
   bool _readerPresentationSyncScheduled = false;
   bool _suspendStandardScrollTracking = false;
   String _selectedDetailChapterTabKey = _detailAllChapterTabKey;
   bool _isDetailChapterSortAscending = false;
   String _detailChapterStateRouteKey = '';
+  String _readerCommentsChapterId = '';
+  String _readerCommentsError = '';
   int _currentReaderPageIndex = 0;
   int _currentVisibleReaderImageIndex = 0;
   double _readerNextChapterPullDistance = 0;
@@ -187,6 +195,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       <int, ScrollController>{};
   final Map<int, GlobalKey> _readerImageItemKeys = <int, GlobalKey>{};
   final Map<String, GlobalKey> _detailChapterItemKeys = <String, GlobalKey>{};
+  List<ChapterComment> _readerChapterComments = const <ChapterComment>[];
   final DeferredViewportCoordinator _standardScrollRestoreCoordinator =
       DeferredViewportCoordinator();
   final DeferredViewportCoordinator _detailChapterAutoScrollCoordinator =
@@ -276,6 +285,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _disposeReaderPagedScrollControllers();
     _readerPageController.dispose();
     _searchController.dispose();
+    _readerCommentController.dispose();
     _standardScrollController.dispose();
     _readerScrollController.dispose();
     _downloadQueueManager.dispose();
@@ -570,7 +580,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         previousPreferences.readingDirection !=
             nextPreferences.readingDirection ||
         previousPreferences.pageFit != nextPreferences.pageFit ||
-        previousPreferences.openingPosition != nextPreferences.openingPosition;
+        previousPreferences.openingPosition != nextPreferences.openingPosition ||
+        previousPreferences.showChapterComments !=
+            nextPreferences.showChapterComments;
     final EasyCopyPage? page = _page;
     if (requiresReaderRestore && page is ReaderPageData) {
       _handleReaderPageLoaded(page, previousUri: page.uri, forceRestore: true);
@@ -3048,6 +3060,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       _disposeReaderPagedScrollControllers();
       _readerImageItemKeys.clear();
     }
+    _prepareReaderComments(page, resetForNewChapter: changedPage);
     _scheduleReaderPresentationSync();
     if (changedPage || forceRestore) {
       unawaited(
@@ -3056,6 +3069,207 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
           resetControllers: changedPage || forceRestore,
         ),
       );
+    }
+  }
+
+  String _readerChapterIdForPage(ReaderPageData page) {
+    final Uri uri = Uri.parse(page.uri);
+    final List<String> segments = uri.pathSegments;
+    final int chapterIndex = segments.indexOf('chapter');
+    if (chapterIndex < 0 || chapterIndex + 1 >= segments.length) {
+      return '';
+    }
+    return segments[chapterIndex + 1].trim();
+  }
+
+  bool _shouldShowReaderCommentTailPage(ReaderPageData page) {
+    return _readerPreferences.showChapterComments &&
+        _readerChapterIdForPage(page).isNotEmpty;
+  }
+
+  int _readerPagedPageCount(ReaderPageData page) {
+    return page.imageUrls.length + (_shouldShowReaderCommentTailPage(page) ? 1 : 0);
+  }
+
+  void _prepareReaderComments(
+    ReaderPageData page, {
+    required bool resetForNewChapter,
+  }) {
+    final String chapterId = _readerChapterIdForPage(page);
+    if (!_readerPreferences.showChapterComments || chapterId.isEmpty) {
+      if (mounted) {
+        _setStateIfMounted(() {
+          _readerCommentsChapterId = '';
+          _readerCommentsError = '';
+          _readerChapterComments = const <ChapterComment>[];
+          _isReaderCommentsLoading = false;
+          if (resetForNewChapter) {
+            _readerCommentController.clear();
+          }
+        });
+      } else {
+        _readerCommentsChapterId = '';
+        _readerCommentsError = '';
+        _readerChapterComments = const <ChapterComment>[];
+        _isReaderCommentsLoading = false;
+        if (resetForNewChapter) {
+          _readerCommentController.clear();
+        }
+      }
+      return;
+    }
+
+    final bool shouldRefresh =
+        resetForNewChapter ||
+        _readerCommentsChapterId != chapterId ||
+        (_readerChapterComments.isEmpty && _readerCommentsError.isEmpty);
+    if (!shouldRefresh ||
+        (_isReaderCommentsLoading && _readerCommentsChapterId == chapterId)) {
+      return;
+    }
+    if (resetForNewChapter) {
+      _readerCommentController.clear();
+    }
+    unawaited(_loadReaderComments(page));
+  }
+
+  Future<void> _loadReaderComments(ReaderPageData page) async {
+    final String chapterId = _readerChapterIdForPage(page);
+    if (chapterId.isEmpty || !_readerPreferences.showChapterComments) {
+      return;
+    }
+    if (mounted) {
+      final EasyCopyPage? currentPage = _page;
+      if (currentPage is! ReaderPageData ||
+          _readerChapterIdForPage(currentPage) != chapterId) {
+        return;
+      }
+    }
+
+    if (mounted) {
+      _setStateIfMounted(() {
+        _readerCommentsChapterId = chapterId;
+        _readerCommentsError = '';
+        _readerChapterComments = const <ChapterComment>[];
+        _isReaderCommentsLoading = true;
+      });
+    } else {
+      _readerCommentsChapterId = chapterId;
+      _readerCommentsError = '';
+      _readerChapterComments = const <ChapterComment>[];
+      _isReaderCommentsLoading = true;
+    }
+
+    try {
+      final ChapterCommentFeed feed = await _siteApiClient.loadChapterComments(
+        chapterId: chapterId,
+        limit: 40,
+      );
+      if (!mounted) {
+        return;
+      }
+      final EasyCopyPage? currentPage = _page;
+      if (currentPage is! ReaderPageData ||
+          _readerChapterIdForPage(currentPage) != chapterId) {
+        if (_readerCommentsChapterId == chapterId) {
+          _setStateIfMounted(() {
+            _isReaderCommentsLoading = false;
+          });
+        }
+        return;
+      }
+      _setStateIfMounted(() {
+        _readerCommentsChapterId = chapterId;
+        _readerChapterComments = feed.comments;
+        _readerCommentsError = '';
+        _isReaderCommentsLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      final EasyCopyPage? currentPage = _page;
+      if (currentPage is! ReaderPageData ||
+          _readerChapterIdForPage(currentPage) != chapterId) {
+        if (_readerCommentsChapterId == chapterId) {
+          _setStateIfMounted(() {
+            _isReaderCommentsLoading = false;
+          });
+        }
+        return;
+      }
+      final String message = error is SiteApiException
+          ? error.message
+          : '评论加载失败，请稍后重试。';
+      _setStateIfMounted(() {
+        _readerCommentsChapterId = chapterId;
+        _readerCommentsError = message;
+        _readerChapterComments = const <ChapterComment>[];
+        _isReaderCommentsLoading = false;
+      });
+    }
+  }
+
+  Future<void> _submitReaderComment(ReaderPageData page) async {
+    if (_isReaderCommentSubmitting) {
+      return;
+    }
+    final String chapterId = _readerChapterIdForPage(page);
+    if (chapterId.isEmpty) {
+      _showSnackBar('章节评论信息缺失，请刷新后重试。');
+      return;
+    }
+    final String content = _readerCommentController.text.trim();
+    if (content.isEmpty) {
+      _showSnackBar('请输入评论内容。');
+      return;
+    }
+
+    if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
+      await _openAuthFlow();
+      if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
+        return;
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    if (mounted) {
+      _setStateIfMounted(() {
+        _isReaderCommentSubmitting = true;
+      });
+    } else {
+      _isReaderCommentSubmitting = true;
+    }
+
+    try {
+      await _siteApiClient.postChapterComment(
+        chapterId: chapterId,
+        content: content,
+      );
+      _readerCommentController.clear();
+      _showSnackBar('已发送评论');
+      await _loadReaderComments(page);
+    } catch (error) {
+      final String message = error is SiteApiException
+          ? error.message
+          : '评论发送失败，请稍后重试。';
+      if (message.contains('登录已失效')) {
+        await _logout(showFeedback: false);
+      }
+      if (mounted) {
+        _showSnackBar(message);
+      }
+    } finally {
+      if (mounted) {
+        _setStateIfMounted(() {
+          _isReaderCommentSubmitting = false;
+        });
+      } else {
+        _isReaderCommentSubmitting = false;
+      }
     }
   }
 
@@ -3083,8 +3297,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     }
 
     if (_readerPreferences.isPaged) {
+      final int maxPageIndex = _readerPagedPageCount(page) - 1;
       final int pageIndex = savedPosition?.isPaged == true
-          ? savedPosition!.pageIndex.clamp(0, page.imageUrls.length - 1)
+          ? savedPosition!.pageIndex.clamp(0, maxPageIndex)
           : 0;
       final double? pageOffset = savedPosition?.isPaged == true
           ? savedPosition!.pageOffset
@@ -3095,7 +3310,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       }
       _lastPersistedReaderPosition = savedPosition;
       _currentReaderPageIndex = pageIndex;
-      _currentVisibleReaderImageIndex = pageIndex;
+      _currentVisibleReaderImageIndex = page.imageUrls.isEmpty
+          ? 0
+          : (pageIndex >= page.imageUrls.length
+                ? page.imageUrls.length - 1
+                : pageIndex);
       if (mounted) {
         setState(() {});
       }
@@ -3258,15 +3477,22 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     if (_currentReaderPageIndex == index) {
       return;
     }
+    final EasyCopyPage? currentPage = _page;
+    final int visibleImageIndex =
+        currentPage is ReaderPageData && currentPage.imageUrls.isNotEmpty
+        ? (index >= currentPage.imageUrls.length
+              ? currentPage.imageUrls.length - 1
+              : index)
+        : index;
     _resetReaderNextChapterState();
     if (!mounted) {
       _currentReaderPageIndex = index;
-      _currentVisibleReaderImageIndex = index;
+      _currentVisibleReaderImageIndex = visibleImageIndex;
       return;
     }
     setState(() {
       _currentReaderPageIndex = index;
-      _currentVisibleReaderImageIndex = index;
+      _currentVisibleReaderImageIndex = visibleImageIndex;
     });
     _scheduleReaderProgressPersistence();
     _restartReaderAutoTurn();

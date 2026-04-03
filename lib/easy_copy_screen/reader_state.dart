@@ -8,7 +8,9 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
       _readerPreferences.isPaged ? Axis.horizontal : Axis.vertical;
 
   double get _readerNextChapterTriggerDistance =>
-      _readerPreferences.isPaged ? 24 : _readerNextChapterPullTriggerDistance;
+      _readerPreferences.isPaged
+      ? _readerNextChapterPagedTriggerDistance
+      : _readerNextChapterPullTriggerDistance;
 
   void _handleReaderVolumeKeyAction(ReaderVolumeKeyAction action) {
     if (!_isReaderMode || !_readerPreferences.useVolumeKeysForPaging) {
@@ -29,8 +31,9 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
       if (page is! ReaderPageData) {
         return;
       }
+      final int totalPageCount = _readerPagedPageCount(page);
       final int nextPageIndex = _currentReaderPageIndex + 1;
-      if (nextPageIndex >= page.imageUrls.length) {
+      if (nextPageIndex >= totalPageCount) {
         return;
       }
       await _animateToReaderPage(nextPageIndex);
@@ -204,8 +207,9 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
           return;
         }
         if (_readerPreferences.isPaged) {
+          final int totalPageCount = _readerPagedPageCount(page);
           final int nextPageIndex = _currentReaderPageIndex + 1;
-          if (nextPageIndex >= page.imageUrls.length) {
+          if (nextPageIndex >= totalPageCount) {
             return;
           }
           await _animateToReaderPage(nextPageIndex);
@@ -450,6 +454,7 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
     Axis axis = Axis.vertical,
   }) {
     if (page.nextHref.trim().isEmpty ||
+        notification.depth != 0 ||
         notification.metrics.axis != axis ||
         _isReaderNextChapterLoading) {
       if (!_isReaderNextChapterLoading) {

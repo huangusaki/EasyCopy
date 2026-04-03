@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:easy_copy/config/app_config.dart';
+import 'package:easy_copy/models/chapter_comment.dart';
 import 'package:easy_copy/models/page_models.dart';
 import 'package:easy_copy/services/site_session.dart';
 import 'package:http/http.dart' as http;
@@ -45,6 +46,7 @@ class SiteApiClient {
       _session = session ?? SiteSession.instance;
 
   static final SiteApiClient instance = SiteApiClient();
+  static const String _chapterCommentApiHost = 'api.mangacopy.com';
 
   final http.Client _client;
   final SiteSession _session;
@@ -187,6 +189,97 @@ class SiteApiClient {
     final int code = (payload['code'] as num?)?.toInt() ?? response.statusCode;
     if (code != 200) {
       throw SiteApiException((payload['message'] as String?) ?? '收藏失败：$code');
+    }
+  }
+
+  Future<ChapterCommentFeed> loadChapterComments({
+    required String chapterId,
+    int limit = 40,
+    int offset = 0,
+  }) async {
+    final String normalizedChapterId = chapterId.trim();
+    if (normalizedChapterId.isEmpty) {
+      throw SiteApiException('章节评论信息缺失，请刷新后重试。');
+    }
+
+    await _session.ensureInitialized();
+    final int normalizedLimit = limit.clamp(1, 120);
+    final int normalizedOffset = offset < 0 ? 0 : offset;
+    final Uri uri = Uri.https(_chapterCommentApiHost, '/api/v3/roasts', <String, String>{
+      'chapter_id': normalizedChapterId,
+      'limit': '$normalizedLimit',
+      'offset': '$normalizedOffset',
+      '_update': 'true',
+    });
+    final http.Response response = await _client.get(
+      uri,
+      headers: _buildRequestHeaders(),
+    );
+    final Map<String, Object?> payload = _decodeJsonMap(
+      response,
+      malformedMessage: '章节评论返回格式异常。',
+    );
+    final int code = (payload['code'] as num?)?.toInt() ?? response.statusCode;
+    if (code != 200) {
+      throw SiteApiException((payload['message'] as String?) ?? '评论加载失败：$code');
+    }
+
+    final Map<String, Object?> results = _asMap(payload['results']);
+    final List<ChapterComment> comments = _extractList(results)
+        .map(_parseChapterComment)
+        .where((ChapterComment comment) => comment.message.isNotEmpty)
+        .toList(growable: false);
+    return ChapterCommentFeed(
+      total: _pickInt(
+        results,
+        const <String>['total', 'count', 'total_count'],
+        fallback: comments.length,
+      ),
+      comments: comments,
+    );
+  }
+
+  Future<void> postChapterComment({
+    required String chapterId,
+    required String content,
+  }) async {
+    await _session.ensureInitialized();
+    if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
+      throw SiteApiException('请先登录后再评论。');
+    }
+
+    final String normalizedChapterId = chapterId.trim();
+    final String normalizedContent = content.trim();
+    if (normalizedChapterId.isEmpty) {
+      throw SiteApiException('章节评论信息缺失，请刷新后重试。');
+    }
+    if (normalizedContent.isEmpty) {
+      throw SiteApiException('请输入评论内容。');
+    }
+
+    final http.Response response = await _client.post(
+      Uri.https(_chapterCommentApiHost, '/api/v3/member/roast'),
+      headers: _buildRequestHeaders(
+        includeAuth: true,
+        contentType: 'application/x-www-form-urlencoded',
+      ),
+      body: <String, String>{
+        'chapter_id': normalizedChapterId,
+        'roast': normalizedContent,
+        '_update': 'true',
+      },
+    );
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw SiteApiException('登录已失效，请重新登录。');
+    }
+
+    final Map<String, Object?> payload = _decodeJsonMap(
+      response,
+      malformedMessage: '评论接口返回格式异常。',
+    );
+    final int code = (payload['code'] as num?)?.toInt() ?? response.statusCode;
+    if (code != 200) {
+      throw SiteApiException((payload['message'] as String?) ?? '评论发送失败：$code');
     }
   }
 
@@ -713,6 +806,46 @@ class SiteApiClient {
     );
   }
 
+  ChapterComment _parseChapterComment(Map<String, Object?> item) {
+    final Map<String, Object?> user = _firstNonEmptyMap(
+      item,
+      const <String>['user', 'member', 'author'],
+    );
+    final int commentId = _pickInt(item, const <String>['id'], fallback: 0);
+    return ChapterComment(
+      id: commentId > 0
+          ? '$commentId'
+          : _pickString(item, const <String>['uuid', 'comment_id', 'roast_id']),
+      message: _pickString(
+        item,
+        const <String>['comment', 'roast', 'content', 'text'],
+      ),
+      avatarUrl: _pickString(
+        item,
+        const <String>['user_avatar', 'avatar', 'avatar_url'],
+      ).isNotEmpty
+          ? _pickString(
+              item,
+              const <String>['user_avatar', 'avatar', 'avatar_url'],
+            )
+          : _pickString(
+              user,
+              const <String>['avatar', 'avatar_url', 'user_avatar'],
+            ),
+      likeCount: _pickNullableInt(
+        item,
+        const <String>[
+          'like_count',
+          'likes',
+          'thumbs_count',
+          'praise_count',
+          'up_count',
+          'up',
+        ],
+      ),
+    );
+  }
+
   List<Map<String, Object?>> _extractList(Object? source) {
     if (source is List) {
       return source.whereType<Map>().map(_asMap).toList(growable: false);
@@ -855,6 +988,51 @@ class SiteApiClient {
       return value == '1' || value.toLowerCase() == 'true';
     }
     return false;
+  }
+
+  int? _pickNullableInt(Map<String, Object?> source, List<String> keys) {
+    for (final String key in keys) {
+      final Object? value = source[key];
+      if (value is num) {
+        return value.toInt();
+      }
+      if (value is String) {
+        final int? parsed = int.tryParse(value.trim());
+        if (parsed != null) {
+          return parsed;
+        }
+      }
+    }
+    return null;
+  }
+
+  Map<String, String> _buildRequestHeaders({
+    bool includeAuth = false,
+    String accept = 'application/json',
+    String? contentType,
+  }) {
+    return <String, String>{
+      'Accept': accept,
+      if (contentType != null) 'Content-Type': contentType,
+      'User-Agent': AppConfig.desktopUserAgent,
+      'platform': '2',
+      if (includeAuth && (_session.token ?? '').isNotEmpty)
+        'Authorization': 'Token ${_session.token}',
+      if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
+    };
+  }
+
+  Map<String, Object?> _decodeJsonMap(
+    http.Response response, {
+    required String malformedMessage,
+  }) {
+    final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map) {
+      throw SiteApiException(malformedMessage);
+    }
+    return decoded.map(
+      (Object? key, Object? value) => MapEntry(key.toString(), value),
+    );
   }
 
   int _compareProfileLibraryItemByUpdatedAtDesc(

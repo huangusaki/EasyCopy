@@ -124,6 +124,7 @@ class ReaderPreferences {
     this.showPageGap = true,
     this.useVolumeKeysForPaging = false,
     this.fullscreen = true,
+    this.showChapterComments = true,
   });
 
   factory ReaderPreferences.fromJson(Map<String, Object?> json) {
@@ -159,6 +160,7 @@ class ReaderPreferences {
       useVolumeKeysForPaging:
           (json['useVolumeKeysForPaging'] as bool?) ?? false,
       fullscreen: (json['fullscreen'] as bool?) ?? true,
+      showChapterComments: (json['showChapterComments'] as bool?) ?? true,
     );
   }
 
@@ -174,6 +176,7 @@ class ReaderPreferences {
   final bool showPageGap;
   final bool useVolumeKeysForPaging;
   final bool fullscreen;
+  final bool showChapterComments;
 
   bool get isPaged =>
       readingDirection == ReaderReadingDirection.leftToRight ||
@@ -192,6 +195,7 @@ class ReaderPreferences {
     bool? showPageGap,
     bool? useVolumeKeysForPaging,
     bool? fullscreen,
+    bool? showChapterComments,
   }) {
     return ReaderPreferences(
       screenOrientation: screenOrientation ?? this.screenOrientation,
@@ -207,6 +211,7 @@ class ReaderPreferences {
       useVolumeKeysForPaging:
           useVolumeKeysForPaging ?? this.useVolumeKeysForPaging,
       fullscreen: fullscreen ?? this.fullscreen,
+      showChapterComments: showChapterComments ?? this.showChapterComments,
     );
   }
 
@@ -224,6 +229,7 @@ class ReaderPreferences {
       'showPageGap': showPageGap,
       'useVolumeKeysForPaging': useVolumeKeysForPaging,
       'fullscreen': fullscreen,
+      'showChapterComments': showChapterComments,
     };
   }
 }
