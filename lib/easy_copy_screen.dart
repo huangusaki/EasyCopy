@@ -56,9 +56,9 @@ part 'easy_copy_screen/widgets.dart';
 const Duration _pageFadeTransitionDuration = Duration(milliseconds: 200);
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
 const String _detailAllChapterTabKey = '__detail_all__';
-const double _readerNextChapterPullTriggerDistance = 92;
-const double _readerNextChapterPagedTriggerDistance = 56;
-const double _readerNextChapterPullActivationExtent = 56;
+const double _readerNextChapterPullTriggerDistance = 160;
+const double _readerNextChapterPagedTriggerDistance = 80;
+const double _readerNextChapterPullActivationExtent = 80;
 
 Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
   return FadeTransition(
@@ -125,6 +125,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _readerCommentController =
       TextEditingController();
+  final ScrollController _readerCommentScrollController = ScrollController();
   final ScrollController _standardScrollController = ScrollController();
   final ScrollController _readerScrollController = ScrollController();
   final GlobalKey _readerViewportKey = GlobalKey();
@@ -184,6 +185,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   int _currentReaderPageIndex = 0;
   int _currentVisibleReaderImageIndex = 0;
   double _readerNextChapterPullDistance = 0;
+  final Map<String, double> _readerImageAspectRatios = <String, double>{};
   int? _batteryLevel;
   int _discardedNavigationCommitCount = 0;
   int _discardedNavigationCallbackCount = 0;
@@ -286,6 +288,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _readerPageController.dispose();
     _searchController.dispose();
     _readerCommentController.dispose();
+    _readerCommentScrollController.dispose();
     _standardScrollController.dispose();
     _readerScrollController.dispose();
     _downloadQueueManager.dispose();
@@ -3059,6 +3062,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       _isReaderChapterControlsVisible = false;
       _disposeReaderPagedScrollControllers();
       _readerImageItemKeys.clear();
+      _readerImageAspectRatios.clear();
     }
     _prepareReaderComments(page, resetForNewChapter: changedPage);
     _scheduleReaderPresentationSync();
@@ -3129,6 +3133,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     }
     if (resetForNewChapter) {
       _readerCommentController.clear();
+      if (_readerCommentScrollController.hasClients) {
+        _readerCommentScrollController.jumpTo(0);
+      }
     }
     unawaited(_loadReaderComments(page));
   }

@@ -520,48 +520,45 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     final double topPadding = _readerPreferences.fullscreen && showGap ? 0 : 8;
     final bool showCommentTail = _shouldShowReaderCommentTailPage(page);
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
-    return RefreshIndicator(
-      onRefresh: _retryCurrentPage,
-      child: NotificationListener<ScrollNotification>(
-        onNotification: (ScrollNotification notification) {
-          _handleReaderNextChapterPullNotification(
-            notification,
-            page: page,
-            controller: _readerScrollController,
-          );
-          return _handleReaderScrollNotification(notification);
-        },
-        child: ListView.builder(
-          key: ValueKey<String>(
-            'reader-scroll-${page.uri}-${_readerPreferences.pageFit.name}-$showGap-$showCommentTail',
-          ),
+    return NotificationListener<ScrollNotification>(
+      onNotification: (ScrollNotification notification) {
+        _handleReaderNextChapterPullNotification(
+          notification,
+          page: page,
           controller: _readerScrollController,
-          physics: const AlwaysScrollableScrollPhysics(
-            parent: BouncingScrollPhysics(),
-          ),
-          padding: EdgeInsets.only(top: topPadding, bottom: 16),
-          itemCount:
-              page.imageUrls.length + (showCommentTail || hasNextChapter ? 1 : 0),
-          itemBuilder: (BuildContext context, int index) {
-            if (index >= page.imageUrls.length) {
-              return showCommentTail
-                  ? _buildReaderCommentTailPage(context, page)
-                  : _buildReaderNextChapterFooter(context, page);
-            }
-            return Padding(
-              key: _readerImageItemKeyFor(index),
-              padding: EdgeInsets.only(bottom: showGap ? 10 : 0),
-              child: _buildReaderImageFrame(
-                context,
-                imageUrl: page.imageUrls[index],
-                viewportHeight:
-                    _readerPreferences.pageFit == ReaderPageFit.fitScreen
-                    ? MediaQuery.sizeOf(context).height * 0.72
-                    : null,
-              ),
-            );
-          },
+        );
+        return _handleReaderScrollNotification(notification);
+      },
+      child: ListView.builder(
+        key: ValueKey<String>(
+          'reader-scroll-${page.uri}-${_readerPreferences.pageFit.name}-$showGap-$showCommentTail',
         ),
+        controller: _readerScrollController,
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+        padding: EdgeInsets.only(top: topPadding, bottom: 16),
+        itemCount:
+            page.imageUrls.length + (showCommentTail || hasNextChapter ? 1 : 0),
+        itemBuilder: (BuildContext context, int index) {
+          if (index >= page.imageUrls.length) {
+            return showCommentTail
+                ? _buildReaderCommentTailPage(context, page)
+                : _buildReaderNextChapterFooter(context, page);
+          }
+          return Padding(
+            key: _readerImageItemKeyFor(index),
+            padding: EdgeInsets.only(bottom: showGap ? 10 : 0),
+            child: _buildReaderImageFrame(
+              context,
+              imageUrl: page.imageUrls[index],
+              viewportHeight:
+                  _readerPreferences.pageFit == ReaderPageFit.fitScreen
+                  ? MediaQuery.sizeOf(context).height * 0.72
+                  : null,
+            ),
+          );
+        },
       ),
     );
   }
@@ -659,69 +656,40 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     final bool isLocalFile = parsedUri != null && parsedUri.scheme == 'file';
     final bool isDocumentTreeFile =
         parsedUri != null && parsedUri.scheme == 'content';
-    final Widget image;
+    final ImageProvider<Object> imageProvider;
     if (isLocalFile) {
-      image = Image.file(
-        File.fromUri(parsedUri),
-        fit: fit,
-        width: double.infinity,
-        height: viewportHeight,
-        errorBuilder:
-            (BuildContext context, Object error, StackTrace? stackTrace) {
-              return SizedBox(
-                height: viewportHeight ?? 220,
-                child: const Center(
-                  child: Icon(Icons.broken_image_outlined, size: 36),
-                ),
-              );
-            },
-      );
+      imageProvider = FileImage(File.fromUri(parsedUri));
     } else if (isDocumentTreeFile) {
-      image = Image(
-        image: DocumentTreeImageProvider(imageUrl),
-        fit: fit,
-        width: double.infinity,
-        height: viewportHeight,
-        errorBuilder:
-            (BuildContext context, Object error, StackTrace? stackTrace) {
-              return SizedBox(
-                height: viewportHeight ?? 220,
-                child: const Center(
-                  child: Icon(Icons.broken_image_outlined, size: 36),
-                ),
-              );
-            },
-      );
+      imageProvider = DocumentTreeImageProvider(imageUrl);
     } else {
-      image = CachedNetworkImage(
-        imageUrl: imageUrl,
-        fit: fit,
-        width: double.infinity,
-        height: viewportHeight,
+      imageProvider = CachedNetworkImageProvider(
+        imageUrl,
         cacheManager: EasyCopyImageCaches.readerCache,
-        progressIndicatorBuilder:
-            (BuildContext context, String url, DownloadProgress progress) {
-              return SizedBox(
-                height: viewportHeight ?? 260,
-                child: Center(
-                  child: CircularProgressIndicator(value: progress.progress),
-                ),
-              );
-            },
-        errorWidget: (BuildContext context, String url, Object error) {
-          return SizedBox(
-            height: viewportHeight ?? 220,
-            child: const Center(
-              child: Icon(Icons.broken_image_outlined, size: 36),
-            ),
-          );
-        },
       );
     }
 
     return ColoredBox(
       color: showGap ? colorScheme.surface : colorScheme.surfaceContainerLowest,
-      child: image,
+      child: _ReaderChapterImage(
+        key: ValueKey<String>('reader-image-$imageUrl-$viewportHeight'),
+        imageProvider: imageProvider,
+        fit: fit,
+        viewportHeight: viewportHeight,
+        aspectRatio: _readerImageAspectRatios[imageUrl],
+        onResolvedAspectRatio: (double aspectRatio) {
+          if (!aspectRatio.isFinite || aspectRatio <= 0) {
+            return;
+          }
+          final double? previousAspectRatio = _readerImageAspectRatios[imageUrl];
+          if (previousAspectRatio != null &&
+              (previousAspectRatio - aspectRatio).abs() < 0.01) {
+            return;
+          }
+          _setStateIfMounted(() {
+            _readerImageAspectRatios[imageUrl] = aspectRatio;
+          });
+        },
+      ),
     );
   }
 
@@ -769,35 +737,59 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         : const <ChapterComment>[];
     final Size screenSize = MediaQuery.sizeOf(context);
     final bool isPagedCommentPage = minHeight > 0;
-    final double resolvedHeight = isPagedCommentPage
+    final double panelMaxHeight = isPagedCommentPage
         ? minHeight
-        : screenSize.height * 0.8;
-    final double panelHeight = isPagedCommentPage
-        ? resolvedHeight
-        : (screenSize.height * (2 / 3)).clamp(280.0, 520.0).toDouble();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 12, 10, 16),
-      child: SizedBox(
-        height: resolvedHeight,
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: SizedBox(
-            height: panelHeight,
-            child: Column(
-              children: <Widget>[
-                Expanded(
-                  child: _buildReaderCommentCloud(
-                    context,
-                    page,
-                    comments: comments,
-                    absorbScrollNotifications: !isPagedCommentPage,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _buildReaderCommentComposer(context, page),
-              ],
+        : screenSize.height;
+    final double commentCloudMaxHeight = panelMaxHeight > 188
+        ? panelMaxHeight - 108
+        : 80;
+    final Widget commentSection = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: commentCloudMaxHeight),
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: _buildReaderCommentCloud(
+              context,
+              page,
+              comments: comments,
             ),
           ),
+        ),
+        const SizedBox(height: 8),
+        _buildReaderCommentComposer(context, page),
+      ],
+    );
+    if (isPagedCommentPage) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: SizedBox(
+          height: minHeight,
+          child: Column(
+            children: <Widget>[
+              const SizedBox(height: 12),
+              commentSection,
+              const Spacer(),
+              const SizedBox(height: 16),
+            ],
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: screenSize.height),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            const SizedBox(height: 12),
+            commentSection,
+            const SizedBox(height: 16),
+          ],
         ),
       ),
     );
@@ -866,11 +858,71 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     );
   }
 
+  void _handleReaderCommentCloudDragUpdate(DragUpdateDetails details) {
+    final double? primaryDelta = details.primaryDelta;
+    if (primaryDelta == null || !_readerCommentScrollController.hasClients) {
+      return;
+    }
+    final ScrollPosition position = _readerCommentScrollController.position;
+    final double nextOffset = (position.pixels - primaryDelta)
+        .clamp(0.0, position.maxScrollExtent)
+        .toDouble();
+    if ((nextOffset - position.pixels).abs() < 0.5) {
+      return;
+    }
+    _readerCommentScrollController.jumpTo(nextOffset);
+  }
+
+  void _handleReaderCommentCloudDragEnd(DragEndDetails details) {
+    if (!_readerCommentScrollController.hasClients) {
+      return;
+    }
+    final double velocity = -(details.primaryVelocity ?? 0);
+    if (velocity.abs() < 90) {
+      return;
+    }
+    final ScrollPosition position = _readerCommentScrollController.position;
+    if (position.maxScrollExtent <= 0) {
+      return;
+    }
+    final double targetOffset = (position.pixels + (velocity * 0.18))
+        .clamp(0.0, position.maxScrollExtent)
+        .toDouble();
+    if ((targetOffset - position.pixels).abs() < 1) {
+      return;
+    }
+    unawaited(
+      _readerCommentScrollController.animateTo(
+        targetOffset,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      ),
+    );
+  }
+
+  Widget _buildReaderCommentScrollStrip({required bool enabled}) {
+    if (!enabled) {
+      return const SizedBox.shrink();
+    }
+    return Align(
+      alignment: Alignment.center,
+      child: FractionallySizedBox(
+        widthFactor: 0.3,
+        heightFactor: 1,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onVerticalDragUpdate: _handleReaderCommentCloudDragUpdate,
+          onVerticalDragEnd: _handleReaderCommentCloudDragEnd,
+          child: const SizedBox.expand(),
+        ),
+      ),
+    );
+  }
+
   Widget _buildReaderCommentCloud(
     BuildContext context,
     ReaderPageData page, {
     required List<ChapterComment> comments,
-    bool absorbScrollNotifications = false,
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     if (_isReaderCommentsLoading) {
@@ -914,51 +966,156 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     }
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final double bubbleMaxWidth = constraints.maxWidth > 360
-            ? constraints.maxWidth * 0.44
-            : constraints.maxWidth * 0.68;
-        final Widget cloud = Align(
-          alignment: Alignment.topCenter,
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 8,
-            alignment: WrapAlignment.center,
-            children: comments
-                .asMap()
-                .entries
-                .map(
-                  (MapEntry<int, ChapterComment> entry) =>
-                      _buildReaderCommentBubble(
-                        context,
-                        entry.value,
-                        index: entry.key,
-                        maxWidth: bubbleMaxWidth,
-                      ),
-                )
-                .toList(growable: false),
+        final double columnSpacing = constraints.maxWidth >= 420 ? 6 : 4;
+        final double runSpacing = 6;
+        final int columnCount = constraints.maxWidth >= 640 ? 3 : 2;
+        final double bubbleWidth =
+            (constraints.maxWidth - (columnSpacing * (columnCount - 1))) /
+            columnCount;
+        final List<List<int>> columns = _buildReaderCommentColumns(
+          context,
+          comments,
+          bubbleWidth: bubbleWidth,
+          columnCount: columnCount,
+          runSpacing: runSpacing,
+        );
+        final Widget cloud = Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              for (
+                int columnIndex = 0;
+                columnIndex < columns.length;
+                columnIndex++
+              ) ...<Widget>[
+                if (columnIndex > 0) SizedBox(width: columnSpacing),
+                SizedBox(
+                  width: bubbleWidth,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      for (
+                        int itemIndex = 0;
+                        itemIndex < columns[columnIndex].length;
+                        itemIndex++
+                      ) ...<Widget>[
+                        _buildReaderCommentBubble(
+                          context,
+                          comments[columns[columnIndex][itemIndex]],
+                          index: columns[columnIndex][itemIndex],
+                          width: bubbleWidth,
+                        ),
+                        if (itemIndex < columns[columnIndex].length - 1)
+                          SizedBox(height: runSpacing),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ],
           ),
         );
-        final Widget scrollView = SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: cloud,
-        );
-        if (!absorbScrollNotifications) {
-          return scrollView;
-        }
-        return NotificationListener<ScrollNotification>(
-          onNotification: (ScrollNotification notification) => true,
-          child: scrollView,
+        return ClipRect(
+          child: Stack(
+            children: <Widget>[
+              IgnorePointer(
+                ignoring: true,
+                child: CustomScrollView(
+                  controller: _readerCommentScrollController,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  slivers: <Widget>[
+                    SliverToBoxAdapter(child: cloud),
+                  ],
+                ),
+              ),
+              _buildReaderCommentScrollStrip(enabled: true),
+            ],
+          ),
         );
       },
     );
+  }
+
+  List<List<int>> _buildReaderCommentColumns(
+    BuildContext context,
+    List<ChapterComment> comments, {
+    required double bubbleWidth,
+    required int columnCount,
+    required double runSpacing,
+  }) {
+    final List<List<int>> columns = List<List<int>>.generate(
+      columnCount,
+      (_) => <int>[],
+    );
+    final List<double> heights = List<double>.filled(columnCount, 0);
+    for (int index = 0; index < comments.length; index++) {
+      int targetColumn = 0;
+      for (int column = 1; column < columnCount; column++) {
+        if (heights[column] < heights[targetColumn]) {
+          targetColumn = column;
+        }
+      }
+      columns[targetColumn].add(index);
+      heights[targetColumn] += _estimateReaderCommentBubbleHeight(
+        context,
+        comments[index],
+        bubbleWidth: bubbleWidth,
+      );
+      if (columns[targetColumn].length > 1) {
+        heights[targetColumn] += runSpacing;
+      }
+    }
+    return columns;
+  }
+
+  double _estimateReaderCommentBubbleHeight(
+    BuildContext context,
+    ChapterComment comment, {
+    required double bubbleWidth,
+  }) {
+    const double horizontalPadding = 14;
+    const double verticalPadding = 12;
+    const double avatarAndGapWidth = 30;
+    final double textMaxWidth = (bubbleWidth -
+            horizontalPadding -
+            avatarAndGapWidth)
+        .clamp(44.0, bubbleWidth)
+        .toDouble();
+    final TextPainter painter = TextPainter(
+      text: TextSpan(
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          height: 1.25,
+        ),
+        children: <InlineSpan>[
+          TextSpan(text: comment.message),
+          if (comment.likeCount != null)
+            TextSpan(
+              text: ' ${comment.likeCount}',
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                height: 1.25,
+              ),
+            ),
+        ],
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout(maxWidth: textMaxWidth);
+    final double contentHeight = painter.height > 24 ? painter.height : 24;
+    return contentHeight + verticalPadding;
   }
 
   Widget _buildReaderCommentBubble(
     BuildContext context,
     ChapterComment comment, {
     required int index,
-    required double maxWidth,
+    required double width,
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final List<Color> bubbleColors = <Color>[
@@ -974,46 +1131,47 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
             Brightness.dark
         ? Colors.white
         : colorScheme.onSurface;
-    return ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: maxWidth),
+    final TextStyle messageStyle = TextStyle(
+      color: foregroundColor,
+      fontSize: 12,
+      fontWeight: FontWeight.w700,
+      height: 1.25,
+    );
+    final TextStyle likeStyle = TextStyle(
+      color: foregroundColor.withValues(alpha: 0.74),
+      fontSize: 10,
+      fontWeight: FontWeight.w800,
+      height: 1.25,
+    );
+    return SizedBox(
+      width: width,
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: backgroundColor,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(15),
         ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 7, 8, 7),
+          padding: const EdgeInsets.fromLTRB(7, 6, 7, 6),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize: MainAxisSize.max,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               _buildReaderCommentAvatar(comment.avatarUrl),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 4,
-                  runSpacing: 4,
-                  children: <Widget>[
-                    Text(
-                      comment.message,
-                      style: TextStyle(
-                        color: foregroundColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        height: 1.25,
-                      ),
-                    ),
-                    if (comment.likeCount != null)
-                      Text(
-                        '${comment.likeCount}',
-                        style: TextStyle(
-                          color: foregroundColor.withValues(alpha: 0.74),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
+              const SizedBox(width: 6),
+              Expanded(
+                child: RichText(
+                  textScaler: MediaQuery.textScalerOf(context),
+                  text: TextSpan(
+                    style: messageStyle,
+                    children: <InlineSpan>[
+                      TextSpan(text: comment.message),
+                      if (comment.likeCount != null)
+                        TextSpan(
+                          text: ' ${comment.likeCount}',
+                          style: likeStyle,
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -1270,6 +1428,173 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         ),
       ),
     );
+  }
+}
+
+class _ReaderChapterImage extends StatefulWidget {
+  const _ReaderChapterImage({
+    super.key,
+    required this.imageProvider,
+    required this.fit,
+    required this.onResolvedAspectRatio,
+    this.viewportHeight,
+    this.aspectRatio,
+  });
+
+  final ImageProvider<Object> imageProvider;
+  final BoxFit fit;
+  final ValueChanged<double> onResolvedAspectRatio;
+  final double? viewportHeight;
+  final double? aspectRatio;
+
+  @override
+  State<_ReaderChapterImage> createState() => _ReaderChapterImageState();
+}
+
+class _ReaderChapterImageState extends State<_ReaderChapterImage> {
+  ImageStream? _imageStream;
+  ImageStreamListener? _imageStreamListener;
+  bool _hasFrame = false;
+  bool _hasError = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _resolveImage();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReaderChapterImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.imageProvider != widget.imageProvider) {
+      _hasFrame = false;
+      _hasError = false;
+      _resolveImage(force: true);
+      return;
+    }
+    if (oldWidget.aspectRatio != widget.aspectRatio &&
+        widget.aspectRatio != null &&
+        !_hasFrame) {
+      setState(() {
+        _hasFrame = true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _detachImageStream();
+    super.dispose();
+  }
+
+  void _resolveImage({bool force = false}) {
+    final ImageStream newStream = widget.imageProvider.resolve(
+      createLocalImageConfiguration(context),
+    );
+    if (!force && _imageStream?.key == newStream.key) {
+      return;
+    }
+    _detachImageStream();
+    _imageStream = newStream;
+    _imageStreamListener = ImageStreamListener(
+      (ImageInfo imageInfo, bool synchronousCall) {
+        final int width = imageInfo.image.width;
+        final int height = imageInfo.image.height;
+        if (width > 0 && height > 0) {
+          widget.onResolvedAspectRatio(width / height);
+        }
+        if (!mounted || _hasFrame) {
+          return;
+        }
+        setState(() {
+          _hasFrame = true;
+          _hasError = false;
+        });
+      },
+      onError: (Object error, StackTrace? stackTrace) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _hasError = true;
+        });
+      },
+    );
+    _imageStream!.addListener(_imageStreamListener!);
+  }
+
+  void _detachImageStream() {
+    final ImageStream? imageStream = _imageStream;
+    final ImageStreamListener? imageStreamListener = _imageStreamListener;
+    if (imageStream != null && imageStreamListener != null) {
+      imageStream.removeListener(imageStreamListener);
+    }
+    _imageStream = null;
+    _imageStreamListener = null;
+  }
+
+  Widget _buildLoadingBox() {
+    return Center(
+      child: CircularProgressIndicator(
+        strokeWidth: widget.viewportHeight == null ? 2.4 : 3,
+      ),
+    );
+  }
+
+  Widget _buildErrorBox() {
+    return const Center(child: Icon(Icons.broken_image_outlined, size: 36));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final double resolvedAspectRatio = widget.aspectRatio ?? 0.72;
+    final Widget image = Image(
+      image: widget.imageProvider,
+      fit: widget.fit,
+      width: double.infinity,
+      height: widget.viewportHeight,
+      gaplessPlayback: true,
+      errorBuilder:
+          (BuildContext context, Object error, StackTrace? stackTrace) {
+            return SizedBox(
+              height: widget.viewportHeight,
+              child: _buildErrorBox(),
+            );
+          },
+      frameBuilder:
+          (
+            BuildContext context,
+            Widget child,
+            int? frame,
+            bool wasSynchronouslyLoaded,
+          ) {
+            final bool isLoaded =
+                wasSynchronouslyLoaded || frame != null || _hasFrame;
+            if (widget.viewportHeight != null) {
+              return SizedBox(
+                height: widget.viewportHeight,
+                child: isLoaded ? child : _buildLoadingBox(),
+              );
+            }
+            return AspectRatio(
+              aspectRatio: resolvedAspectRatio,
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  Positioned.fill(
+                    child: isLoaded
+                        ? child
+                        : (_hasError ? _buildErrorBox() : _buildLoadingBox()),
+                  ),
+                ],
+              ),
+            );
+          },
+    );
+    if (widget.viewportHeight != null) {
+      return image;
+    }
+    return RepaintBoundary(child: image);
   }
 }
 
