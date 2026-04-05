@@ -733,7 +733,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   }) {
     final List<ChapterComment> comments = _readerCommentsChapterId ==
             _readerChapterIdForPage(page)
-        ? _readerChapterComments.take(28).toList(growable: false)
+        ? _readerChapterComments
         : const <ChapterComment>[];
     final Size screenSize = MediaQuery.sizeOf(context);
     final bool isPagedCommentPage = minHeight > 0;

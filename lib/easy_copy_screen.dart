@@ -175,6 +175,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   bool _isReaderExitTransitionActive = false;
   bool _isReaderNextChapterLoading = false;
   bool _isReaderCommentsLoading = false;
+  bool _isReaderCommentsLoadingMore = false;
   bool _isReaderCommentSubmitting = false;
   bool _readerPresentationSyncScheduled = false;
   bool _suspendStandardScrollTracking = false;
@@ -183,6 +184,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   String _detailChapterStateRouteKey = '';
   String _readerCommentsChapterId = '';
   String _readerCommentsError = '';
+  int _readerCommentsTotal = 0;
   int _currentReaderPageIndex = 0;
   int _currentVisibleReaderImageIndex = 0;
   double _readerPreviousChapterPullDistance = 0;
@@ -255,6 +257,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _preferencesController.addListener(_handlePreferencesChanged);
     _standardScrollController.addListener(_handleStandardScroll);
     _readerScrollController.addListener(_handleReaderScroll);
+    _readerCommentScrollController.addListener(_handleReaderCommentScroll);
     if (_readerPlatformBridge.isAndroidSupported) {
       _batterySubscription = _readerPlatformBridge.batteryStream.listen((
         int level,
@@ -286,6 +289,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _preferencesController.removeListener(_handlePreferencesChanged);
     _standardScrollController.removeListener(_handleStandardScroll);
     _readerScrollController.removeListener(_handleReaderScroll);
+    _readerCommentScrollController.removeListener(_handleReaderCommentScroll);
     _disposeReaderPagedScrollControllers();
     _readerPageController.dispose();
     _searchController.dispose();
@@ -3093,6 +3097,27 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         _readerChapterIdForPage(page).isNotEmpty;
   }
 
+  void _handleReaderCommentScroll() {
+    if (!_readerCommentScrollController.hasClients ||
+        _isReaderCommentsLoading ||
+        _isReaderCommentsLoadingMore) {
+      return;
+    }
+    final EasyCopyPage? currentPage = _page;
+    if (currentPage is! ReaderPageData ||
+        !_shouldShowReaderCommentTailPage(currentPage)) {
+      return;
+    }
+    final ScrollPosition position = _readerCommentScrollController.position;
+    if (position.maxScrollExtent <= 0) {
+      return;
+    }
+    if (position.maxScrollExtent - position.pixels > 180) {
+      return;
+    }
+    unawaited(_loadReaderComments(currentPage, append: true));
+  }
+
   int _readerPagedPageCount(ReaderPageData page) {
     return page.imageUrls.length + (_shouldShowReaderCommentTailPage(page) ? 1 : 0);
   }
@@ -3108,7 +3133,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
           _readerCommentsChapterId = '';
           _readerCommentsError = '';
           _readerChapterComments = const <ChapterComment>[];
+          _readerCommentsTotal = 0;
           _isReaderCommentsLoading = false;
+          _isReaderCommentsLoadingMore = false;
           if (resetForNewChapter) {
             _readerCommentController.clear();
           }
@@ -3117,7 +3144,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         _readerCommentsChapterId = '';
         _readerCommentsError = '';
         _readerChapterComments = const <ChapterComment>[];
+        _readerCommentsTotal = 0;
         _isReaderCommentsLoading = false;
+        _isReaderCommentsLoadingMore = false;
         if (resetForNewChapter) {
           _readerCommentController.clear();
         }
@@ -3142,7 +3171,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     unawaited(_loadReaderComments(page));
   }
 
-  Future<void> _loadReaderComments(ReaderPageData page) async {
+  Future<void> _loadReaderComments(
+    ReaderPageData page, {
+    bool append = false,
+  }) async {
     final String chapterId = _readerChapterIdForPage(page);
     if (chapterId.isEmpty || !_readerPreferences.showChapterComments) {
       return;
@@ -3155,24 +3187,49 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       }
     }
 
-    if (mounted) {
+    final List<ChapterComment> existingComments =
+        append && _readerCommentsChapterId == chapterId
+        ? _readerChapterComments
+        : const <ChapterComment>[];
+    final int offset = append ? existingComments.length : 0;
+    if (append) {
+      if (_isReaderCommentsLoading || _isReaderCommentsLoadingMore) {
+        return;
+      }
+      if (_readerCommentsTotal > 0 && offset >= _readerCommentsTotal) {
+        return;
+      }
+    }
+
+    if (!append && mounted) {
       _setStateIfMounted(() {
         _readerCommentsChapterId = chapterId;
         _readerCommentsError = '';
         _readerChapterComments = const <ChapterComment>[];
+        _readerCommentsTotal = 0;
         _isReaderCommentsLoading = true;
+        _isReaderCommentsLoadingMore = false;
       });
-    } else {
+    } else if (!append) {
       _readerCommentsChapterId = chapterId;
       _readerCommentsError = '';
       _readerChapterComments = const <ChapterComment>[];
+      _readerCommentsTotal = 0;
       _isReaderCommentsLoading = true;
+      _isReaderCommentsLoadingMore = false;
+    } else if (mounted) {
+      _setStateIfMounted(() {
+        _isReaderCommentsLoadingMore = true;
+      });
+    } else {
+      _isReaderCommentsLoadingMore = true;
     }
 
     try {
       final ChapterCommentFeed feed = await _siteApiClient.loadChapterComments(
         chapterId: chapterId,
         limit: 40,
+        offset: offset,
       );
       if (!mounted) {
         return;
@@ -3183,15 +3240,22 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         if (_readerCommentsChapterId == chapterId) {
           _setStateIfMounted(() {
             _isReaderCommentsLoading = false;
+            _isReaderCommentsLoadingMore = false;
           });
         }
         return;
       }
       _setStateIfMounted(() {
         _readerCommentsChapterId = chapterId;
-        _readerChapterComments = feed.comments;
+        _readerChapterComments = append
+            ? _mergeReaderComments(existingComments, feed.comments)
+            : feed.comments;
+        _readerCommentsTotal = feed.total > 0
+            ? feed.total
+            : _readerChapterComments.length;
         _readerCommentsError = '';
         _isReaderCommentsLoading = false;
+        _isReaderCommentsLoadingMore = false;
       });
     } catch (error) {
       if (!mounted) {
@@ -3203,6 +3267,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         if (_readerCommentsChapterId == chapterId) {
           _setStateIfMounted(() {
             _isReaderCommentsLoading = false;
+            _isReaderCommentsLoadingMore = false;
           });
         }
         return;
@@ -3210,13 +3275,43 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       final String message = error is SiteApiException
           ? error.message
           : '评论加载失败，请稍后重试。';
+      if (append && existingComments.isNotEmpty) {
+        _setStateIfMounted(() {
+          _isReaderCommentsLoading = false;
+          _isReaderCommentsLoadingMore = false;
+        });
+        return;
+      }
       _setStateIfMounted(() {
         _readerCommentsChapterId = chapterId;
         _readerCommentsError = message;
         _readerChapterComments = const <ChapterComment>[];
+        _readerCommentsTotal = 0;
         _isReaderCommentsLoading = false;
+        _isReaderCommentsLoadingMore = false;
       });
     }
+  }
+
+  List<ChapterComment> _mergeReaderComments(
+    List<ChapterComment> existing,
+    List<ChapterComment> incoming,
+  ) {
+    final Set<String> seen = <String>{};
+    final List<ChapterComment> merged = <ChapterComment>[];
+    for (final ChapterComment comment in <ChapterComment>[
+      ...existing,
+      ...incoming,
+    ]) {
+      final String identity = comment.id.isNotEmpty
+          ? comment.id
+          : '${comment.avatarUrl}\n${comment.message}';
+      if (!seen.add(identity)) {
+        continue;
+      }
+      merged.add(comment);
+    }
+    return List<ChapterComment>.unmodifiable(merged);
   }
 
   Future<void> _submitReaderComment(ReaderPageData page) async {

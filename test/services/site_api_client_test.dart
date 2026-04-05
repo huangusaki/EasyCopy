@@ -28,6 +28,7 @@ void main() {
           expect(request.url.path, '/api/v3/roasts');
           expect(request.url.queryParameters['chapter_id'], 'chapter-123');
           expect(request.url.queryParameters['limit'], '3');
+          expect(request.url.queryParameters['offset'], '0');
           return http.Response(
             jsonEncode(<String, Object?>{
               'code': 200,
@@ -37,13 +38,13 @@ void main() {
                 'list': <Map<String, Object?>>[
                   <String, Object?>{
                     'id': 101,
-                  'comment': '第一条评论',
+                    'comment': '第一条评论',
                     'user_avatar': 'https://example.com/a.png',
                     'like_count': 7,
                   },
                   <String, Object?>{
                     'id': 102,
-                  'comment': '第二条评论',
+                    'comment': '第二条评论',
                     'user_avatar': 'https://example.com/b.png',
                   },
                 ],
@@ -65,10 +66,54 @@ void main() {
       expect(feed.total, 2);
       expect(feed.comments, hasLength(2));
       expect(feed.comments.first.id, '101');
-    expect(feed.comments.first.message, '第一条评论');
+      expect(feed.comments.first.message, '第一条评论');
       expect(feed.comments.first.avatarUrl, 'https://example.com/a.png');
       expect(feed.comments.first.likeCount, 7);
       expect(feed.comments.last.likeCount, isNull);
+    });
+
+    test('loads chapter comments with pagination offset', () async {
+      final SiteApiClient client = SiteApiClient(
+        session: session,
+        client: MockClient((http.Request request) async {
+          expect(request.method, 'GET');
+          expect(request.url.host, 'api.mangacopy.com');
+          expect(request.url.path, '/api/v3/roasts');
+          expect(request.url.queryParameters['chapter_id'], 'chapter-456');
+          expect(request.url.queryParameters['limit'], '40');
+          expect(request.url.queryParameters['offset'], '80');
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'code': 200,
+              'message': 'ok',
+              'results': <String, Object?>{
+                'total': 120,
+                'list': <Map<String, Object?>>[
+                  <String, Object?>{
+                    'id': 201,
+                    'comment': '分页评论',
+                  },
+                ],
+              },
+            }),
+            200,
+            headers: const <String, String>{
+              'content-type': 'application/json',
+            },
+          );
+        }),
+      );
+
+      final feed = await client.loadChapterComments(
+        chapterId: 'chapter-456',
+        limit: 40,
+        offset: 80,
+      );
+
+      expect(feed.total, 120);
+      expect(feed.comments, hasLength(1));
+      expect(feed.comments.single.id, '201');
+      expect(feed.comments.single.message, '分页评论');
     });
 
     test('posts chapter comment with auth token and roast payload', () async {
@@ -85,7 +130,7 @@ void main() {
           expect(request.url.path, '/api/v3/member/roast');
           expect(request.headers['authorization'], 'Token token-123');
           expect(request.bodyFields['chapter_id'], 'chapter-456');
-    expect(request.bodyFields['roast'], '尾页评论');
+          expect(request.bodyFields['roast'], '尾页评论');
           expect(request.bodyFields['_update'], 'true');
           return http.Response(
             jsonEncode(<String, Object?>{
@@ -102,7 +147,7 @@ void main() {
 
       await client.postChapterComment(
         chapterId: 'chapter-456',
-      content: '尾页评论',
+        content: '尾页评论',
       );
     });
   });
