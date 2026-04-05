@@ -1,6 +1,9 @@
 part of '../easy_copy_screen.dart';
 
 extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
+  bool get _readerPreviousChapterPullReady =>
+      _readerPreviousChapterPullDistance >= _readerNextChapterTriggerDistance;
+
   bool get _readerNextChapterPullReady =>
       _readerNextChapterPullDistance >= _readerNextChapterTriggerDistance;
 
@@ -328,6 +331,25 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
         tolerance;
   }
 
+  bool _readerScrollControllerAtTop(
+    ScrollController controller, {
+    double tolerance = 1,
+  }) {
+    if (!controller.hasClients) {
+      return false;
+    }
+    return controller.position.pixels - controller.position.minScrollExtent <=
+        tolerance;
+  }
+
+  bool _readerMetricsNearChapterStart(
+    ScrollMetrics metrics, {
+    required Axis axis,
+    double threshold = _readerNextChapterPullActivationExtent,
+  }) {
+    return metrics.axis == axis && metrics.extentBefore <= threshold;
+  }
+
   bool _readerMetricsNearChapterEnd(
     ScrollMetrics metrics, {
     required Axis axis,
@@ -380,6 +402,38 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
     });
   }
 
+  void _updateReaderPreviousChapterPullDistance(double distance) {
+    final double triggerDistance = _readerNextChapterTriggerDistance;
+    final double clampedDistance = distance
+        .clamp(0, triggerDistance * 1.6)
+        .toDouble();
+    final bool nextReady = clampedDistance >= triggerDistance;
+    if ((_readerPreviousChapterPullDistance - clampedDistance).abs() < 0.5 &&
+        _readerPreviousChapterPullReady == nextReady) {
+      return;
+    }
+    if (!mounted) {
+      _readerPreviousChapterPullDistance = clampedDistance;
+      return;
+    }
+    _setStateIfMounted(() {
+      _readerPreviousChapterPullDistance = clampedDistance;
+    });
+  }
+
+  void _clearReaderPreviousChapterPullState() {
+    if (_readerPreviousChapterPullDistance <= 0) {
+      return;
+    }
+    if (!mounted) {
+      _readerPreviousChapterPullDistance = 0;
+      return;
+    }
+    _setStateIfMounted(() {
+      _readerPreviousChapterPullDistance = 0;
+    });
+  }
+
   void _clearReaderNextChapterPullState() {
     if (_readerNextChapterPullDistance <= 0) {
       return;
@@ -393,19 +447,62 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
     });
   }
 
-  void _resetReaderNextChapterState() {
-    if (_readerNextChapterPullDistance <= 0 && !_isReaderNextChapterLoading) {
+  void _resetReaderChapterBoundaryState() {
+    if (_readerPreviousChapterPullDistance <= 0 &&
+        _readerNextChapterPullDistance <= 0 &&
+        !_isReaderNextChapterLoading) {
       return;
     }
     if (!mounted) {
+      _readerPreviousChapterPullDistance = 0;
       _readerNextChapterPullDistance = 0;
       _isReaderNextChapterLoading = false;
       return;
     }
     _setStateIfMounted(() {
+      _readerPreviousChapterPullDistance = 0;
       _readerNextChapterPullDistance = 0;
       _isReaderNextChapterLoading = false;
     });
+  }
+
+  Future<void> _triggerReaderPreviousChapter(ReaderPageData page) async {
+    final String prevHref = page.prevHref.trim();
+    if (prevHref.isEmpty || _isReaderNextChapterLoading) {
+      _clearReaderPreviousChapterPullState();
+      return;
+    }
+    final String currentReaderUri = page.uri;
+    if (!mounted) {
+      _isReaderNextChapterLoading = true;
+    } else {
+      _setStateIfMounted(() {
+        _isReaderNextChapterLoading = true;
+      });
+    }
+    _persistCurrentReaderProgress();
+    try {
+      await _openHref(
+        prevHref,
+        nextHref: page.uri,
+        catalogHref: page.catalogHref,
+        sourceTabIndex: _selectedIndex,
+      );
+    } finally {
+      if (!mounted) {
+        _isReaderNextChapterLoading = false;
+        _readerPreviousChapterPullDistance = 0;
+      } else {
+        final EasyCopyPage? currentPage = _page;
+        if (currentPage is ReaderPageData &&
+            currentPage.uri == currentReaderUri) {
+          _setStateIfMounted(() {
+            _isReaderNextChapterLoading = false;
+            _readerPreviousChapterPullDistance = 0;
+          });
+        }
+      }
+    }
   }
 
   Future<void> _triggerReaderNextChapter(ReaderPageData page) async {
@@ -453,29 +550,49 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
     required ScrollController controller,
     Axis axis = Axis.vertical,
   }) {
-    if (page.nextHref.trim().isEmpty ||
+    final bool hasPreviousChapter = page.prevHref.trim().isNotEmpty;
+    final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
+    if ((!hasPreviousChapter && !hasNextChapter) ||
         notification.depth != 0 ||
         notification.metrics.axis != axis ||
         _isReaderNextChapterLoading) {
       if (!_isReaderNextChapterLoading) {
+        _clearReaderPreviousChapterPullState();
         _clearReaderNextChapterPullState();
       }
       return;
     }
 
+    final bool nearChapterStart =
+        hasPreviousChapter &&
+        (_readerMetricsNearChapterStart(notification.metrics, axis: axis) ||
+            _readerScrollControllerAtTop(
+              controller,
+              tolerance: _readerNextChapterPullActivationExtent,
+            ));
     final bool nearChapterEnd =
-        _readerMetricsNearChapterEnd(notification.metrics, axis: axis) ||
-        _readerScrollControllerAtBottom(
-          controller,
-          tolerance: _readerNextChapterPullActivationExtent,
-        );
+        hasNextChapter &&
+        (_readerMetricsNearChapterEnd(notification.metrics, axis: axis) ||
+            _readerScrollControllerAtBottom(
+              controller,
+              tolerance: _readerNextChapterPullActivationExtent,
+            ));
 
     if (notification is OverscrollNotification) {
       final double dragDelta = notification.dragDetails?.primaryDelta ?? 0;
       if (_readerIsNextChapterForwardDrag(dragDelta, axis: axis) &&
           nearChapterEnd) {
+        _clearReaderPreviousChapterPullState();
         _updateReaderNextChapterPullDistance(
           _readerNextChapterPullDistance + dragDelta.abs(),
+        );
+        return;
+      }
+      if (_readerIsNextChapterBackwardDrag(dragDelta, axis: axis) &&
+          nearChapterStart) {
+        _clearReaderNextChapterPullState();
+        _updateReaderPreviousChapterPullDistance(
+          _readerPreviousChapterPullDistance + dragDelta.abs(),
         );
         return;
       }
@@ -484,8 +601,18 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
         _updateReaderNextChapterPullDistance(
           _readerNextChapterPullDistance - dragDelta.abs(),
         );
-      } else if (!nearChapterEnd) {
-        _clearReaderNextChapterPullState();
+      } else if (_readerIsNextChapterForwardDrag(dragDelta, axis: axis) &&
+          _readerPreviousChapterPullDistance > 0) {
+        _updateReaderPreviousChapterPullDistance(
+          _readerPreviousChapterPullDistance - dragDelta.abs(),
+        );
+      } else {
+        if (!nearChapterStart) {
+          _clearReaderPreviousChapterPullState();
+        }
+        if (!nearChapterEnd) {
+          _clearReaderNextChapterPullState();
+        }
       }
       return;
     }
@@ -493,6 +620,9 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
     if (notification is ScrollUpdateNotification) {
       final DragUpdateDetails? dragDetails = notification.dragDetails;
       if (dragDetails == null) {
+        if (!_readerScrollControllerAtTop(controller)) {
+          _clearReaderPreviousChapterPullState();
+        }
         if (!_readerScrollControllerAtBottom(controller)) {
           _clearReaderNextChapterPullState();
         }
@@ -501,24 +631,44 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
       final double dragDelta = dragDetails.primaryDelta ?? 0;
       if (_readerIsNextChapterForwardDrag(dragDelta, axis: axis) &&
           nearChapterEnd) {
+        _clearReaderPreviousChapterPullState();
         _updateReaderNextChapterPullDistance(
           _readerNextChapterPullDistance + dragDelta.abs(),
+        );
+      } else if (_readerIsNextChapterBackwardDrag(dragDelta, axis: axis) &&
+          nearChapterStart) {
+        _clearReaderNextChapterPullState();
+        _updateReaderPreviousChapterPullDistance(
+          _readerPreviousChapterPullDistance + dragDelta.abs(),
         );
       } else if (_readerIsNextChapterBackwardDrag(dragDelta, axis: axis) &&
           _readerNextChapterPullDistance > 0) {
         _updateReaderNextChapterPullDistance(
           _readerNextChapterPullDistance - dragDelta.abs(),
         );
-      } else if (!nearChapterEnd) {
-        _clearReaderNextChapterPullState();
+      } else if (_readerIsNextChapterForwardDrag(dragDelta, axis: axis) &&
+          _readerPreviousChapterPullDistance > 0) {
+        _updateReaderPreviousChapterPullDistance(
+          _readerPreviousChapterPullDistance - dragDelta.abs(),
+        );
+      } else {
+        if (!nearChapterStart) {
+          _clearReaderPreviousChapterPullState();
+        }
+        if (!nearChapterEnd) {
+          _clearReaderNextChapterPullState();
+        }
       }
       return;
     }
 
     if (notification is ScrollEndNotification) {
-      if (_readerNextChapterPullReady) {
+      if (_readerPreviousChapterPullReady) {
+        unawaited(_triggerReaderPreviousChapter(page));
+      } else if (_readerNextChapterPullReady) {
         unawaited(_triggerReaderNextChapter(page));
       } else {
+        _clearReaderPreviousChapterPullState();
         _clearReaderNextChapterPullState();
       }
       return;
@@ -526,14 +676,20 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
 
     if (notification is UserScrollNotification &&
         notification.direction == ScrollDirection.idle) {
-      if (_readerNextChapterPullReady) {
+      if (_readerPreviousChapterPullReady) {
+        unawaited(_triggerReaderPreviousChapter(page));
+      } else if (_readerNextChapterPullReady) {
         unawaited(_triggerReaderNextChapter(page));
       } else {
+        _clearReaderPreviousChapterPullState();
         _clearReaderNextChapterPullState();
       }
       return;
     }
 
+    if (!nearChapterStart) {
+      _clearReaderPreviousChapterPullState();
+    }
     if (!nearChapterEnd) {
       _clearReaderNextChapterPullState();
     }

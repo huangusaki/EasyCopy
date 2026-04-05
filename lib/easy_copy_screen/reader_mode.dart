@@ -749,16 +749,13 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       children: <Widget>[
         ConstrainedBox(
           constraints: BoxConstraints(maxHeight: commentCloudMaxHeight),
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: _buildReaderCommentCloud(
-              context,
-              page,
-              comments: comments,
-            ),
+          child: _buildReaderCommentCloud(
+            context,
+            page,
+            comments: comments,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         _buildReaderCommentComposer(context, page),
       ],
     );
@@ -966,149 +963,186 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     }
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final double columnSpacing = constraints.maxWidth >= 420 ? 6 : 4;
-        final double runSpacing = 6;
-        final int columnCount = constraints.maxWidth >= 640 ? 3 : 2;
-        final double bubbleWidth =
-            (constraints.maxWidth - (columnSpacing * (columnCount - 1))) /
-            columnCount;
-        final List<List<int>> columns = _buildReaderCommentColumns(
+        final _ReaderCommentCloudLayout layout = _buildReaderCommentCloudLayout(
           context,
           comments,
-          bubbleWidth: bubbleWidth,
-          columnCount: columnCount,
-          runSpacing: runSpacing,
+          maxWidth: constraints.maxWidth,
         );
+        final double contentHeight = layout.height + 8;
+        final double maxViewportHeight = constraints.hasBoundedHeight
+            ? constraints.maxHeight
+            : contentHeight;
+        final double viewportHeight = math.min(contentHeight, maxViewportHeight);
+        final bool canScroll = contentHeight > viewportHeight + 0.5;
         final Widget cloud = Padding(
           padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              for (
-                int columnIndex = 0;
-                columnIndex < columns.length;
-                columnIndex++
-              ) ...<Widget>[
-                if (columnIndex > 0) SizedBox(width: columnSpacing),
-                SizedBox(
-                  width: bubbleWidth,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      for (
-                        int itemIndex = 0;
-                        itemIndex < columns[columnIndex].length;
-                        itemIndex++
-                      ) ...<Widget>[
-                        _buildReaderCommentBubble(
-                          context,
-                          comments[columns[columnIndex][itemIndex]],
-                          index: columns[columnIndex][itemIndex],
-                          width: bubbleWidth,
-                        ),
-                        if (itemIndex < columns[columnIndex].length - 1)
-                          SizedBox(height: runSpacing),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ],
+          child: SizedBox(
+            width: constraints.maxWidth,
+            height: layout.height,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: layout.placements
+                  .map(
+                    (_ReaderCommentBubblePlacement placement) => Positioned(
+                      left: placement.left,
+                      top: placement.top,
+                      child: _buildReaderCommentBubble(
+                        context,
+                        comments[placement.index],
+                        index: placement.index,
+                        width: placement.width,
+                      ),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
           ),
         );
-        return ClipRect(
-          child: Stack(
-            children: <Widget>[
-              IgnorePointer(
-                ignoring: true,
-                child: CustomScrollView(
-                  controller: _readerCommentScrollController,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  slivers: <Widget>[
-                    SliverToBoxAdapter(child: cloud),
-                  ],
+        return SizedBox(
+          height: viewportHeight,
+          child: ClipRect(
+            child: Stack(
+              children: <Widget>[
+                IgnorePointer(
+                  ignoring: true,
+                  child: SingleChildScrollView(
+                    controller: _readerCommentScrollController,
+                    physics: const NeverScrollableScrollPhysics(),
+                    child: cloud,
+                  ),
                 ),
-              ),
-              _buildReaderCommentScrollStrip(enabled: true),
-            ],
+                _buildReaderCommentScrollStrip(enabled: canScroll),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
-  List<List<int>> _buildReaderCommentColumns(
+  _ReaderCommentCloudLayout _buildReaderCommentCloudLayout(
     BuildContext context,
     List<ChapterComment> comments, {
-    required double bubbleWidth,
-    required int columnCount,
-    required double runSpacing,
+    required double maxWidth,
   }) {
-    final List<List<int>> columns = List<List<int>>.generate(
-      columnCount,
-      (_) => <int>[],
+    final double availableWidth =
+        maxWidth.clamp(120.0, double.infinity).toDouble();
+    const double slotWidth = 6;
+    const double runSpacing = 6;
+    final double maxBubbleWidth = availableWidth >= 420
+        ? availableWidth * 0.58
+        : availableWidth * 0.74;
+    final double minBubbleWidth = math.min(
+      maxBubbleWidth,
+      availableWidth >= 420 ? 90 : 72,
     );
-    final List<double> heights = List<double>.filled(columnCount, 0);
+    final int slotCount = math.max(1, (availableWidth / slotWidth).floor());
+    final List<double> skyline = List<double>.filled(slotCount, 0);
+    final List<_ReaderCommentBubblePlacement> placements =
+        <_ReaderCommentBubblePlacement>[];
     for (int index = 0; index < comments.length; index++) {
-      int targetColumn = 0;
-      for (int column = 1; column < columnCount; column++) {
-        if (heights[column] < heights[targetColumn]) {
-          targetColumn = column;
-        }
-      }
-      columns[targetColumn].add(index);
-      heights[targetColumn] += _estimateReaderCommentBubbleHeight(
+      final _ReaderCommentBubbleMetrics metrics = _measureReaderCommentBubble(
         context,
         comments[index],
-        bubbleWidth: bubbleWidth,
+        minBubbleWidth: minBubbleWidth,
+        maxBubbleWidth: maxBubbleWidth,
       );
-      if (columns[targetColumn].length > 1) {
-        heights[targetColumn] += runSpacing;
+      final int span = math.max(
+        1,
+        math.min(slotCount, (metrics.width / slotWidth).ceil()),
+      );
+      int bestStart = 0;
+      double bestTop = double.infinity;
+      for (int start = 0; start <= slotCount - span; start++) {
+        double top = 0;
+        for (int offset = 0; offset < span; offset++) {
+          top = math.max(top, skyline[start + offset]);
+        }
+        if (top < bestTop - 0.5 ||
+            ((top - bestTop).abs() < 0.5 && start < bestStart)) {
+          bestTop = top;
+          bestStart = start;
+        }
+      }
+      final double left = bestStart * slotWidth;
+      placements.add(
+        _ReaderCommentBubblePlacement(
+          index: index,
+          left: left,
+          top: bestTop,
+          width: metrics.width,
+        ),
+      );
+      final double nextHeight = bestTop + metrics.height + runSpacing;
+      for (int offset = 0; offset < span; offset++) {
+        skyline[bestStart + offset] = nextHeight;
       }
     }
-    return columns;
+    final double contentHeight = placements.isEmpty
+        ? 0
+        : math.max(0, skyline.reduce(math.max) - runSpacing).toDouble();
+    return _ReaderCommentCloudLayout(
+      height: contentHeight,
+      placements: placements,
+    );
   }
 
-  double _estimateReaderCommentBubbleHeight(
+  _ReaderCommentBubbleMetrics _measureReaderCommentBubble(
     BuildContext context,
     ChapterComment comment, {
-    required double bubbleWidth,
+    required double minBubbleWidth,
+    required double maxBubbleWidth,
   }) {
-    const double horizontalPadding = 14;
-    const double verticalPadding = 12;
-    const double avatarAndGapWidth = 30;
-    final double textMaxWidth = (bubbleWidth -
-            horizontalPadding -
-            avatarAndGapWidth)
-        .clamp(44.0, bubbleWidth)
+    const double horizontalPadding = 12;
+    const double verticalPadding = 10;
+    const double avatarSize = 22;
+    const double avatarGap = 5;
+    final TextScaler textScaler = MediaQuery.textScalerOf(context);
+    final InlineSpan textSpan = TextSpan(
+      style: const TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        height: 1.25,
+      ),
+      children: <InlineSpan>[
+        TextSpan(text: comment.message),
+        if (comment.likeCount != null)
+          TextSpan(
+            text: ' ${comment.likeCount}',
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              height: 1.25,
+            ),
+          ),
+      ],
+    );
+    final TextPainter naturalPainter = TextPainter(
+      text: textSpan,
+      textDirection: Directionality.of(context),
+      textScaler: textScaler,
+    )..layout();
+    final double bubbleWidth = (naturalPainter.width +
+            horizontalPadding +
+            avatarSize +
+            avatarGap)
+        .clamp(minBubbleWidth, maxBubbleWidth)
         .toDouble();
     final TextPainter painter = TextPainter(
-      text: TextSpan(
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          height: 1.25,
-        ),
-        children: <InlineSpan>[
-          TextSpan(text: comment.message),
-          if (comment.likeCount != null)
-            TextSpan(
-              text: ' ${comment.likeCount}',
-              style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                height: 1.25,
-              ),
-            ),
-        ],
-      ),
+      text: textSpan,
       textDirection: Directionality.of(context),
-      textScaler: MediaQuery.textScalerOf(context),
-    )..layout(maxWidth: textMaxWidth);
-    final double contentHeight = painter.height > 24 ? painter.height : 24;
-    return contentHeight + verticalPadding;
+      textScaler: textScaler,
+    )..layout(
+      maxWidth: math.max(
+        18,
+        bubbleWidth - horizontalPadding - avatarSize - avatarGap,
+      ),
+    );
+    final double contentHeight = math.max(avatarSize, painter.height);
+    return _ReaderCommentBubbleMetrics(
+      width: bubbleWidth,
+      height: contentHeight + verticalPadding,
+    );
   }
 
   Widget _buildReaderCommentBubble(
@@ -1148,17 +1182,20 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: backgroundColor,
-          borderRadius: BorderRadius.circular(15),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: foregroundColor.withValues(alpha: 0.06),
+          ),
         ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(7, 6, 7, 6),
+          padding: const EdgeInsets.fromLTRB(6, 5, 6, 5),
           child: Row(
-            mainAxisSize: MainAxisSize.max,
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               _buildReaderCommentAvatar(comment.avatarUrl),
-              const SizedBox(width: 6),
-              Expanded(
+              const SizedBox(width: 5),
+              Flexible(
                 child: RichText(
                   textScaler: MediaQuery.textScalerOf(context),
                   text: TextSpan(
@@ -1184,21 +1221,21 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   Widget _buildReaderCommentAvatar(String avatarUrl) {
     if (avatarUrl.trim().isEmpty) {
       return const CircleAvatar(
-        radius: 12,
-        child: Icon(Icons.person_rounded, size: 14),
+        radius: 11,
+        child: Icon(Icons.person_rounded, size: 13),
       );
     }
     return ClipOval(
       child: CachedNetworkImage(
         imageUrl: avatarUrl,
-        width: 24,
-        height: 24,
+        width: 22,
+        height: 22,
         fit: BoxFit.cover,
         cacheManager: EasyCopyImageCaches.readerCache,
         errorWidget: (BuildContext context, String url, Object error) {
           return const CircleAvatar(
-            radius: 12,
-            child: Icon(Icons.person_rounded, size: 14),
+            radius: 11,
+            child: Icon(Icons.person_rounded, size: 13),
           );
         },
       ),
@@ -1212,8 +1249,9 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     return SizedBox(
       height: _readerPreferences.isPaged ? 92 : 112,
       child: Center(
-        child: _buildReaderNextChapterCue(
+        child: _buildReaderChapterBoundaryCue(
           context,
+          isPrevious: false,
           compact: false,
           forceVisible: true,
         ),
@@ -1225,79 +1263,132 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     BuildContext context,
     ReaderPageData page,
   ) {
-    final bool showIdleCue = _readerPreferences.isPaged
-        ? _currentReaderPageIndex >= _readerPagedPageCount(page) - 1
-        : _readerScrollController.hasClients &&
-              _readerScrollController.position.maxScrollExtent -
-                      _readerScrollController.offset <=
-                  _readerNextChapterPullActivationExtent * 1.5;
-    final bool isVisible =
-        showIdleCue ||
-        _readerNextChapterPullDistance > 0 ||
-        _isReaderNextChapterLoading;
     final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
+    final bool showPreviousCue =
+        _readerPreviousChapterPullDistance > 0 ||
+        (_isReaderNextChapterLoading && _readerPreviousChapterPullDistance > 0);
+    final bool showNextCue =
+        _readerNextChapterPullDistance > 0 ||
+        (_isReaderNextChapterLoading && _readerNextChapterPullDistance > 0);
+    return Positioned.fill(
+      child: Stack(
+        children: <Widget>[
+          if (showPreviousCue)
+            _buildReaderChapterBoundaryCueOverlayEntry(
+              context,
+              isPrevious: true,
+              forceVisible: showPreviousCue,
+              viewPadding: viewPadding,
+            ),
+          if (showNextCue)
+            _buildReaderChapterBoundaryCueOverlayEntry(
+              context,
+              isPrevious: false,
+              forceVisible: showNextCue,
+              viewPadding: viewPadding,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReaderChapterBoundaryCueOverlayEntry(
+    BuildContext context, {
+    required bool isPrevious,
+    required bool forceVisible,
+    required EdgeInsets viewPadding,
+  }) {
     final Alignment alignment;
     final EdgeInsets padding;
     if (_readerPreferences.isPaged) {
       final bool nextOnRight =
           _readerPreferences.readingDirection ==
           ReaderReadingDirection.rightToLeft;
-      alignment = nextOnRight ? Alignment.centerRight : Alignment.centerLeft;
+      final bool placeOnRight = isPrevious ? !nextOnRight : nextOnRight;
+      alignment = placeOnRight ? Alignment.centerRight : Alignment.centerLeft;
       padding = EdgeInsets.only(
-        left: nextOnRight ? 0 : viewPadding.left + 14,
-        right: nextOnRight ? viewPadding.right + 14 : 0,
+        left: placeOnRight ? 0 : viewPadding.left + 14,
+        right: placeOnRight ? viewPadding.right + 14 : 0,
       );
     } else {
-      alignment = Alignment.bottomCenter;
+      alignment = isPrevious ? Alignment.topCenter : Alignment.bottomCenter;
       padding = EdgeInsets.only(
-        bottom: (viewPadding.bottom > 0 ? viewPadding.bottom : 0) + 18,
+        top: isPrevious ? viewPadding.top + 18 : 0,
+        bottom: isPrevious
+            ? 0
+            : (viewPadding.bottom > 0 ? viewPadding.bottom : 0) + 18,
       );
     }
-    return Positioned.fill(
-      child: Align(
-        alignment: alignment,
-        child: Padding(
-          padding: padding,
-          child: _buildReaderNextChapterCue(
-            context,
-            compact: true,
-            forceVisible: isVisible,
-          ),
+    return Align(
+      alignment: alignment,
+      child: Padding(
+        padding: padding,
+        child: _buildReaderChapterBoundaryCue(
+          context,
+          isPrevious: isPrevious,
+          compact: true,
+          forceVisible: forceVisible,
         ),
       ),
     );
   }
 
-  Widget _buildReaderNextChapterCue(
+  Widget _buildReaderChapterBoundaryCue(
     BuildContext context, {
+    required bool isPrevious,
     required bool compact,
     required bool forceVisible,
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final bool isLoading = _isReaderNextChapterLoading;
-    final bool isReady = _readerNextChapterPullReady && !isLoading;
+    final double pullDistance = isPrevious
+        ? _readerPreviousChapterPullDistance
+        : _readerNextChapterPullDistance;
+    final bool isReady = (isPrevious
+            ? _readerPreviousChapterPullReady
+            : _readerNextChapterPullReady) &&
+        !isLoading;
     final double progress =
-        (_readerNextChapterPullDistance / _readerNextChapterTriggerDistance)
+        (pullDistance / _readerNextChapterTriggerDistance)
             .clamp(0, 1)
             .toDouble();
     final bool isVisible = forceVisible || isLoading || progress > 0;
     final IconData directionIcon = switch ((
+      isPrevious,
       _readerPreferences.isPaged,
       _readerPreferences.readingDirection,
     )) {
-      (true, ReaderReadingDirection.leftToRight) => Icons.chevron_left_rounded,
-      (true, ReaderReadingDirection.rightToLeft) =>
+      (false, true, ReaderReadingDirection.leftToRight) =>
+        Icons.chevron_left_rounded,
+      (false, true, ReaderReadingDirection.rightToLeft) =>
         Icons.chevron_right_rounded,
-      _ => Icons.keyboard_arrow_up_rounded,
+      (true, true, ReaderReadingDirection.leftToRight) =>
+        Icons.chevron_right_rounded,
+      (true, true, ReaderReadingDirection.rightToLeft) =>
+        Icons.chevron_left_rounded,
+      (false, true, _) => Icons.chevron_left_rounded,
+      (false, false, _) => Icons.keyboard_arrow_up_rounded,
+      (true, false, _) => Icons.keyboard_arrow_down_rounded,
+      (true, true, _) => Icons.chevron_right_rounded,
     };
     final Axis axis = _readerNextChapterGestureAxis;
-    final double direction = switch ((_readerPreferences.isPaged, axis)) {
-      (false, Axis.vertical) => -1,
-      (true, Axis.horizontal) when
+    final double direction = switch ((
+      isPrevious,
+      _readerPreferences.isPaged,
+      axis,
+    )) {
+      (false, false, Axis.vertical) => -1,
+      (true, false, Axis.vertical) => 1,
+      (false, true, Axis.horizontal) when
           _readerPreferences.readingDirection ==
               ReaderReadingDirection.rightToLeft =>
         1,
-      (true, Axis.horizontal) => -1,
+      (true, true, Axis.horizontal) when
+          _readerPreferences.readingDirection ==
+              ReaderReadingDirection.rightToLeft =>
+        -1,
+      (false, true, Axis.horizontal) => -1,
+      (true, true, Axis.horizontal) => 1,
       _ => -1,
     };
     final double size = compact ? 54 : 72;
@@ -1429,6 +1520,40 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       ),
     );
   }
+}
+
+class _ReaderCommentBubbleMetrics {
+  const _ReaderCommentBubbleMetrics({
+    required this.width,
+    required this.height,
+  });
+
+  final double width;
+  final double height;
+}
+
+class _ReaderCommentBubblePlacement {
+  const _ReaderCommentBubblePlacement({
+    required this.index,
+    required this.left,
+    required this.top,
+    required this.width,
+  });
+
+  final int index;
+  final double left;
+  final double top;
+  final double width;
+}
+
+class _ReaderCommentCloudLayout {
+  const _ReaderCommentCloudLayout({
+    required this.height,
+    required this.placements,
+  });
+
+  final double height;
+  final List<_ReaderCommentBubblePlacement> placements;
 }
 
 class _ReaderChapterImage extends StatefulWidget {

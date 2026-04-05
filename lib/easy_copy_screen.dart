@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:crypto/crypto.dart';
@@ -56,8 +57,8 @@ part 'easy_copy_screen/widgets.dart';
 const Duration _pageFadeTransitionDuration = Duration(milliseconds: 200);
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
 const String _detailAllChapterTabKey = '__detail_all__';
-const double _readerNextChapterPullTriggerDistance = 160;
-const double _readerNextChapterPagedTriggerDistance = 80;
+const double _readerNextChapterPullTriggerDistance = 220;
+const double _readerNextChapterPagedTriggerDistance = 120;
 const double _readerNextChapterPullActivationExtent = 80;
 
 Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
@@ -184,6 +185,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   String _readerCommentsError = '';
   int _currentReaderPageIndex = 0;
   int _currentVisibleReaderImageIndex = 0;
+  double _readerPreviousChapterPullDistance = 0;
   double _readerNextChapterPullDistance = 0;
   final Map<String, double> _readerImageAspectRatios = <String, double>{};
   int? _batteryLevel;
@@ -3054,7 +3056,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     unawaited(_markReaderChapterVisited(page));
     final bool changedPage = previousUri != page.uri;
     if (changedPage || forceRestore) {
-      _resetReaderNextChapterState();
+      _resetReaderChapterBoundaryState();
     }
     if (changedPage) {
       _currentReaderPageIndex = 0;
@@ -3491,7 +3493,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
               ? currentPage.imageUrls.length - 1
               : index)
         : index;
-    _resetReaderNextChapterState();
+    _resetReaderChapterBoundaryState();
     if (!mounted) {
       _currentReaderPageIndex = index;
       _currentVisibleReaderImageIndex = visibleImageIndex;
