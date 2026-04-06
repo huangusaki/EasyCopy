@@ -20,6 +20,7 @@ import 'package:easy_copy/services/discover_filter_selection.dart';
 import 'package:easy_copy/services/display_mode_service.dart';
 import 'package:easy_copy/services/download_storage_service.dart';
 import 'package:easy_copy/services/document_tree_image_provider.dart';
+import 'package:easy_copy/services/document_tree_relative_image_provider.dart';
 import 'package:easy_copy/services/download_queue_store.dart';
 import 'package:easy_copy/services/host_manager.dart';
 import 'package:easy_copy/services/image_cache.dart';
@@ -94,6 +95,7 @@ class _EasyCopyScreenDownloadTaskRunner implements DownloadTaskRunner {
       chapterHref: task.chapterHref,
       chapterLabel: task.chapterLabel,
       coverUrl: task.coverUrl,
+      detailSnapshot: task.detailSnapshot,
       shouldPause: shouldPause,
       shouldCancel: shouldCancel,
       onProgress: onProgress,
@@ -280,8 +282,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _persistCurrentReaderProgress();
     _readerProgressDebounce?.cancel();
+    unawaited(_persistCurrentReaderProgress());
     _readerAutoTurnTimer?.cancel();
     _readerClockTimer?.cancel();
     _batterySubscription?.cancel();
@@ -306,6 +308,17 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(DisplayModeService.requestHighRefreshRate());
+      return;
+    }
+    switch (state) {
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        unawaited(_flushReaderProgressPersistence());
+        return;
+      case AppLifecycleState.resumed:
+        return;
     }
   }
 
@@ -589,7 +602,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         previousPreferences.readingDirection !=
             nextPreferences.readingDirection ||
         previousPreferences.pageFit != nextPreferences.pageFit ||
-        previousPreferences.openingPosition != nextPreferences.openingPosition ||
+        previousPreferences.openingPosition !=
+            nextPreferences.openingPosition ||
         previousPreferences.showChapterComments !=
             nextPreferences.showChapterComments;
     final EasyCopyPage? page = _page;
@@ -1118,6 +1132,59 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     return Uri(path: AppConfig.rewriteToCurrentHost(uri).path).toString();
   }
 
+  Future<void> _persistCachedDetailSnapshot(DetailPageData page) async {
+    final CachedComicDetailSnapshot snapshot = page.toCachedDetailSnapshot();
+    if (snapshot.isEmpty) {
+      return;
+    }
+    _updateCachedComicSnapshotInMemory(page, snapshot);
+    try {
+      await _downloadService.upsertCachedComicDetailSnapshot(page);
+    } catch (_) {
+      return;
+    }
+  }
+
+  void _updateCachedComicSnapshotInMemory(
+    DetailPageData page,
+    CachedComicDetailSnapshot snapshot,
+  ) {
+    final String targetComicKey = _comicQueueKey(page.uri);
+    final int index = _cachedComics.indexWhere((CachedComicLibraryEntry entry) {
+      if (targetComicKey.isNotEmpty &&
+          _comicQueueKey(entry.comicHref) == targetComicKey) {
+        return true;
+      }
+      return entry.comicTitle == page.title;
+    });
+    if (index == -1) {
+      return;
+    }
+
+    final CachedComicLibraryEntry current = _cachedComics[index];
+    final CachedComicLibraryEntry next = current.copyWith(
+      comicTitle: page.title.isEmpty ? current.comicTitle : page.title,
+      comicHref: page.uri.isEmpty ? current.comicHref : page.uri,
+      coverUrl: page.coverUrl.isEmpty ? current.coverUrl : page.coverUrl,
+      detailSnapshot: snapshot,
+    );
+    if (mounted) {
+      setState(() {
+        _cachedComics = <CachedComicLibraryEntry>[
+          ..._cachedComics.take(index),
+          next,
+          ..._cachedComics.skip(index + 1),
+        ];
+      });
+      return;
+    }
+    _cachedComics = <CachedComicLibraryEntry>[
+      ..._cachedComics.take(index),
+      next,
+      ..._cachedComics.skip(index + 1),
+    ];
+  }
+
   DownloadQueueTask _buildDownloadQueueTask(
     DetailPageData page,
     Uri chapterUri,
@@ -1144,6 +1211,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       totalImages: 0,
       createdAt: now,
       updatedAt: now,
+      detailSnapshot: page.toCachedDetailSnapshot(),
     );
   }
 
@@ -1687,6 +1755,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
               previousPage is! DetailPageData ||
               previousPage.uri != resolvedPage.uri,
         );
+        unawaited(_persistCachedDetailSnapshot(resolvedPage));
       }
     }, syncSearch: switchToTab || tabIndex == _selectedIndex);
     _scheduleReaderPresentationSync();
@@ -2623,7 +2692,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       final bool isPinned = _hostManager.sessionPinnedHost != null;
       _showSnackBar(
         isPinned
-            ? '测速完成，当前仍手动锁定到 ${_hostManager.currentHost}'
+            ? '测速完成，当前仍手动锁定到域名 ${_hostManager.currentHost}'
             : '测速完成，已自动选择 ${_hostManager.currentHost}',
       );
     } catch (_) {
@@ -2659,7 +2728,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       if (mounted) {
         final String message = error is StateError
             ? error.message.toString()
-            : '切换节点失败，请稍后重试';
+            : '切换域名失败，请稍后重试';
         _showSnackBar(message);
       }
     } finally {
@@ -2685,7 +2754,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       await _hostManager.refreshProbes(force: true);
       await _syncSessionCookiesToCurrentHost();
       if (mounted) {
-        _showSnackBar('已恢复自动选择，当前节点 ${_hostManager.currentHost}');
+        _showSnackBar('已恢复自动选择，当前域名 ${_hostManager.currentHost}');
       }
     } catch (_) {
       if (mounted) {
@@ -2822,6 +2891,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         sourceTabIndex: _selectedIndex,
         historyMode: NavigationIntent.preserve,
       );
+      return;
+    }
+    if (_isTopicUri(_currentUri)) {
+      await _loadHome();
       return;
     }
     if (_selectedIndex != 0) {
@@ -3119,7 +3192,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   }
 
   int _readerPagedPageCount(ReaderPageData page) {
-    return page.imageUrls.length + (_shouldShowReaderCommentTailPage(page) ? 1 : 0);
+    return page.imageUrls.length +
+        (_shouldShowReaderCommentTailPage(page) ? 1 : 0);
   }
 
   void _prepareReaderComments(
@@ -3625,16 +3699,21 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _readerProgressDebounce?.cancel();
     _readerProgressDebounce = Timer(
       const Duration(milliseconds: 900),
-      _persistCurrentReaderProgress,
+      () => unawaited(_persistCurrentReaderProgress()),
     );
   }
 
   String _readerProgressKeyForPage(ReaderPageData page) {
-    final Uri uri = Uri.parse(page.uri);
-    return '${uri.path}::${page.contentKey}';
+    return ReaderProgressStore.progressKeyForChapterHref(page.uri);
   }
 
-  void _persistCurrentReaderProgress() {
+  Future<void> _flushReaderProgressPersistence() async {
+    _readerProgressDebounce?.cancel();
+    _readerProgressDebounce = null;
+    await _persistCurrentReaderProgress();
+  }
+
+  Future<void> _persistCurrentReaderProgress() async {
     final EasyCopyPage? page = _page;
     if (page is! ReaderPageData) {
       return;
@@ -3650,13 +3729,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
             : 0,
       );
       _lastPersistedReaderPosition = position;
-      unawaited(
-        _readerProgressStore.writePosition(
-          progressKey,
-          position,
-          catalogHref: page.catalogHref,
-          chapterHref: page.uri,
-        ),
+      await _readerProgressStore.writePosition(
+        progressKey,
+        position,
+        catalogHref: page.catalogHref,
+        chapterHref: page.uri,
       );
       return;
     }
@@ -3667,18 +3744,16 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       offset: _readerScrollController.offset,
     );
     _lastPersistedReaderPosition = position;
-    unawaited(
-      _readerProgressStore.writePosition(
-        progressKey,
-        position,
-        catalogHref: page.catalogHref,
-        chapterHref: page.uri,
-      ),
+    await _readerProgressStore.writePosition(
+      progressKey,
+      position,
+      catalogHref: page.catalogHref,
+      chapterHref: page.uri,
     );
   }
 
   void _persistVisiblePageState() {
-    _persistCurrentReaderProgress();
+    unawaited(_persistCurrentReaderProgress());
     if (_page == null ||
         _isReaderMode ||
         !_standardScrollController.hasClients) {
@@ -3832,13 +3907,17 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     final EasyCopyPage? page = _page;
     if (page is ProfilePageData ||
         page is DetailPageData ||
-        _isProfileUri(_currentUri)) {
+        _isProfileUri(_currentUri) ||
+        _isTopicUri(_currentUri)) {
       return false;
     }
     return !_isDetailRoute;
   }
 
   bool get _isPrimaryTabContent {
+    if (_isTopicListUri(_currentUri)) {
+      return true;
+    }
     if (_shouldShowBackButton) {
       return false;
     }
@@ -3850,7 +3929,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         page is ProfilePageData;
   }
 
-  bool get _shouldShowHeaderCard => !_isPrimaryTabContent && !_isDetailRoute;
+  bool get _shouldShowHeaderCard =>
+      !_isPrimaryTabContent && !_isDetailRoute && !_isSecondaryProfileRoute;
 
   bool get _shouldShowBackButton {
     final EasyCopyPage? page = _page;
@@ -3887,6 +3967,15 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         path.startsWith('/newest');
   }
 
+  bool _isTopicUri(Uri uri) {
+    return uri.path.toLowerCase().startsWith('/topic');
+  }
+
+  bool _isTopicListUri(Uri uri) {
+    final String path = uri.path.toLowerCase();
+    return path == '/topic' || path == '/topic/';
+  }
+
   bool get _isSecondaryDiscoverRoute {
     return _isDiscoverUri(_currentUri) && !_isPrimaryDiscoverUri(_currentUri);
   }
@@ -3901,6 +3990,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       return AppConfig.profileSubviewTitle(
         AppConfig.profileSubviewForUri(_currentUri),
       );
+    }
+    if (_isTopicListUri(_currentUri)) {
+      return '专题精选';
     }
     final EasyCopyPage? page = _page;
     if (page == null) {
