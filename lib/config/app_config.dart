@@ -277,11 +277,14 @@ int tabIndexForUri(Uri? uri) {
     return 3;
   }
 
+  if (path.startsWith('/topic')) {
+    return 0;
+  }
+
   if (path.startsWith('/comics') ||
       path.startsWith('/comic') ||
       path.startsWith('/filter') ||
       path.startsWith('/search') ||
-      path.startsWith('/topic') ||
       path.startsWith('/recommend') ||
       path.startsWith('/newest')) {
     return 1;
