@@ -8,9 +8,11 @@ import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/app_preferences.dart';
 import 'package:easy_copy/models/page_models.dart';
 import 'package:easy_copy/services/android_document_tree_bridge.dart';
+import 'package:easy_copy/services/cached_chapter_locator_store.dart';
 import 'package:easy_copy/services/cached_library_index_store.dart';
 import 'package:easy_copy/services/debug_trace.dart';
 import 'package:easy_copy/services/migration_delta_journal_store.dart';
+import 'package:easy_copy/services/document_tree_relative_image_provider.dart';
 import 'package:easy_copy/services/download_storage_service.dart';
 import 'package:easy_copy/services/download_queue_store.dart';
 import 'package:http/http.dart' as http;
@@ -173,12 +175,14 @@ class CachedComicLibraryEntry {
     required this.comicHref,
     required this.coverUrl,
     required this.chapters,
+    this.detailSnapshot,
   });
 
   final String comicTitle;
   final String comicHref;
   final String coverUrl;
   final List<CachedChapterEntry> chapters;
+  final CachedComicDetailSnapshot? detailSnapshot;
 
   int get cachedChapterCount => chapters.length;
 
@@ -192,6 +196,13 @@ class CachedComicLibraryEntry {
       comicTitle: (json['comicTitle'] as String?)?.trim() ?? '',
       comicHref: (json['comicHref'] as String?)?.trim() ?? '',
       coverUrl: (json['coverUrl'] as String?)?.trim() ?? '',
+      detailSnapshot: json['detailSnapshot'] is Map<Object?, Object?>
+          ? CachedComicDetailSnapshot.fromJson(
+              (json['detailSnapshot'] as Map<Object?, Object?>).map(
+                (Object? key, Object? value) => MapEntry(key.toString(), value),
+              ),
+            )
+          : null,
       chapters: rawChapters
           .whereType<Map<Object?, Object?>>()
           .map(
@@ -205,11 +216,28 @@ class CachedComicLibraryEntry {
     );
   }
 
+  CachedComicLibraryEntry copyWith({
+    String? comicTitle,
+    String? comicHref,
+    String? coverUrl,
+    List<CachedChapterEntry>? chapters,
+    CachedComicDetailSnapshot? detailSnapshot,
+  }) {
+    return CachedComicLibraryEntry(
+      comicTitle: comicTitle ?? this.comicTitle,
+      comicHref: comicHref ?? this.comicHref,
+      coverUrl: coverUrl ?? this.coverUrl,
+      chapters: chapters ?? this.chapters,
+      detailSnapshot: detailSnapshot ?? this.detailSnapshot,
+    );
+  }
+
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'comicTitle': comicTitle,
       'comicHref': comicHref,
       'coverUrl': coverUrl,
+      'detailSnapshot': detailSnapshot?.toJson(),
       'chapters': chapters
           .map((CachedChapterEntry chapter) => chapter.toJson())
           .toList(growable: false),
@@ -224,11 +252,14 @@ class ComicDownloadService {
     DownloadStorageService? storageService,
     AndroidDocumentTreeBridge? documentTreeBridge,
     CachedLibraryIndexStore? cachedLibraryIndexStore,
+    CachedChapterLocatorStore? cachedChapterLocatorStore,
   }) : _client = client ?? http.Client(),
        _documentTreeBridge =
            documentTreeBridge ?? AndroidDocumentTreeBridge.instance,
        _cachedLibraryIndexStore =
            cachedLibraryIndexStore ?? CachedLibraryIndexStore.instance,
+       _cachedChapterLocatorStore =
+           cachedChapterLocatorStore ?? CachedChapterLocatorStore.instance,
        _storageService =
            storageService ??
            DownloadStorageService(
@@ -243,6 +274,7 @@ class ComicDownloadService {
   final http.Client _client;
   final AndroidDocumentTreeBridge _documentTreeBridge;
   final CachedLibraryIndexStore _cachedLibraryIndexStore;
+  final CachedChapterLocatorStore _cachedChapterLocatorStore;
   final DownloadStorageService _storageService;
 
   bool get supportsCustomStorageSelection =>
@@ -283,6 +315,7 @@ class ComicDownloadService {
       return;
     }
     await _cachedLibraryIndexStore.copy(fromStorageKey, toStorageKey);
+    await _cachedChapterLocatorStore.copy(fromStorageKey, toStorageKey);
   }
 
   String comicDirectoryPath(String comicTitle) {
@@ -303,6 +336,7 @@ class ComicDownloadService {
     String? chapterHref,
     String? chapterLabel,
     String? coverUrl,
+    CachedComicDetailSnapshot? detailSnapshot,
     ChapterDownloadProgressCallback? onProgress,
     ChapterDownloadPauseChecker? shouldPause,
     ChapterDownloadCancelChecker? shouldCancel,
@@ -351,6 +385,7 @@ class ComicDownloadService {
         comicTitle: page.comicTitle,
         comicHref: resolvedComicUri,
         coverUrl: coverUrl ?? '',
+        detailSnapshot: detailSnapshot,
         chapter: CachedChapterEntry(
           chapterTitle: resolvedChapterLabel,
           chapterHref: resolvedChapterHref,
@@ -468,6 +503,7 @@ class ComicDownloadService {
       comicTitle: page.comicTitle,
       comicHref: resolvedComicUri,
       coverUrl: coverUrl ?? '',
+      detailSnapshot: detailSnapshot,
       chapter: CachedChapterEntry(
         chapterTitle: resolvedChapterLabel,
         chapterHref: resolvedChapterHref,
@@ -495,13 +531,25 @@ class ComicDownloadService {
       final String storageKey = _storageService.storageKeyForState(
         storageState,
       );
+      final List<Map<String, Object?>>? previousIndexedEntries =
+          await _cachedLibraryIndexStore.read(storageKey);
       final List<Map<String, Object?>>? indexedEntries = forceRescan
           ? null
-          : await _cachedLibraryIndexStore.read(storageKey);
+          : previousIndexedEntries;
       if (indexedEntries != null) {
         final List<CachedComicLibraryEntry> indexedLibrary = indexedEntries
             .map(CachedComicLibraryEntry.fromJson)
             .toList(growable: false);
+        if (indexedLibrary.isNotEmpty) {
+          final List<CachedChapterLocator> existingLocators =
+              await _cachedChapterLocatorStore.entriesForStorage(storageKey);
+          if (existingLocators.isEmpty) {
+            await _replaceCachedChapterLocators(
+              storageKey: storageKey,
+              comics: indexedLibrary,
+            );
+          }
+        }
         DebugTrace.log('cached_library.index_hit', <String, Object?>{
           'storageKey': storageKey,
           'comicCount': indexedLibrary.length,
@@ -518,12 +566,23 @@ class ComicDownloadService {
         stats: stats,
       );
       final List<CachedComicLibraryEntry> comics =
-          _buildCachedLibraryFromManifests(manifests);
+          _buildCachedLibraryFromManifests(
+            manifests,
+            previousEntries:
+                previousIndexedEntries
+                    ?.map(CachedComicLibraryEntry.fromJson)
+                    .toList(growable: false) ??
+                const <CachedComicLibraryEntry>[],
+          );
       await _cachedLibraryIndexStore.write(
         storageKey,
         comics
             .map((CachedComicLibraryEntry entry) => entry.toJson())
             .toList(growable: false),
+      );
+      await _replaceCachedChapterLocators(
+        storageKey: storageKey,
+        comics: comics,
       );
       DebugTrace.log('cached_library.rebuilt', <String, Object?>{
         'storageKey': storageKey,
@@ -612,8 +671,10 @@ class ComicDownloadService {
   }
 
   List<CachedComicLibraryEntry> _buildCachedLibraryFromManifests(
-    List<Map<String, Object?>> manifests,
-  ) {
+    List<Map<String, Object?>> manifests, {
+    List<CachedComicLibraryEntry> previousEntries =
+        const <CachedComicLibraryEntry>[],
+  }) {
     final Map<String, List<CachedChapterEntry>> grouped =
         <String, List<CachedChapterEntry>>{};
     final Map<String, String> comicTitles = <String, String>{};
@@ -664,6 +725,18 @@ class ComicDownloadService {
           );
     }
 
+    final Map<String, CachedComicLibraryEntry> previousEntriesByKey =
+        <String, CachedComicLibraryEntry>{
+          for (final CachedComicLibraryEntry entry in previousEntries)
+            if (_comicKeyForUri(entry.comicHref).isNotEmpty)
+              _comicKeyForUri(entry.comicHref): entry,
+        };
+    final Map<String, CachedComicLibraryEntry> previousEntriesByTitle =
+        <String, CachedComicLibraryEntry>{
+          for (final CachedComicLibraryEntry entry in previousEntries)
+            if (entry.comicTitle.isNotEmpty) entry.comicTitle: entry,
+        };
+
     return grouped.entries
         .map((MapEntry<String, List<CachedChapterEntry>> entry) {
           final List<CachedChapterEntry> chapters =
@@ -671,11 +744,15 @@ class ComicDownloadService {
                 (CachedChapterEntry left, CachedChapterEntry right) =>
                     right.downloadedAt.compareTo(left.downloadedAt),
               );
+          final CachedComicLibraryEntry? previousEntry =
+              previousEntriesByKey[entry.key] ??
+              previousEntriesByTitle[comicTitles[entry.key] ?? ''];
           return CachedComicLibraryEntry(
             comicTitle: comicTitles[entry.key] ?? '未命名漫画',
             comicHref: comicHrefs[entry.key] ?? '',
             coverUrl: comicCovers[entry.key] ?? '',
             chapters: chapters,
+            detailSnapshot: previousEntry?.detailSnapshot,
           );
         })
         .toList(growable: false)
@@ -688,11 +765,76 @@ class ComicDownloadService {
       });
   }
 
+  Iterable<CachedChapterLocator> _locatorsFromLibrary(
+    String storageKey,
+    Iterable<CachedComicLibraryEntry> comics,
+  ) sync* {
+    final String normalizedStorageKey = storageKey.trim();
+    if (normalizedStorageKey.isEmpty) {
+      return;
+    }
+    for (final CachedComicLibraryEntry comic in comics) {
+      for (final CachedChapterEntry chapter in comic.chapters) {
+        final CachedChapterLocator locator = _locatorForChapter(
+          storageKey: normalizedStorageKey,
+          comicTitle: comic.comicTitle,
+          chapter: chapter,
+        );
+        if (locator.directoryPath.isEmpty) {
+          continue;
+        }
+        yield locator;
+      }
+    }
+  }
+
+  CachedChapterLocator _locatorForChapter({
+    required String storageKey,
+    required String comicTitle,
+    required CachedChapterEntry chapter,
+  }) {
+    return CachedChapterLocator(
+      storageKey: storageKey,
+      chapterPathKey: _pathKeyForUri(chapter.chapterHref),
+      sourcePathKey: _pathKeyForUri(chapter.sourceUri),
+      directoryPath: chapter.directoryPath,
+      comicTitle: comicTitle,
+      chapterTitle: chapter.chapterTitle,
+      downloadedAt: chapter.downloadedAt,
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  Future<void> _replaceCachedChapterLocators({
+    required String storageKey,
+    required List<CachedComicLibraryEntry> comics,
+  }) {
+    return _cachedChapterLocatorStore.replaceStorage(
+      storageKey,
+      _locatorsFromLibrary(storageKey, comics),
+    );
+  }
+
+  Future<void> _upsertCachedChapterLocator({
+    required String storageKey,
+    required String comicTitle,
+    required CachedChapterEntry chapter,
+  }) {
+    return _cachedChapterLocatorStore.upsert(
+      _locatorForChapter(
+        storageKey: storageKey,
+        comicTitle: comicTitle,
+        chapter: chapter,
+      ),
+    );
+  }
+
   Future<void> _upsertCachedChapterIndex({
     required String storageKey,
     required String comicTitle,
     required String comicHref,
     required String coverUrl,
+    CachedComicDetailSnapshot? detailSnapshot,
     required CachedChapterEntry chapter,
   }) async {
     final List<CachedComicLibraryEntry> comics = await _readCachedLibraryIndex(
@@ -733,6 +875,7 @@ class ComicDownloadService {
       comicHref: comicHref,
       coverUrl: coverUrl,
       chapters: chapters.toList(growable: false),
+      detailSnapshot: detailSnapshot ?? comic?.detailSnapshot,
     );
     if (comicIndex >= 0) {
       comics[comicIndex] = nextComic;
@@ -754,6 +897,11 @@ class ComicDownloadService {
               ),
     );
     await _writeCachedLibraryIndex(storageKey, comics);
+    await _upsertCachedChapterLocator(
+      storageKey: storageKey,
+      comicTitle: comicTitle,
+      chapter: chapter,
+    );
   }
 
   Future<void> _removeChapterFromCachedLibraryIndex({
@@ -784,10 +932,15 @@ class ComicDownloadService {
           comicHref: comic.comicHref,
           coverUrl: comic.coverUrl,
           chapters: chapters,
+          detailSnapshot: comic.detailSnapshot,
         ),
       );
     }
     await _writeCachedLibraryIndex(storageKey, nextComics);
+    await _cachedChapterLocatorStore.removeDirectoryPath(
+      storageKey: storageKey,
+      directoryPath: chapterDirectoryPath,
+    );
   }
 
   Future<void> _removeComicFromCachedLibraryIndex({
@@ -824,6 +977,12 @@ class ComicDownloadService {
         })
         .toList(growable: false);
     await _writeCachedLibraryIndex(storageKey, nextComics);
+    if (comicRelativePath.isNotEmpty) {
+      await _cachedChapterLocatorStore.removeComicDirectory(
+        storageKey: storageKey,
+        comicRelativePath: comicRelativePath,
+      );
+    }
   }
 
   Future<List<CachedComicLibraryEntry>> _readCachedLibraryIndex(
@@ -877,57 +1036,190 @@ class ComicDownloadService {
         .toSet();
   }
 
+  Future<void> upsertCachedComicDetailSnapshot(DetailPageData page) async {
+    final CachedComicDetailSnapshot snapshot = page.toCachedDetailSnapshot();
+    if (snapshot.isEmpty) {
+      return;
+    }
+    final DownloadStorageState storageState = await resolveStorageState(
+      verifyWritable: false,
+    );
+    final String storageKey = _storageService.storageKeyForState(storageState);
+    final List<CachedComicLibraryEntry> library = await _readCachedLibraryIndex(
+      storageKey,
+    );
+    if (library.isEmpty) {
+      return;
+    }
+
+    final String targetComicKey = _comicKeyForUri(page.uri);
+    final int comicIndex = library.indexWhere((CachedComicLibraryEntry entry) {
+      if (targetComicKey.isNotEmpty &&
+          _comicKeyForUri(entry.comicHref) == targetComicKey) {
+        return true;
+      }
+      return entry.comicTitle == page.title;
+    });
+    if (comicIndex == -1) {
+      return;
+    }
+
+    final CachedComicLibraryEntry current = library[comicIndex];
+    library[comicIndex] = current.copyWith(
+      comicTitle: page.title.isEmpty ? current.comicTitle : page.title,
+      comicHref: page.uri.isEmpty ? current.comicHref : page.uri,
+      coverUrl: page.coverUrl.isEmpty ? current.coverUrl : page.coverUrl,
+      detailSnapshot: snapshot,
+    );
+    await _writeCachedLibraryIndex(storageKey, library);
+  }
+
+  DetailPageData buildCachedDetailPage(CachedComicLibraryEntry entry) {
+    final List<ChapterData> chapters = entry.chapters
+        .map((CachedChapterEntry chapter) {
+          final String chapterHref = chapter.chapterHref.isNotEmpty
+              ? chapter.chapterHref
+              : chapter.sourceUri;
+          return ChapterData(
+            label: chapter.chapterTitle,
+            href: chapterHref,
+            subtitle: _formatCachedChapterSubtitle(chapter),
+          );
+        })
+        .toList(growable: false);
+    final CachedComicDetailSnapshot? snapshot = entry.detailSnapshot;
+    final String detailUri = _cachedComicDetailUri(entry);
+    final String fallbackStartReadingHref = _preferredCachedStartReadingHref(
+      chapters,
+      preferredHref: snapshot?.startReadingHref ?? '',
+    );
+    return DetailPageData(
+      title: entry.comicTitle,
+      uri: detailUri,
+      coverUrl: entry.coverUrl,
+      aliases: snapshot?.aliases ?? '',
+      authors: snapshot?.authors ?? '',
+      heat: snapshot?.heat ?? '',
+      updatedAt: snapshot?.updatedAt ?? '',
+      status: snapshot?.status ?? '已缓存',
+      summary: snapshot?.summary ?? '',
+      tags: snapshot?.tags ?? const <LinkAction>[],
+      startReadingHref: fallbackStartReadingHref,
+      chapterGroups: const <ChapterGroupData>[],
+      chapters: chapters,
+    );
+  }
+
   Future<ReaderPageData?> loadCachedReaderPage(
     String chapterHref, {
     String prevHref = '',
     String nextHref = '',
     String catalogHref = '',
   }) async {
-    final CachedChapterEntry? entry = await _findCachedChapter(chapterHref);
+    final Stopwatch stopwatch = Stopwatch()..start();
+    final DownloadStorageState storageState = await resolveStorageState(
+      verifyWritable: false,
+    );
+    final String storageKey = _storageService.storageKeyForState(storageState);
+    final String targetPathKey = _pathKeyForUri(chapterHref);
+    if (targetPathKey.isEmpty) {
+      return null;
+    }
+    final _ResolvedStorageRoot root = await _resolveStorageRootFromState(
+      storageState,
+    );
+    final Stopwatch locatorStopwatch = Stopwatch()..start();
+    CachedChapterLocator? locator = await _cachedChapterLocatorStore
+        .findByPathKey(storageKey: storageKey, targetPathKey: targetPathKey);
+    DebugTrace.log('cached_reader.locator_lookup', <String, Object?>{
+      'storageKey': storageKey,
+      'targetPathKey': targetPathKey,
+      'hit': locator != null,
+      'elapsedMs': locatorStopwatch.elapsedMilliseconds,
+    });
+
+    CachedChapterEntry? entry;
+    if (locator != null) {
+      entry = CachedChapterEntry(
+        chapterTitle: locator.chapterTitle,
+        chapterHref: locator.chapterPathKey,
+        sourceUri: locator.sourcePathKey,
+        directoryPath: locator.directoryPath,
+        downloadedAt: locator.downloadedAt,
+      );
+    } else {
+      entry = await _findCachedChapter(chapterHref);
+      if (entry != null) {
+        await _upsertCachedChapterLocator(
+          storageKey: storageKey,
+          comicTitle: '',
+          chapter: entry,
+        );
+      }
+    }
     if (entry == null || entry.directoryPath.isEmpty) {
       return null;
     }
 
-    final _ResolvedStorageRoot root = await _resolveStorageRoot(
-      verifyWritable: false,
-    );
-    final String manifestRelativePath = _joinRelativePath(<String>[
-      entry.directoryPath,
-      'manifest.json',
-    ]);
-    if (!await root.exists(manifestRelativePath)) {
-      return null;
-    }
-
     try {
-      final Object? decoded = jsonDecode(
-        await root.readString(manifestRelativePath),
+      final Stopwatch manifestStopwatch = Stopwatch()..start();
+      Map<String, Object?>? manifest = await _readCachedChapterManifest(
+        root,
+        entry.directoryPath,
       );
-      if (decoded is! Map) {
-        return null;
+      if (manifest == null) {
+        if (locator != null) {
+          await _cachedChapterLocatorStore.removeDirectoryPath(
+            storageKey: storageKey,
+            directoryPath: entry.directoryPath,
+          );
+        }
+        entry = await _findCachedChapter(chapterHref, forceRescan: true);
+        if (entry == null || entry.directoryPath.isEmpty) {
+          return null;
+        }
+        manifest = await _readCachedChapterManifest(root, entry.directoryPath);
+        if (manifest == null) {
+          return null;
+        }
+        await _upsertCachedChapterLocator(
+          storageKey: storageKey,
+          comicTitle: '',
+          chapter: entry,
+        );
       }
-      final Map<String, Object?> manifest = decoded.map(
-        (Object? key, Object? value) => MapEntry(key.toString(), value),
-      );
-      final Map<String, _StorageEntry> chapterFiles = <String, _StorageEntry>{
-        for (final _StorageEntry file in await root.listEntries(
-          entry.directoryPath,
-          recursive: false,
-        ))
-          if (!file.isDirectory) file.name: file,
-      };
-      final List<String> imageUrls =
+      final List<String> fileNames =
           ((manifest['files'] as List<Object?>?) ?? const <Object?>[])
               .whereType<String>()
-              .map((String fileName) => chapterFiles[fileName]?.uri ?? '')
-              .where((String uri) => uri.isNotEmpty)
+              .map((String fileName) => fileName.trim())
+              .where((String fileName) => fileName.isNotEmpty)
               .toList(growable: false);
+      final Stopwatch imageRefStopwatch = Stopwatch()..start();
+      final List<String> imageUrls = root.buildReaderImageUrls(
+        entry.directoryPath,
+        fileNames,
+      );
+      DebugTrace.log('cached_reader.manifest_loaded', <String, Object?>{
+        'storageKey': storageKey,
+        'directoryPath': entry.directoryPath,
+        'imageCount': imageUrls.length,
+        'locatorHit': locator != null,
+        'manifestReadMs': manifestStopwatch.elapsedMilliseconds,
+        'imageRefBuildMs': imageRefStopwatch.elapsedMilliseconds,
+        'elapsedMs': stopwatch.elapsedMilliseconds,
+      });
       if (imageUrls.isEmpty) {
         return null;
       }
 
-      final String sourceUri = _stringValue(manifest['sourceUri']);
-      final String manifestChapterHref = _stringValue(manifest['chapterHref']);
+      final Map<String, Object?> normalizedManifest = manifest;
+      final String sourceUri = _stringValue(normalizedManifest['sourceUri']);
+      final String manifestChapterHref = _stringValue(
+        normalizedManifest['chapterHref'],
+      );
+      final DateTime downloadedAt =
+          DateTime.tryParse(_stringValue(normalizedManifest['downloadedAt'])) ??
+          entry.downloadedAt;
       final String resolvedUri = sourceUri.isNotEmpty
           ? _rewriteAllowedUri(sourceUri)
           : (manifestChapterHref.isNotEmpty
@@ -935,27 +1227,44 @@ class ComicDownloadService {
                 : _rewriteAllowedUri(chapterHref));
       final String resolvedPrevHref = prevHref.trim().isNotEmpty
           ? _rewriteAllowedUri(prevHref)
-          : _rewriteAllowedUri(_stringValue(manifest['prevHref']));
+          : _rewriteAllowedUri(_stringValue(normalizedManifest['prevHref']));
       final String resolvedNextHref = nextHref.trim().isNotEmpty
           ? _rewriteAllowedUri(nextHref)
-          : _rewriteAllowedUri(_stringValue(manifest['nextHref']));
+          : _rewriteAllowedUri(_stringValue(normalizedManifest['nextHref']));
       final String resolvedCatalogHref = catalogHref.trim().isNotEmpty
           ? catalogHref.trim()
           : _rewriteAllowedUri(
-              _stringValue(manifest['catalogHref']).isNotEmpty
-                  ? _stringValue(manifest['catalogHref'])
-                  : _stringValue(manifest['comicUri']),
+              _stringValue(normalizedManifest['catalogHref']).isNotEmpty
+                  ? _stringValue(normalizedManifest['catalogHref'])
+                  : _stringValue(normalizedManifest['comicUri']),
             );
-      final String chapterTitle = _stringValue(manifest['chapterTitle']);
-      final String chapterLabel = _stringValue(manifest['chapterLabel']);
-      final String progressLabel = _stringValue(manifest['progressLabel']);
+      final String chapterTitle = _stringValue(
+        normalizedManifest['chapterTitle'],
+      );
+      final String chapterLabel = _stringValue(
+        normalizedManifest['chapterLabel'],
+      );
+      final String progressLabel = _stringValue(
+        normalizedManifest['progressLabel'],
+      );
+      await _upsertCachedChapterLocator(
+        storageKey: storageKey,
+        comicTitle: _stringValue(normalizedManifest['comicTitle']),
+        chapter: CachedChapterEntry(
+          chapterTitle: chapterTitle.isNotEmpty ? chapterTitle : chapterLabel,
+          chapterHref: manifestChapterHref,
+          sourceUri: sourceUri,
+          directoryPath: entry.directoryPath,
+          downloadedAt: downloadedAt,
+        ),
+      );
 
       return ReaderPageData(
         title: chapterTitle.isNotEmpty
             ? chapterTitle
             : (chapterLabel.isNotEmpty ? chapterLabel : '已缓存章节'),
         uri: resolvedUri,
-        comicTitle: _stringValue(manifest['comicTitle']),
+        comicTitle: _stringValue(normalizedManifest['comicTitle']),
         chapterTitle: chapterTitle.isNotEmpty ? chapterTitle : chapterLabel,
         progressLabel: progressLabel,
         imageUrls: imageUrls,
@@ -1011,12 +1320,32 @@ class ComicDownloadService {
     }
   }
 
-  Future<CachedChapterEntry?> _findCachedChapter(String chapterHref) async {
-    final String targetPathKey = _pathKeyForUri(chapterHref);
-    if (targetPathKey.isEmpty) {
+  Future<Map<String, Object?>?> _readCachedChapterManifest(
+    _ResolvedStorageRoot root,
+    String directoryPath,
+  ) async {
+    final String manifestRelativePath = _joinRelativePath(<String>[
+      directoryPath,
+      'manifest.json',
+    ]);
+    if (!await root.exists(manifestRelativePath)) {
       return null;
     }
-    final List<CachedComicLibraryEntry> library = await loadCachedLibrary();
+    final Object? decoded = jsonDecode(
+      await root.readString(manifestRelativePath),
+    );
+    if (decoded is! Map) {
+      return null;
+    }
+    return decoded.map(
+      (Object? key, Object? value) => MapEntry(key.toString(), value),
+    );
+  }
+
+  CachedChapterEntry? _findCachedChapterInLibrary(
+    Iterable<CachedComicLibraryEntry> library,
+    String targetPathKey,
+  ) {
     for (final CachedComicLibraryEntry comic in library) {
       for (final CachedChapterEntry chapter in comic.chapters) {
         final String chapterPathKey = _pathKeyForUri(chapter.chapterHref);
@@ -1027,6 +1356,20 @@ class ComicDownloadService {
       }
     }
     return null;
+  }
+
+  Future<CachedChapterEntry?> _findCachedChapter(
+    String chapterHref, {
+    bool forceRescan = false,
+  }) async {
+    final String targetPathKey = _pathKeyForUri(chapterHref);
+    if (targetPathKey.isEmpty) {
+      return null;
+    }
+    final List<CachedComicLibraryEntry> library = await loadCachedLibrary(
+      forceRescan: forceRescan,
+    );
+    return _findCachedChapterInLibrary(library, targetPathKey);
   }
 
   Future<void> deleteComicCacheByTitle(String comicTitle) async {
@@ -1323,6 +1666,60 @@ class ComicDownloadService {
 
   String _stringValue(Object? value) {
     return value is String ? value.trim() : '';
+  }
+
+  String _formatCachedChapterSubtitle(CachedChapterEntry chapter) {
+    final String timestamp = _formatDownloadedAt(chapter.downloadedAt);
+    if (timestamp.isEmpty) {
+      return '';
+    }
+    return '已缓存 $timestamp';
+  }
+
+  String _formatDownloadedAt(DateTime value) {
+    if (value == DateTime.fromMillisecondsSinceEpoch(0)) {
+      return '';
+    }
+    final String month = value.month.toString().padLeft(2, '0');
+    final String day = value.day.toString().padLeft(2, '0');
+    final String hour = value.hour.toString().padLeft(2, '0');
+    final String minute = value.minute.toString().padLeft(2, '0');
+    return '${value.year}-$month-$day $hour:$minute';
+  }
+
+  String _cachedComicDetailUri(CachedComicLibraryEntry entry) {
+    if (entry.comicHref.trim().isNotEmpty) {
+      return _rewriteAllowedUri(entry.comicHref);
+    }
+    for (final CachedChapterEntry chapter in entry.chapters) {
+      final String derived = _deriveComicUri(
+        chapter.chapterHref.isNotEmpty
+            ? chapter.chapterHref
+            : chapter.sourceUri,
+      );
+      if (derived.isNotEmpty) {
+        return derived;
+      }
+    }
+    final String slug = Uri.encodeComponent(
+      entry.comicTitle.isEmpty ? 'offline' : entry.comicTitle,
+    );
+    return AppConfig.resolvePath('/comic/offline/$slug').toString();
+  }
+
+  String _preferredCachedStartReadingHref(
+    List<ChapterData> chapters, {
+    String preferredHref = '',
+  }) {
+    final String preferredPathKey = _pathKeyForUri(preferredHref);
+    if (preferredPathKey.isNotEmpty) {
+      for (final ChapterData chapter in chapters) {
+        if (_pathKeyForUri(chapter.href) == preferredPathKey) {
+          return chapter.href;
+        }
+      }
+    }
+    return chapters.isEmpty ? '' : chapters.first.href;
   }
 
   String _deriveComicUri(String sourceUri) {
@@ -1883,6 +2280,11 @@ abstract class _ResolvedStorageRoot {
   Future<bool> exists(String relativePath);
 
   Future<bool> deletePath(String relativePath);
+
+  List<String> buildReaderImageUrls(
+    String chapterDirectoryPath,
+    List<String> fileNames,
+  );
 }
 
 class _FileStorageRoot implements _ResolvedStorageRoot {
@@ -1999,6 +2401,29 @@ class _FileStorageRoot implements _ResolvedStorageRoot {
     }
     await File(absolutePath).delete();
     return true;
+  }
+
+  @override
+  List<String> buildReaderImageUrls(
+    String chapterDirectoryPath,
+    List<String> fileNames,
+  ) {
+    final String normalizedChapterDirectoryPath = _normalizeRelativePath(
+      chapterDirectoryPath,
+    );
+    return fileNames
+        .map((String fileName) => fileName.trim())
+        .where((String fileName) => fileName.isNotEmpty)
+        .map(
+          (String fileName) => File(
+            _absolutePath(
+              normalizedChapterDirectoryPath.isEmpty
+                  ? fileName
+                  : '$normalizedChapterDirectoryPath/$fileName',
+            ),
+          ).uri.toString(),
+        )
+        .toList(growable: false);
   }
 
   String _absolutePath(String relativePath) {
@@ -2147,6 +2572,29 @@ class _DocumentTreeStorageRoot implements _ResolvedStorageRoot {
       treeUri: treeUri,
       relativePath: _resolveRelativePath(relativePath),
     );
+  }
+
+  @override
+  List<String> buildReaderImageUrls(
+    String chapterDirectoryPath,
+    List<String> fileNames,
+  ) {
+    final String normalizedChapterDirectoryPath = _normalizeRelativePath(
+      chapterDirectoryPath,
+    );
+    return fileNames
+        .map((String fileName) => fileName.trim())
+        .where((String fileName) => fileName.isNotEmpty)
+        .map((String fileName) {
+          final String relativePath = normalizedChapterDirectoryPath.isEmpty
+              ? fileName
+              : '$normalizedChapterDirectoryPath/$fileName';
+          return buildDocumentTreeRelativeImageUri(
+            treeUri: treeUri,
+            relativePath: _resolveRelativePath(relativePath),
+          );
+        })
+        .toList(growable: false);
   }
 
   String _resolveRelativePath(String relativePath) {

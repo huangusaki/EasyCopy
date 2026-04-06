@@ -788,6 +788,19 @@ class DetailPageData extends EasyCopyPage {
   final String comicId;
   final bool isCollected;
 
+  CachedComicDetailSnapshot toCachedDetailSnapshot() {
+    return CachedComicDetailSnapshot(
+      aliases: aliases,
+      authors: authors,
+      heat: heat,
+      updatedAt: updatedAt,
+      status: status,
+      summary: summary,
+      tags: tags,
+      startReadingHref: startReadingHref,
+    );
+  }
+
   DetailPageData copyWith({
     String? title,
     String? uri,
@@ -847,6 +860,88 @@ class DetailPageData extends EasyCopyPage {
           .toList(),
       'comicId': comicId,
       'isCollected': isCollected,
+    };
+  }
+}
+
+@immutable
+class CachedComicDetailSnapshot {
+  const CachedComicDetailSnapshot({
+    this.aliases = '',
+    this.authors = '',
+    this.heat = '',
+    this.updatedAt = '',
+    this.status = '',
+    this.summary = '',
+    this.tags = const <LinkAction>[],
+    this.startReadingHref = '',
+  });
+
+  factory CachedComicDetailSnapshot.fromJson(Map<String, Object?> json) {
+    return CachedComicDetailSnapshot(
+      aliases: _stringValue(json['aliases']),
+      authors: _stringValue(json['authors']),
+      heat: _stringValue(json['heat']),
+      updatedAt: _stringValue(json['updatedAt']),
+      status: _stringValue(json['status']),
+      summary: _stringValue(json['summary']),
+      tags: _readList<LinkAction>(json, 'tags', LinkAction.fromJson),
+      startReadingHref: _stringValue(json['startReadingHref']),
+    );
+  }
+
+  final String aliases;
+  final String authors;
+  final String heat;
+  final String updatedAt;
+  final String status;
+  final String summary;
+  final List<LinkAction> tags;
+  final String startReadingHref;
+
+  bool get isEmpty {
+    return aliases.isEmpty &&
+        authors.isEmpty &&
+        heat.isEmpty &&
+        updatedAt.isEmpty &&
+        status.isEmpty &&
+        summary.isEmpty &&
+        startReadingHref.isEmpty &&
+        tags.isEmpty;
+  }
+
+  CachedComicDetailSnapshot copyWith({
+    String? aliases,
+    String? authors,
+    String? heat,
+    String? updatedAt,
+    String? status,
+    String? summary,
+    List<LinkAction>? tags,
+    String? startReadingHref,
+  }) {
+    return CachedComicDetailSnapshot(
+      aliases: aliases ?? this.aliases,
+      authors: authors ?? this.authors,
+      heat: heat ?? this.heat,
+      updatedAt: updatedAt ?? this.updatedAt,
+      status: status ?? this.status,
+      summary: summary ?? this.summary,
+      tags: tags ?? this.tags,
+      startReadingHref: startReadingHref ?? this.startReadingHref,
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'aliases': aliases,
+      'authors': authors,
+      'heat': heat,
+      'updatedAt': updatedAt,
+      'status': status,
+      'summary': summary,
+      'tags': tags.map((LinkAction item) => item.toJson()).toList(),
+      'startReadingHref': startReadingHref,
     };
   }
 }
