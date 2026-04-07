@@ -72,9 +72,12 @@ class DownloadQueueManager {
       <String, List<DownloadQueueTask>>{};
   final Map<String, String> _pendingCancelledComicDeletions =
       <String, String>{};
+  final Map<String, Timer> _retryTimers = <String, Timer>{};
   static const Duration _migrationProgressUiInterval = Duration(
     milliseconds: 220,
   );
+  static const Duration _failedRetryDelay = Duration(seconds: 5);
+  static const int _maxAutoRetryCount = 3;
 
   bool _isProcessingQueue = false;
   bool _disposed = false;
@@ -107,6 +110,7 @@ class DownloadQueueManager {
       return;
     }
     snapshotNotifier.value = await _queueStore.read();
+    _syncRetryTimers(snapshotNotifier.value);
   }
 
   Future<void> restoreQueue() async {
@@ -115,6 +119,7 @@ class DownloadQueueManager {
       return;
     }
     snapshotNotifier.value = await _queueStore.read();
+    _syncRetryTimers(snapshotNotifier.value);
   }
 
   Future<void> recoverInterruptedStorageMigration() async {
@@ -207,6 +212,8 @@ class DownloadQueueManager {
               status: DownloadQueueTaskStatus.queued,
               progressLabel: '等待缓存',
               errorMessage: '',
+              autoRetryCount: 0,
+              clearNextRetryAt: true,
               updatedAt: now,
             );
           }
@@ -237,6 +244,8 @@ class DownloadQueueManager {
       status: DownloadQueueTaskStatus.queued,
       progressLabel: '等待缓存',
       errorMessage: '',
+      autoRetryCount: 0,
+      clearNextRetryAt: true,
       updatedAt: now,
     );
 
@@ -455,10 +464,103 @@ class DownloadQueueManager {
         if (currentSnapshot.isPaused || currentSnapshot.isEmpty) {
           break;
         }
-        await _runTask(currentSnapshot.activeTask!);
+        final DownloadQueueTask activeTask = currentSnapshot.activeTask!;
+        if (activeTask.status == DownloadQueueTaskStatus.failed) {
+          if (activeTask.nextRetryAt == null) {
+            break;
+          }
+          if (activeTask.nextRetryAt!.isAfter(DateTime.now())) {
+            _scheduleRetryTimer(activeTask);
+            break;
+          }
+          await _resumeFailedTaskIfReady(activeTask.id);
+          continue;
+        }
+        await _runTask(activeTask);
       }
     } finally {
       _isProcessingQueue = false;
+    }
+  }
+
+  void _syncRetryTimers(DownloadQueueSnapshot nextSnapshot) {
+    final Set<String> activeRetryTaskIds = <String>{};
+    if (!nextSnapshot.isPaused) {
+      for (final DownloadQueueTask task in nextSnapshot.tasks) {
+        if (task.status != DownloadQueueTaskStatus.failed ||
+            task.nextRetryAt == null) {
+          continue;
+        }
+        activeRetryTaskIds.add(task.id);
+        _scheduleRetryTimer(task);
+      }
+    }
+
+    final List<String> staleTaskIds = _retryTimers.keys
+        .where((String taskId) => !activeRetryTaskIds.contains(taskId))
+        .toList(growable: false);
+    for (final String taskId in staleTaskIds) {
+      _cancelRetryTimer(taskId);
+    }
+  }
+
+  void _scheduleRetryTimer(DownloadQueueTask task) {
+    if (_disposed || task.nextRetryAt == null || snapshot.isPaused) {
+      _cancelRetryTimer(task.id);
+      return;
+    }
+    final Duration delay = task.nextRetryAt!.difference(DateTime.now());
+    if (delay <= Duration.zero) {
+      _cancelRetryTimer(task.id);
+      unawaited(_resumeFailedTaskIfReady(task.id));
+      return;
+    }
+
+    _cancelRetryTimer(task.id);
+    _retryTimers[task.id] = Timer(delay, () {
+      _retryTimers.remove(task.id);
+      unawaited(_resumeFailedTaskIfReady(task.id));
+    });
+  }
+
+  void _cancelRetryTimer(String taskId) {
+    final Timer? timer = _retryTimers.remove(taskId);
+    timer?.cancel();
+  }
+
+  Future<void> _resumeFailedTaskIfReady(String taskId) async {
+    if (_disposed || snapshot.isPaused) {
+      _cancelRetryTimer(taskId);
+      return;
+    }
+
+    final DownloadQueueTask? latestTask = _taskById(taskId);
+    if (latestTask == null ||
+        latestTask.status != DownloadQueueTaskStatus.failed ||
+        latestTask.nextRetryAt == null) {
+      _cancelRetryTimer(taskId);
+      return;
+    }
+
+    if (latestTask.nextRetryAt!.isAfter(DateTime.now())) {
+      _scheduleRetryTimer(latestTask);
+      return;
+    }
+
+    _cancelRetryTimer(taskId);
+    await _updateTask(
+      latestTask.copyWith(
+        status: DownloadQueueTaskStatus.queued,
+        progressLabel: '等待缓存',
+        errorMessage: '',
+        completedImages: 0,
+        totalImages: 0,
+        clearNextRetryAt: true,
+        updatedAt: DateTime.now(),
+      ),
+    );
+    if (!_isProcessingQueue) {
+      unawaited(ensureRunning());
     }
   }
 
@@ -853,6 +955,10 @@ class DownloadQueueManager {
   void dispose() {
     _disposed = true;
     _migrationProgressFlushTimer?.cancel();
+    for (final Timer timer in _retryTimers.values) {
+      timer.cancel();
+    }
+    _retryTimers.clear();
     snapshotNotifier.dispose();
     storageStateNotifier.dispose();
     storageBusyNotifier.dispose();
@@ -864,6 +970,7 @@ class DownloadQueueManager {
       return;
     }
     snapshotNotifier.value = nextSnapshot;
+    _syncRetryTimers(nextSnapshot);
     if (nextSnapshot.isEmpty) {
       await _queueStore.clear();
       return;
@@ -1119,25 +1226,44 @@ class DownloadQueueManager {
         }
       }
       if (latestTask != null) {
-        final DownloadQueueSnapshot currentSnapshot = snapshot;
-        final List<DownloadQueueTask> tasks = currentSnapshot.tasks
-            .map((DownloadQueueTask item) {
-              if (item.id != latestTask.id) {
-                return item;
-              }
-              return latestTask.copyWith(
-                status: DownloadQueueTaskStatus.failed,
-                progressLabel: '失败：$message',
-                errorMessage: message,
-                updatedAt: DateTime.now(),
-              );
-            })
-            .toList(growable: false);
-        await _persistSnapshot(
-          currentSnapshot.copyWith(isPaused: true, tasks: tasks),
-        );
+        final DateTime now = DateTime.now();
+        if (latestTask.autoRetryCount < _maxAutoRetryCount) {
+          final int nextRetryCount = latestTask.autoRetryCount + 1;
+          final DownloadQueueTask retryTask = latestTask.copyWith(
+            status: DownloadQueueTaskStatus.failed,
+            progressLabel:
+                '失败，${_failedRetryDelay.inSeconds}秒后重试（$nextRetryCount/$_maxAutoRetryCount）',
+            errorMessage: message,
+            autoRetryCount: nextRetryCount,
+            nextRetryAt: now.add(_failedRetryDelay),
+            updatedAt: now,
+          );
+          await _updateTask(retryTask);
+          _scheduleRetryTimer(retryTask);
+          _notify('缓存失败：$message，${_failedRetryDelay.inSeconds}秒后自动重试');
+        } else {
+          final DownloadQueueSnapshot currentSnapshot = snapshot;
+          final List<DownloadQueueTask> tasks = currentSnapshot.tasks
+              .map((DownloadQueueTask item) {
+                if (item.id != latestTask.id) {
+                  return item;
+                }
+                return latestTask.copyWith(
+                  status: DownloadQueueTaskStatus.failed,
+                  progressLabel: '失败：$message',
+                  errorMessage: message,
+                  clearNextRetryAt: true,
+                  updatedAt: now,
+                );
+              })
+              .toList(growable: false);
+          await _persistSnapshot(
+            currentSnapshot.copyWith(isPaused: true, tasks: tasks),
+          );
+          _notify('缓存失败：$message');
+        }
+        return;
       }
-      _notify('缓存失败：$message');
     } finally {
       if (_runningTaskId == task.id) {
         _runningTaskId = null;

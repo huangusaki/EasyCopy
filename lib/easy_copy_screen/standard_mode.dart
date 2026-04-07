@@ -308,6 +308,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             _openProfileSubview(ProfileSubview.history, page: page),
         currentHost: _hostManager.currentHost,
         candidateHosts: _hostManager.candidateHosts,
+        candidateHostAliases: _hostManager.candidateHostAliases,
         hostSnapshot: _hostManager.probeSnapshot,
         isRefreshingHosts: _isUpdatingHostSettings,
         onRefreshHosts: _refreshHostSettings,
@@ -329,54 +330,58 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   Widget _buildDownloadManagementEntry() {
     return ValueListenableBuilder<DownloadQueueSnapshot>(
       valueListenable: _downloadQueueSnapshotNotifier,
-      builder: (BuildContext context, DownloadQueueSnapshot queueSnapshot, Widget? _) {
-        return ValueListenableBuilder<DownloadStorageState>(
-          valueListenable: _downloadStorageStateNotifier,
-          builder:
-              (
-                BuildContext context,
-                DownloadStorageState storageState,
-                Widget? _,
-              ) {
-                final String statusLabel = queueSnapshot.isEmpty
-                    ? '空闲'
-                    : queueSnapshot.isPaused
-                    ? '已暂停'
-                    : '缓存中';
-                final String queueLabel = queueSnapshot.isEmpty
-                    ? '0 话'
-                    : '${queueSnapshot.remainingCount} 话';
-                return ValueListenableBuilder<
-                  DownloadStorageMigrationProgress?
-                >(
-                  valueListenable: _downloadStorageMigrationProgressNotifier,
-                  builder:
-                      (
-                        BuildContext context,
-                        DownloadStorageMigrationProgress? migrationProgress,
-                        Widget? _,
-                      ) {
-                        final String pathLabel = migrationProgress != null
-                            ? '当前目录：${_downloadStorageService.summarizePath(migrationProgress.toPath.isNotEmpty ? migrationProgress.toPath : storageState.displayPath)}'
-                            : storageState.isLoading
-                            ? '正在读取缓存目录…'
-                            : storageState.errorMessage.isNotEmpty
-                            ? '目录异常：${storageState.errorMessage}'
-                            : '当前目录：${_downloadStorageService.summarizePath(storageState.displayPath)}';
-                        return DownloadManagementEntryCard(
-                          statusLabel: migrationProgress != null
-                              ? '迁移中'
-                              : statusLabel,
-                          queueLabel: queueLabel,
-                          pathLabel: pathLabel,
-                          noteLabel: migrationProgress?.message,
-                          onTap: _openDownloadManagementPage,
-                        );
-                      },
-                );
-              },
-        );
-      },
+      builder:
+          (
+            BuildContext context,
+            DownloadQueueSnapshot queueSnapshot,
+            Widget? _,
+          ) {
+            return ValueListenableBuilder<DownloadStorageState>(
+              valueListenable: _downloadStorageStateNotifier,
+              builder:
+                  (
+                    BuildContext context,
+                    DownloadStorageState storageStateValue,
+                    Widget? _,
+                  ) {
+                    final String statusLabel = queueSnapshot.isEmpty
+                        ? '空闲'
+                        : queueSnapshot.isPaused
+                        ? '已暂停'
+                        : '缓存中';
+                    final String queueLabel = queueSnapshot.isEmpty
+                        ? '0 话'
+                        : '${queueSnapshot.remainingCount} 话';
+                    return ValueListenableBuilder<
+                      DownloadStorageMigrationProgress?
+                    >(
+                      valueListenable:
+                          _downloadStorageMigrationProgressNotifier,
+                      builder:
+                          (
+                            BuildContext context,
+                            DownloadStorageMigrationProgress? migrationProgress,
+                            Widget? _,
+                          ) {
+                            return DownloadManagementEntryCard(
+                              statusLabel: migrationProgress != null
+                                  ? '迁移中'
+                                  : statusLabel,
+                              queueLabel: queueLabel,
+                              noteLabel:
+                                  migrationProgress?.message ??
+                                  (storageStateValue.errorMessage.isNotEmpty
+                                      ? '目录异常：${storageStateValue.errorMessage}'
+                                      : storageStateValue.isLoading
+                                      ? '正在读取缓存目录…'
+                                      : null),
+                              onTap: _openDownloadManagementPage,
+                            );
+                          },
+                    );
+                  },
+            );
+          },
     );
   }
 
@@ -390,6 +395,13 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             storageBusyListenable: _downloadStorageBusyNotifier,
             migrationProgressListenable:
                 _downloadStorageMigrationProgressNotifier,
+            cachedComics: _cachedComics,
+            onOpenCachedComic: (CachedComicLibraryEntry item) {
+              _openCachedComicFromProfile(_cachedComicCardKey(item));
+            },
+            onDeleteCachedComic: (CachedComicLibraryEntry item) {
+              unawaited(_confirmDeleteCachedComic(item));
+            },
             supportsCustomDirectorySelection:
                 _downloadService.supportsCustomStorageSelection,
             onPauseQueue: () {
@@ -465,17 +477,35 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     if (item == null) {
       return;
     }
-    final String targetHref;
-    if (item.comicHref.isNotEmpty) {
-      targetHref = item.comicHref;
-    } else if (item.chapters.isNotEmpty &&
-        item.chapters.first.chapterHref.isNotEmpty) {
-      targetHref = item.chapters.first.chapterHref;
-    } else {
-      _showSnackBar('该缓存条目缺少可打开的链接');
-      return;
+    final DetailPageData localPage = _downloadService.buildCachedDetailPage(
+      item,
+    );
+    final Uri targetUri = Uri.parse(localPage.uri);
+    final int targetTabIndex = resolveNavigationTabIndex(
+      targetUri,
+      sourceTabIndex: _selectedIndex,
+    );
+    final NavigationRequestContext requestContext = _prepareRouteEntry(
+      targetUri,
+      targetTabIndex: targetTabIndex,
+      intent: NavigationIntent.push,
+      preserveVisiblePage: false,
+      sourceKind: NavigationRequestSourceKind.navigation,
+    );
+    _applyLoadedPage(
+      localPage,
+      requestContext: requestContext,
+      switchToTab: _shouldActivateAsyncResultTab(requestContext.targetTabIndex),
+    );
+    if (item.comicHref.trim().isNotEmpty) {
+      unawaited(
+        _refreshCachedComicDetailInBackground(
+          item,
+          targetTabIndex: targetTabIndex,
+          routeKey: AppConfig.routeKeyForUri(targetUri),
+        ),
+      );
     }
-    _navigateToHref(targetHref);
   }
 
   void _deleteCachedComicFromProfile(String key) {
@@ -484,6 +514,40 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       return;
     }
     unawaited(_confirmDeleteCachedComic(item));
+  }
+
+  Future<void> _refreshCachedComicDetailInBackground(
+    CachedComicLibraryEntry item, {
+    required int targetTabIndex,
+    required String routeKey,
+  }) async {
+    final String href = item.comicHref.trim();
+    if (href.isEmpty) {
+      return;
+    }
+    try {
+      final Uri targetUri = AppConfig.rewriteToCurrentHost(Uri.parse(href));
+      final EasyCopyPage freshPage = await _pageRepository.loadFresh(
+        targetUri,
+        authScope: _pageQueryKeyForUri(targetUri).authScope,
+      );
+      if (!mounted || freshPage is! DetailPageData) {
+        return;
+      }
+      final PrimaryTabRouteEntry entry = _tabSessionStore.currentEntry(
+        targetTabIndex,
+      );
+      if (entry.routeKey != routeKey) {
+        return;
+      }
+      _applyLoadedPage(
+        freshPage,
+        targetTabIndex: targetTabIndex,
+        switchToTab: false,
+      );
+    } catch (_) {
+      return;
+    }
   }
 
   Set<String> _downloadedChapterPathKeysForDetail(DetailPageData page) {
@@ -1191,7 +1255,8 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       sections.add(
         _FeatureBannerCard(
           banner: page.feature!,
-          onTap: () => _navigateToHref(page.feature!.href),
+          onTap: () =>
+              _navigateToHref(AppConfig.resolvePath('/topic').toString()),
         ),
       );
       sections.add(const SizedBox(height: 18));
@@ -1215,6 +1280,10 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   }
 
   List<Widget> _buildDiscoverSections(DiscoverPageData page) {
+    if (_isTopicListUri(_currentUri)) {
+      return _buildTopicListSections(page);
+    }
+
     final List<Widget> sections = <Widget>[];
     final bool hasPager =
         page.pager.hasPrev ||
@@ -1324,6 +1393,53 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     return sections;
   }
 
+  List<Widget> _buildTopicListSections(DiscoverPageData page) {
+    final List<Widget> sections = <Widget>[];
+    final bool hasPager =
+        page.pager.hasPrev ||
+        page.pager.hasNext ||
+        page.pager.currentLabel.isNotEmpty ||
+        page.pager.totalLabel.isNotEmpty;
+
+    if (_isLoading) {
+      sections.add(_buildInlineSectionLoadingIndicator());
+      sections.add(const SizedBox(height: 14));
+    }
+
+    sections.add(
+      _buildAnimatedSectionContent(
+        contentKey: _discoverListContentKey(page),
+        child: _TopicIssueList(items: page.items, onTap: _navigateToHref),
+      ),
+    );
+
+    if (hasPager) {
+      sections.add(const SizedBox(height: 18));
+      sections.add(
+        IgnorePointer(
+          ignoring: _isLoading,
+          child: Opacity(
+            opacity: _isLoading ? 0.72 : 1,
+            child: _PagerCard(
+              pager: page.pager,
+              onPrev: page.pager.hasPrev
+                  ? () => _navigateToHref(page.pager.prevHref)
+                  : null,
+              onNext: page.pager.hasNext
+                  ? () => _navigateToHref(page.pager.nextHref)
+                  : null,
+              onJumpToPage: (int value) {
+                unawaited(_jumpDiscoverToPage(page, value));
+              },
+            ),
+          ),
+        ),
+      );
+    }
+
+    return sections;
+  }
+
   List<Widget> _buildRankSections(RankPageData page) {
     final List<Widget> sections = <Widget>[];
 
@@ -1420,7 +1536,9 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             ? () => _openDetailChapter(page, page.startReadingHref)
             : null,
         onDownload: () => _showDetailDownloadPicker(page),
-        onToggleCollection: () => unawaited(_toggleDetailCollection(page)),
+        onToggleCollection: page.comicId.trim().isEmpty
+            ? null
+            : () => unawaited(_toggleDetailCollection(page)),
         isCollectionBusy: _isUpdatingCollection,
         onTagTap: _navigateToHref,
       ),

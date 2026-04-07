@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:easy_copy/models/page_models.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -31,6 +32,9 @@ class DownloadQueueTask {
     required this.createdAt,
     required this.updatedAt,
     this.errorMessage = '',
+    this.autoRetryCount = 0,
+    this.nextRetryAt,
+    this.detailSnapshot,
   });
 
   factory DownloadQueueTask.fromJson(Map<String, Object?> json) {
@@ -54,6 +58,15 @@ class DownloadQueueTask {
           DateTime.tryParse((json['updatedAt'] as String?) ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
       errorMessage: (json['errorMessage'] as String?) ?? '',
+      autoRetryCount: (json['autoRetryCount'] as num?)?.toInt() ?? 0,
+      nextRetryAt: DateTime.tryParse((json['nextRetryAt'] as String?) ?? ''),
+      detailSnapshot: json['detailSnapshot'] is Map<Object?, Object?>
+          ? CachedComicDetailSnapshot.fromJson(
+              (json['detailSnapshot'] as Map<Object?, Object?>).map(
+                (Object? key, Object? value) => MapEntry(key.toString(), value),
+              ),
+            )
+          : null,
     );
   }
 
@@ -72,6 +85,9 @@ class DownloadQueueTask {
   final DateTime createdAt;
   final DateTime updatedAt;
   final String errorMessage;
+  final int autoRetryCount;
+  final DateTime? nextRetryAt;
+  final CachedComicDetailSnapshot? detailSnapshot;
 
   double get fraction {
     if (totalImages <= 0) {
@@ -103,6 +119,10 @@ class DownloadQueueTask {
     DateTime? createdAt,
     DateTime? updatedAt,
     String? errorMessage,
+    int? autoRetryCount,
+    DateTime? nextRetryAt,
+    bool clearNextRetryAt = false,
+    CachedComicDetailSnapshot? detailSnapshot,
   }) {
     return DownloadQueueTask(
       id: id ?? this.id,
@@ -120,6 +140,9 @@ class DownloadQueueTask {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       errorMessage: errorMessage ?? this.errorMessage,
+      autoRetryCount: autoRetryCount ?? this.autoRetryCount,
+      nextRetryAt: clearNextRetryAt ? null : (nextRetryAt ?? this.nextRetryAt),
+      detailSnapshot: detailSnapshot ?? this.detailSnapshot,
     );
   }
 
@@ -140,6 +163,9 @@ class DownloadQueueTask {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'errorMessage': errorMessage,
+      'autoRetryCount': autoRetryCount,
+      'nextRetryAt': nextRetryAt?.toIso8601String(),
+      'detailSnapshot': detailSnapshot?.toJson(),
     };
   }
 }
