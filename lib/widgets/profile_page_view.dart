@@ -27,6 +27,7 @@ class ProfilePageView extends StatelessWidget {
     this.onDeleteCachedComic,
     this.currentHost = '',
     this.candidateHosts = const <String>[],
+    this.candidateHostAliases = const <String, List<String>>{},
     this.hostSnapshot,
     this.isRefreshingHosts = false,
     this.onRefreshHosts,
@@ -54,6 +55,7 @@ class ProfilePageView extends StatelessWidget {
   final ValueChanged<String>? onDeleteCachedComic;
   final String currentHost;
   final List<String> candidateHosts;
+  final Map<String, List<String>> candidateHostAliases;
   final HostProbeSnapshot? hostSnapshot;
   final bool isRefreshingHosts;
   final FutureOr<void> Function()? onRefreshHosts;
@@ -64,6 +66,8 @@ class ProfilePageView extends StatelessWidget {
   final Widget? afterContinueReading;
   final List<ComicCardData> cachedComicCards;
   final ProfileSubview activeSubview;
+  static const double _libraryPreviewHeight = 204;
+  static const double _libraryPreviewWidth = 100;
 
   @override
   Widget build(BuildContext context) {
@@ -86,9 +90,6 @@ class ProfilePageView extends StatelessWidget {
 
     if (activeSubview == ProfileSubview.cached) {
       return _buildComicCollectionSection(
-        context,
-        title: '已缓存漫画',
-        summary: '共 ${cachedComicCards.length} 部漫画',
         items: cachedComicCards,
         emptyMessage: '还没有缓存的漫画。',
         onTap: onOpenCachedComic ?? onOpenComic,
@@ -100,9 +101,6 @@ class ProfilePageView extends StatelessWidget {
       switch (activeSubview) {
         case ProfileSubview.collections:
           return _buildComicCollectionSection(
-            context,
-            title: '我的收藏',
-            summary: '共 $collectionsTotal 部漫画',
             items: collectionCards,
             emptyMessage: '还没有收藏的漫画。',
             onTap: onOpenComic,
@@ -111,9 +109,6 @@ class ProfilePageView extends StatelessWidget {
           );
         case ProfileSubview.history:
           return _buildComicCollectionSection(
-            context,
-            title: '浏览历史',
-            summary: '共 $historyTotal 条记录',
             items: historyCards,
             emptyMessage: '还没有浏览历史。',
             onTap: onOpenComic,
@@ -140,17 +135,16 @@ class ProfilePageView extends StatelessWidget {
       addSection(
         _SectionCard(
           title: '我的收藏',
-          action: _SectionActionButton(
+          action: _SectionHeaderAction(
+            metaText: '$collectionsTotal 部漫画',
             semanticLabel: '查看全部收藏',
             onTap: onOpenCollections,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              _SectionCaption('共 $collectionsTotal 部漫画'),
-              const SizedBox(height: 14),
               SizedBox(
-                height: 232,
+                height: _libraryPreviewHeight,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: collectionCards.length,
@@ -158,7 +152,7 @@ class ProfilePageView extends StatelessWidget {
                   itemBuilder: (BuildContext context, int index) {
                     final ComicCardData item = collectionCards[index];
                     return SizedBox(
-                      width: 136,
+                      width: _libraryPreviewWidth,
                       child: _LibraryCard(
                         item: item,
                         onTap: () => onOpenComic(item.href),
@@ -177,17 +171,16 @@ class ProfilePageView extends StatelessWidget {
       addSection(
         _SectionCard(
           title: '已缓存漫画',
-          action: _SectionActionButton(
+          action: _SectionHeaderAction(
+            metaText: '${cachedComicCards.length} 部漫画',
             semanticLabel: '查看全部缓存',
             onTap: onOpenCachedComicPage,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              _SectionCaption('共 ${cachedComicCards.length} 部漫画'),
-              const SizedBox(height: 14),
               SizedBox(
-                height: 232,
+                height: _libraryPreviewHeight,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: cachedComicCards.length,
@@ -195,7 +188,7 @@ class ProfilePageView extends StatelessWidget {
                   itemBuilder: (BuildContext context, int index) {
                     final ComicCardData item = cachedComicCards[index];
                     return SizedBox(
-                      width: 136,
+                      width: _libraryPreviewWidth,
                       child: _LibraryCard(
                         item: item,
                         onTap: () =>
@@ -229,17 +222,16 @@ class ProfilePageView extends StatelessWidget {
       addSection(
         _SectionCard(
           title: '浏览历史',
-          action: _SectionActionButton(
+          action: _SectionHeaderAction(
+            metaText: '$historyTotal 条记录',
             semanticLabel: '查看全部历史',
             onTap: onOpenHistoryPage,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              _SectionCaption('最近浏览 $historyTotal 条记录'),
-              const SizedBox(height: 14),
               SizedBox(
-                height: 232,
+                height: _libraryPreviewHeight,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: historyCards.length,
@@ -247,7 +239,7 @@ class ProfilePageView extends StatelessWidget {
                   itemBuilder: (BuildContext context, int index) {
                     final ComicCardData item = historyCards[index];
                     return SizedBox(
-                      width: 136,
+                      width: _libraryPreviewWidth,
                       child: _LibraryCard(
                         item: item,
                         onTap: () => onOpenComic(item.href),
@@ -278,6 +270,7 @@ class ProfilePageView extends StatelessWidget {
         _HostSettingsEntryCard(
           currentHost: currentHost,
           candidateHosts: candidateHosts,
+          candidateHostAliases: candidateHostAliases,
           snapshot: hostSnapshot,
           isRefreshing: isRefreshingHosts,
           onRefresh: onRefreshHosts,
@@ -310,10 +303,7 @@ class ProfilePageView extends StatelessWidget {
     );
   }
 
-  Widget _buildComicCollectionSection(
-    BuildContext context, {
-    required String title,
-    required String summary,
+  Widget _buildComicCollectionSection({
     required List<ComicCardData> items,
     required String emptyMessage,
     required ValueChanged<String> onTap,
@@ -321,32 +311,22 @@ class ProfilePageView extends StatelessWidget {
     PagerData pager = const PagerData(),
     ValueChanged<int>? onOpenPage,
   }) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return _SectionCard(
-      title: title,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            summary,
-            style: TextStyle(
-              color: colorScheme.onSurface.withValues(alpha: 0.7),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 16),
-          ComicGrid(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        AppSurfaceCard(
+          child: ComicGrid(
             items: items,
             onTap: onTap,
             onLongPress: onLongPress,
             emptyMessage: emptyMessage,
           ),
-          if (_shouldShowPager(pager)) ...<Widget>[
-            const SizedBox(height: 16),
-            _ProfilePagerBar(pager: pager, onOpenPage: onOpenPage),
-          ],
+        ),
+        if (_shouldShowPager(pager)) ...<Widget>[
+          const SizedBox(height: 16),
+          _ProfilePagerBar(pager: pager, onOpenPage: onOpenPage),
         ],
-      ),
+      ],
     );
   }
 
@@ -395,35 +375,19 @@ class ProfilePageView extends StatelessWidget {
   }
 
   Widget _buildUserCard(BuildContext context, ProfileUserData user) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return _SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Row(
             children: <Widget>[
-              _AvatarImage(imageUrl: user.avatarUrl),
-              const SizedBox(width: 14),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      user.displayName,
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      user.username,
-                      style: TextStyle(
-                        color: colorScheme.onSurface.withValues(alpha: 0.76),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  user.displayName,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
               IconButton.filledTonal(
@@ -432,23 +396,6 @@ class ProfilePageView extends StatelessWidget {
               ),
             ],
           ),
-          if (user.membershipLabel.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: colorScheme.secondaryContainer,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                user.membershipLabel,
-                style: TextStyle(
-                  color: colorScheme.onSecondaryContainer,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -570,6 +517,7 @@ class _HostSettingsEntryCard extends StatelessWidget {
   const _HostSettingsEntryCard({
     required this.currentHost,
     required this.candidateHosts,
+    required this.candidateHostAliases,
     required this.snapshot,
     required this.isRefreshing,
     this.onRefresh,
@@ -579,6 +527,7 @@ class _HostSettingsEntryCard extends StatelessWidget {
 
   final String currentHost;
   final List<String> candidateHosts;
+  final Map<String, List<String>> candidateHostAliases;
   final HostProbeSnapshot? snapshot;
   final bool isRefreshing;
   final FutureOr<void> Function()? onRefresh;
@@ -588,7 +537,7 @@ class _HostSettingsEntryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AppSurfaceCard(
-      title: '节点设置',
+      title: '访问域名',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -602,6 +551,7 @@ class _HostSettingsEntryCard extends StatelessWidget {
                       return _HostSettingsPage(
                         currentHost: currentHost,
                         candidateHosts: candidateHosts,
+                        candidateHostAliases: candidateHostAliases,
                         snapshot: snapshot,
                         isRefreshing: isRefreshing,
                         onRefresh: onRefresh,
@@ -613,7 +563,7 @@ class _HostSettingsEntryCard extends StatelessWidget {
                 );
               },
               icon: const Icon(Icons.tune_rounded),
-              label: const Text('管理节点'),
+              label: const Text('管理域名'),
             ),
           ),
         ],
@@ -634,6 +584,7 @@ class _HostSettingsPage extends StatefulWidget {
   const _HostSettingsPage({
     required this.currentHost,
     required this.candidateHosts,
+    required this.candidateHostAliases,
     required this.snapshot,
     required this.isRefreshing,
     this.onRefresh,
@@ -643,6 +594,7 @@ class _HostSettingsPage extends StatefulWidget {
 
   final String currentHost;
   final List<String> candidateHosts;
+  final Map<String, List<String>> candidateHostAliases;
   final HostProbeSnapshot? snapshot;
   final bool isRefreshing;
   final FutureOr<void> Function()? onRefresh;
@@ -694,31 +646,57 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
     final String normalizedPinnedHost = pinnedHost ?? '';
     final String recommendedHost =
         _snapshot?.selectedHost.trim().toLowerCase() ?? '';
-    final Set<String> selectableHosts = <String>{
-      for (final String host in widget.candidateHosts)
-        if (_normalizeHostValue(host).isNotEmpty) _normalizeHostValue(host),
+    final Map<String, List<String>> aliasGroups = _normalizedAliasGroups(
+      widget.candidateHosts,
+      widget.candidateHostAliases,
+    );
+    final Map<String, String> canonicalHostByAlias = <String, String>{
+      for (final MapEntry<String, List<String>> entry in aliasGroups.entries)
+        entry.key: entry.key,
+      for (final MapEntry<String, List<String>> entry in aliasGroups.entries)
+        for (final String alias in entry.value) alias: entry.key,
     };
+    final Set<String> selectableHosts = aliasGroups.keys.toSet();
+    final Map<String, List<HostProbeRecord>> probesByCanonicalHost =
+        <String, List<HostProbeRecord>>{};
+    for (final HostProbeRecord probe
+        in _snapshot?.probes ?? const <HostProbeRecord>[]) {
+      final String normalizedProbeHost = _normalizeHostValue(probe.host);
+      if (normalizedProbeHost.isEmpty) {
+        continue;
+      }
+      final String canonicalHost =
+          canonicalHostByAlias[normalizedProbeHost] ?? normalizedProbeHost;
+      probesByCanonicalHost
+          .putIfAbsent(canonicalHost, () => <HostProbeRecord>[])
+          .add(probe);
+    }
     final Map<String, HostProbeRecord> probes = <String, HostProbeRecord>{
-      for (final HostProbeRecord probe
-          in _snapshot?.probes ?? const <HostProbeRecord>[])
-        probe.host.trim().toLowerCase(): probe,
+      for (final MapEntry<String, List<HostProbeRecord>> entry
+          in probesByCanonicalHost.entries)
+        entry.key: _preferredProbeForHostGroup(entry.value),
     };
+    final String normalizedCurrentKey =
+        canonicalHostByAlias[normalizedCurrentHost] ?? normalizedCurrentHost;
+    final String normalizedPinnedKey =
+        canonicalHostByAlias[normalizedPinnedHost] ?? normalizedPinnedHost;
+    final String recommendedKey =
+        canonicalHostByAlias[recommendedHost] ?? recommendedHost;
     final Set<String> seenHosts = <String>{};
     final List<String> hosts = <String>[
       for (final String host in selectableHosts)
         if (seenHosts.add(host)) host,
-      if (normalizedCurrentHost.isNotEmpty &&
-          seenHosts.add(normalizedCurrentHost))
-        normalizedCurrentHost,
-      if (normalizedPinnedHost.isNotEmpty &&
-          seenHosts.add(normalizedPinnedHost))
-        normalizedPinnedHost,
-      if (recommendedHost.isNotEmpty && seenHosts.add(recommendedHost))
-        recommendedHost,
+      if (normalizedCurrentKey.isNotEmpty &&
+          seenHosts.add(normalizedCurrentKey))
+        normalizedCurrentKey,
+      if (normalizedPinnedKey.isNotEmpty && seenHosts.add(normalizedPinnedKey))
+        normalizedPinnedKey,
+      if (recommendedKey.isNotEmpty && seenHosts.add(recommendedKey))
+        recommendedKey,
     ];
 
     return Scaffold(
-      appBar: AppBar(title: const Text('节点设置')),
+      appBar: AppBar(title: const Text('访问域名')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -736,7 +714,7 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
                           runSpacing: 10,
                           children: <Widget>[
                             _HostSummaryChip(
-                              label: '当前节点',
+                              label: '当前域名',
                               value: normalizedCurrentHost.isEmpty
                                   ? '--'
                                   : normalizedCurrentHost,
@@ -785,7 +763,7 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
             if (hosts.isEmpty)
               AppSurfaceCard(
                 child: Text(
-                  '还没有可用的节点信息。',
+                  '还没有可用的域名信息。',
                   style: TextStyle(
                     color: Theme.of(
                       context,
@@ -803,12 +781,13 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
                           child: _HostOptionTile(
                             host: host,
                             probe: probes[host],
-                            isCurrent: host == normalizedCurrentHost,
-                            isPinned: host == pinnedHost,
+                            aliases: aliasGroups[host] ?? const <String>[],
+                            isCurrent: host == normalizedCurrentKey,
+                            isPinned: host == normalizedPinnedKey,
                             isRecommended:
-                                recommendedHost.isNotEmpty &&
-                                host == recommendedHost &&
-                                host != normalizedCurrentHost,
+                                recommendedKey.isNotEmpty &&
+                                host == recommendedKey &&
+                                host != normalizedCurrentKey,
                             enabled:
                                 !_isBusy &&
                                 widget.onSelectHost != null &&
@@ -832,6 +811,50 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
     return value.trim().toLowerCase();
   }
 
+  Map<String, List<String>> _normalizedAliasGroups(
+    List<String> candidateHosts,
+    Map<String, List<String>> candidateHostAliases,
+  ) {
+    final Map<String, List<String>> normalizedGroups = <String, List<String>>{};
+    for (final MapEntry<String, List<String>> entry
+        in candidateHostAliases.entries) {
+      final String normalizedPrimary = _normalizeHostValue(entry.key);
+      if (normalizedPrimary.isEmpty) {
+        continue;
+      }
+      final List<String> aliases = <String>[];
+      final Set<String> seenAliases = <String>{normalizedPrimary};
+      for (final String alias in entry.value) {
+        final String normalizedAlias = _normalizeHostValue(alias);
+        if (normalizedAlias.isEmpty || !seenAliases.add(normalizedAlias)) {
+          continue;
+        }
+        aliases.add(normalizedAlias);
+      }
+      normalizedGroups[normalizedPrimary] = aliases;
+    }
+    for (final String host in candidateHosts) {
+      final String normalizedHost = _normalizeHostValue(host);
+      if (normalizedHost.isEmpty ||
+          normalizedGroups.containsKey(normalizedHost)) {
+        continue;
+      }
+      normalizedGroups[normalizedHost] = const <String>[];
+    }
+    return normalizedGroups;
+  }
+
+  HostProbeRecord _preferredProbeForHostGroup(List<HostProbeRecord> probes) {
+    final List<HostProbeRecord> ranked = probes.toList(growable: false)
+      ..sort((HostProbeRecord left, HostProbeRecord right) {
+        if (left.success != right.success) {
+          return left.success ? -1 : 1;
+        }
+        return left.latencyMs.compareTo(right.latencyMs);
+      });
+    return ranked.first;
+  }
+
   HostProbeSnapshot? _normalizeSnapshot(HostProbeSnapshot? snapshot) {
     if (snapshot == null) {
       return null;
@@ -851,6 +874,14 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
       if (_currentHost.isNotEmpty) _currentHost,
       for (final String host in widget.candidateHosts)
         if (_normalizeHostValue(host).isNotEmpty) _normalizeHostValue(host),
+      for (final MapEntry<String, List<String>> entry
+          in widget.candidateHostAliases.entries)
+        if (_normalizeHostValue(entry.key).isNotEmpty)
+          _normalizeHostValue(entry.key),
+      for (final MapEntry<String, List<String>> entry
+          in widget.candidateHostAliases.entries)
+        for (final String alias in entry.value)
+          if (_normalizeHostValue(alias).isNotEmpty) _normalizeHostValue(alias),
       for (final HostProbeRecord probe
           in _snapshot?.probes ?? const <HostProbeRecord>[])
         if (_normalizeHostValue(probe.host).isNotEmpty)
@@ -1066,6 +1097,7 @@ class _HostSummaryChip extends StatelessWidget {
 class _HostOptionTile extends StatelessWidget {
   const _HostOptionTile({
     required this.host,
+    required this.aliases,
     required this.isCurrent,
     required this.isPinned,
     required this.isRecommended,
@@ -1075,6 +1107,7 @@ class _HostOptionTile extends StatelessWidget {
   });
 
   final String host;
+  final List<String> aliases;
   final HostProbeRecord? probe;
   final bool isCurrent;
   final bool isPinned;
@@ -1144,6 +1177,19 @@ class _HostOptionTile extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
+                  if (aliases.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 6),
+                    Text(
+                      '同 IP：${aliases.join(' / ')}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colorScheme.onSurface.withValues(alpha: 0.6),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -1224,20 +1270,34 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
-class _SectionCaption extends StatelessWidget {
-  const _SectionCaption(this.text);
+class _SectionHeaderAction extends StatelessWidget {
+  const _SectionHeaderAction({
+    required this.metaText,
+    required this.semanticLabel,
+    required this.onTap,
+  });
 
-  final String text;
+  final String metaText;
+  final String semanticLabel;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: TextStyle(
-        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.68),
-        fontSize: 12,
-        fontWeight: FontWeight.w700,
-      ),
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text(
+          metaText,
+          style: TextStyle(
+            color: colorScheme.onSurface.withValues(alpha: 0.58),
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(width: 10),
+        _SectionActionButton(semanticLabel: semanticLabel, onTap: onTap),
+      ],
     );
   }
 }
@@ -1282,40 +1342,14 @@ class _SectionActionButton extends StatelessWidget {
   }
 }
 
-class _AvatarImage extends StatelessWidget {
-  const _AvatarImage({required this.imageUrl});
-
-  final String imageUrl;
-
-  @override
-  Widget build(BuildContext context) {
-    if (imageUrl.isEmpty) {
-      return const CircleAvatar(radius: 28, child: Icon(Icons.person_rounded));
-    }
-    return ClipOval(
-      child: CachedNetworkImage(
-        imageUrl: imageUrl,
-        width: 56,
-        height: 56,
-        fit: BoxFit.cover,
-        cacheManager: EasyCopyImageCaches.coverCache,
-        errorWidget: (_, __, ___) {
-          return const CircleAvatar(
-            radius: 28,
-            child: Icon(Icons.person_rounded),
-          );
-        },
-      ),
-    );
-  }
-}
-
 class _LibraryCard extends StatelessWidget {
   const _LibraryCard({
     required this.item,
     required this.onTap,
     this.onLongPress,
   });
+
+  static const double _titleHeight = 33.6;
 
   final ComicCardData item;
   final VoidCallback onTap;
@@ -1345,11 +1379,18 @@ class _LibraryCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            item.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w800),
+          SizedBox(
+            height: _titleHeight,
+            child: Text(
+              item.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.2,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
           if (item.subtitle.isNotEmpty) ...<Widget>[
             const SizedBox(height: 4),

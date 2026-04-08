@@ -295,9 +295,9 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                         (ReaderPreferences current) => current
                                             .copyWith(showPageGap: value),
                                       ),
-                                  );
-                                },
-                              ),
+                                );
+                              },
+                            ),
                             if (_readerPlatformBridge.isAndroidSupported)
                               SettingsSwitchRow(
                                 label: '使用音量键翻页',
@@ -656,9 +656,14 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     final bool isLocalFile = parsedUri != null && parsedUri.scheme == 'file';
     final bool isDocumentTreeFile =
         parsedUri != null && parsedUri.scheme == 'content';
+    final bool isDocumentTreeRelativeFile =
+        parsedUri != null &&
+        parsedUri.scheme == documentTreeRelativeImageScheme;
     final ImageProvider<Object> imageProvider;
     if (isLocalFile) {
       imageProvider = FileImage(File.fromUri(parsedUri));
+    } else if (isDocumentTreeRelativeFile) {
+      imageProvider = DocumentTreeRelativeImageProvider.fromUri(parsedUri);
     } else if (isDocumentTreeFile) {
       imageProvider = DocumentTreeImageProvider(imageUrl);
     } else {
@@ -680,7 +685,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
           if (!aspectRatio.isFinite || aspectRatio <= 0) {
             return;
           }
-          final double? previousAspectRatio = _readerImageAspectRatios[imageUrl];
+          final double? previousAspectRatio =
+              _readerImageAspectRatios[imageUrl];
           if (previousAspectRatio != null &&
               (previousAspectRatio - aspectRatio).abs() < 0.01) {
             return;
@@ -731,8 +737,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     ReaderPageData page, {
     double minHeight = 0,
   }) {
-    final List<ChapterComment> comments = _readerCommentsChapterId ==
-            _readerChapterIdForPage(page)
+    final List<ChapterComment> comments =
+        _readerCommentsChapterId == _readerChapterIdForPage(page)
         ? _readerChapterComments
         : const <ChapterComment>[];
     final Size screenSize = MediaQuery.sizeOf(context);
@@ -749,11 +755,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       children: <Widget>[
         ConstrainedBox(
           constraints: BoxConstraints(maxHeight: commentCloudMaxHeight),
-          child: _buildReaderCommentCloud(
-            context,
-            page,
-            comments: comments,
-          ),
+          child: _buildReaderCommentCloud(context, page, comments: comments),
         ),
         const SizedBox(height: 6),
         _buildReaderCommentComposer(context, page),
@@ -792,7 +794,10 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     );
   }
 
-  Widget _buildReaderCommentComposer(BuildContext context, ReaderPageData page) {
+  Widget _buildReaderCommentComposer(
+    BuildContext context,
+    ReaderPageData page,
+  ) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final bool isAuthenticated =
         _session.isAuthenticated && (_session.token ?? '').isNotEmpty;
@@ -972,7 +977,10 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         final double maxViewportHeight = constraints.hasBoundedHeight
             ? constraints.maxHeight
             : contentHeight;
-        final double viewportHeight = math.min(contentHeight, maxViewportHeight);
+        final double viewportHeight = math.min(
+          contentHeight,
+          maxViewportHeight,
+        );
         final bool canScroll = contentHeight > viewportHeight + 0.5;
         final Widget cloud = Padding(
           padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1025,8 +1033,9 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     List<ChapterComment> comments, {
     required double maxWidth,
   }) {
-    final double availableWidth =
-        maxWidth.clamp(120.0, double.infinity).toDouble();
+    final double availableWidth = maxWidth
+        .clamp(120.0, double.infinity)
+        .toDouble();
     const double slotWidth = 6;
     const double runSpacing = 6;
     final double maxBubbleWidth = availableWidth >= 420
@@ -1122,22 +1131,21 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       textDirection: Directionality.of(context),
       textScaler: textScaler,
     )..layout();
-    final double bubbleWidth = (naturalPainter.width +
-            horizontalPadding +
-            avatarSize +
-            avatarGap)
-        .clamp(minBubbleWidth, maxBubbleWidth)
-        .toDouble();
-    final TextPainter painter = TextPainter(
-      text: textSpan,
-      textDirection: Directionality.of(context),
-      textScaler: textScaler,
-    )..layout(
-      maxWidth: math.max(
-        18,
-        bubbleWidth - horizontalPadding - avatarSize - avatarGap,
-      ),
-    );
+    final double bubbleWidth =
+        (naturalPainter.width + horizontalPadding + avatarSize + avatarGap)
+            .clamp(minBubbleWidth, maxBubbleWidth)
+            .toDouble();
+    final TextPainter painter =
+        TextPainter(
+          text: textSpan,
+          textDirection: Directionality.of(context),
+          textScaler: textScaler,
+        )..layout(
+          maxWidth: math.max(
+            18,
+            bubbleWidth - horizontalPadding - avatarSize - avatarGap,
+          ),
+        );
     final double contentHeight = math.max(avatarSize, painter.height);
     return _ReaderCommentBubbleMetrics(
       width: bubbleWidth,
@@ -1159,10 +1167,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       colorScheme.surfaceContainerHigh.withValues(alpha: 0.98),
     ];
     final Color backgroundColor = bubbleColors[index % bubbleColors.length];
-    final Color foregroundColor = ThemeData.estimateBrightnessForColor(
-              backgroundColor,
-            ) ==
-            Brightness.dark
+    final Color foregroundColor =
+        ThemeData.estimateBrightnessForColor(backgroundColor) == Brightness.dark
         ? Colors.white
         : colorScheme.onSurface;
     final TextStyle messageStyle = TextStyle(
@@ -1183,9 +1189,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         decoration: BoxDecoration(
           color: backgroundColor,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: foregroundColor.withValues(alpha: 0.06),
-          ),
+          border: Border.all(color: foregroundColor.withValues(alpha: 0.06)),
         ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(6, 5, 6, 5),
@@ -1344,14 +1348,14 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     final double pullDistance = isPrevious
         ? _readerPreviousChapterPullDistance
         : _readerNextChapterPullDistance;
-    final bool isReady = (isPrevious
+    final bool isReady =
+        (isPrevious
             ? _readerPreviousChapterPullReady
             : _readerNextChapterPullReady) &&
         !isLoading;
-    final double progress =
-        (pullDistance / _readerNextChapterTriggerDistance)
-            .clamp(0, 1)
-            .toDouble();
+    final double progress = (pullDistance / _readerNextChapterTriggerDistance)
+        .clamp(0, 1)
+        .toDouble();
     final bool isVisible = forceVisible || isLoading || progress > 0;
     final IconData directionIcon = switch ((
       isPrevious,
@@ -1379,12 +1383,12 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     )) {
       (false, false, Axis.vertical) => -1,
       (true, false, Axis.vertical) => 1,
-      (false, true, Axis.horizontal) when
-          _readerPreferences.readingDirection ==
+      (false, true, Axis.horizontal)
+          when _readerPreferences.readingDirection ==
               ReaderReadingDirection.rightToLeft =>
         1,
-      (true, true, Axis.horizontal) when
-          _readerPreferences.readingDirection ==
+      (true, true, Axis.horizontal)
+          when _readerPreferences.readingDirection ==
               ReaderReadingDirection.rightToLeft =>
         -1,
       (false, true, Axis.horizontal) => -1,
@@ -1466,12 +1470,12 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                       opacity: isLoading
                           ? 0.28 + (index * 0.12)
                           : (0.18 +
-                                  (((progress * 1.2) - (index * 0.18))
-                                              .clamp(0, 1)
-                                              .toDouble() *
-                                          0.78))
-                              .clamp(0, 1)
-                              .toDouble(),
+                                    (((progress * 1.2) - (index * 0.18))
+                                            .clamp(0, 1)
+                                            .toDouble() *
+                                        0.78))
+                                .clamp(0, 1)
+                                .toDouble(),
                       child: Icon(
                         directionIcon,
                         size: compact ? 18 : 22,

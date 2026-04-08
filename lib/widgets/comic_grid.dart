@@ -50,6 +50,8 @@ class ComicGrid extends StatelessWidget {
 class _ComicCard extends StatelessWidget {
   const _ComicCard({required this.item, required this.onTap, this.onLongPress});
 
+  static const double _titleHeight = 33.6;
+
   final ComicCardData item;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
@@ -109,14 +111,17 @@ class _ComicCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Text(
-                      item.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        height: 1.2,
-                        fontWeight: FontWeight.w800,
+                    SizedBox(
+                      height: _titleHeight,
+                      child: Text(
+                        item.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.2,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                     ),
                     if (item.subtitle.isNotEmpty) ...<Widget>[

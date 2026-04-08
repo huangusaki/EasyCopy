@@ -127,15 +127,6 @@ class _DetailChapterControlChip extends StatelessWidget {
             color: backgroundColor,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: borderColor),
-            boxShadow: active && enabled
-                ? <BoxShadow>[
-                    BoxShadow(
-                      color: colorScheme.primary.withValues(alpha: 0.14),
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
-                    ),
-                  ]
-                : null,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -399,6 +390,172 @@ class _FeatureBannerCard extends StatelessWidget {
   }
 }
 
+class _TopicIssueList extends StatelessWidget {
+  const _TopicIssueList({required this.items, required this.onTap});
+
+  final List<ComicCardData> items;
+  final ValueChanged<String> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) {
+      return Text(
+        '还没有可显示的专题。',
+        style: TextStyle(
+          color: Theme.of(
+            context,
+          ).colorScheme.onSurface.withValues(alpha: 0.68),
+        ),
+      );
+    }
+    return Column(
+      children: List<Widget>.generate(items.length, (int index) {
+        final ComicCardData item = items[index];
+        return _TopicIssueRow(
+          item: item,
+          isLast: index == items.length - 1,
+          onTap: () => onTap(item.href),
+        );
+      }),
+    );
+  }
+}
+
+class _TopicIssueRow extends StatelessWidget {
+  const _TopicIssueRow({
+    required this.item,
+    required this.isLast,
+    required this.onTap,
+  });
+
+  final ComicCardData item;
+  final bool isLast;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      children: <Widget>[
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  SizedBox(
+                    width: 104,
+                    height: 132,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: _NetworkImageBox(
+                        imageUrl: item.coverUrl,
+                        aspectRatio: 0.8,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: <Widget>[
+                            if (item.badge.trim().isNotEmpty)
+                              _TopicMetaPill(
+                                label: item.badge.replaceAll('專題', '专题'),
+                              ),
+                            if (item.secondaryText.trim().isNotEmpty)
+                              Text(
+                                item.secondaryText,
+                                style: TextStyle(
+                                  color: colorScheme.onSurface.withValues(
+                                    alpha: 0.56,
+                                  ),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          item.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            height: 1.15,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        if (item.subtitle.trim().isNotEmpty) ...<Widget>[
+                          const SizedBox(height: 10),
+                          Text(
+                            item.subtitle,
+                            maxLines: 4,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: colorScheme.onSurface.withValues(
+                                alpha: 0.72,
+                              ),
+                              height: 1.45,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (!isLast) ...<Widget>[
+          const SizedBox(height: 8),
+          Divider(color: colorScheme.outlineVariant, height: 1),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+}
+
+class _TopicMetaPill extends StatelessWidget {
+  const _TopicMetaPill({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer.withValues(alpha: 0.84),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: colorScheme.onPrimaryContainer,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _FilterGroup extends StatelessWidget {
   const _FilterGroup({
     required this.group,
@@ -538,15 +695,6 @@ class _LinkChip extends StatelessWidget {
           color: backgroundColor,
           border: Border.all(color: borderColor),
           borderRadius: BorderRadius.circular(999),
-          boxShadow: active
-              ? <BoxShadow>[
-                  BoxShadow(
-                    color: colorScheme.primary.withValues(alpha: 0.22),
-                    blurRadius: 12,
-                    offset: Offset(0, 3),
-                  ),
-                ]
-              : null,
         ),
         child: Text(
           label,
@@ -632,93 +780,235 @@ class _PagerCardState extends State<_PagerCard> {
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final int? totalPageCount = widget.pager.totalPageCount;
+    final String currentDisplay =
+        widget.pager.currentPageNumber?.toString() ??
+        (widget.pager.currentLabel.isEmpty ? '--' : widget.pager.currentLabel);
+    final String indicatorLabel = totalPageCount == null
+        ? currentDisplay
+        : '$currentDisplay / $totalPageCount';
     return AppSurfaceCard(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
       child: Column(
         children: <Widget>[
           Row(
             children: <Widget>[
-              Expanded(
-                child: FilledButton.tonal(
-                  onPressed: widget.onPrev == null
-                      ? null
-                      : () => _runAction(widget.onPrev),
-                  child: const Text('上一页'),
-                ),
+              _PagerNavButton(
+                icon: Icons.arrow_back_rounded,
+                label: '上一页',
+                onPressed: widget.onPrev == null
+                    ? null
+                    : () => _runAction(widget.onPrev),
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Column(
-                  children: <Widget>[
-                    Text(
-                      widget.pager.currentLabel.isEmpty
-                          ? '--'
-                          : widget.pager.currentLabel,
-                      style: const TextStyle(
-                        fontSize: 22,
+              Expanded(
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer.withValues(
+                        alpha: 0.56,
+                      ),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      indicatorLabel,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 16,
                         fontWeight: FontWeight.w900,
+                        color: colorScheme.onPrimaryContainer,
                       ),
                     ),
-                    if (widget.pager.totalLabel.isNotEmpty)
-                      Text(
-                        widget.pager.totalLabel,
-                        style: TextStyle(
-                          color: colorScheme.onSurface.withValues(alpha: 0.64),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: FilledButton(
-                  onPressed: widget.onNext == null
-                      ? null
-                      : () => _runAction(widget.onNext),
-                  child: const Text('下一页'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            alignment: WrapAlignment.center,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 10,
-            runSpacing: 10,
-            children: <Widget>[
-              SizedBox(
-                width: 96,
-                child: TextField(
-                  controller: _pageController,
-                  enabled: widget.onJumpToPage != null,
-                  keyboardType: TextInputType.number,
-                  textInputAction: TextInputAction.go,
-                  inputFormatters: <TextInputFormatter>[
-                    FilteringTextInputFormatter.digitsOnly,
-                  ],
-                  onSubmitted: (_) => _submitJump(),
-                  decoration: const InputDecoration(
-                    labelText: '页码',
-                    isDense: true,
-                    border: OutlineInputBorder(),
                   ),
                 ),
               ),
-              FilledButton.tonal(
-                onPressed: widget.onJumpToPage == null ? null : _submitJump,
-                child: const Text('跳转'),
+              _PagerNavButton(
+                icon: Icons.arrow_forward_rounded,
+                label: '下一页',
+                reverse: true,
+                onPressed: widget.onNext == null
+                    ? null
+                    : () => _runAction(widget.onNext),
               ),
-              if (totalPageCount != null)
+            ],
+          ),
+          if (widget.onJumpToPage != null) ...<Widget>[
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              child: Container(
+                height: 1,
+                color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
                 Text(
-                  '共 $totalPageCount 页',
+                  '跳至第',
                   style: TextStyle(
-                    color: colorScheme.onSurface.withValues(alpha: 0.68),
+                    color: colorScheme.onSurface.withValues(alpha: 0.62),
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-            ],
-          ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 64,
+                  child: TextField(
+                    controller: _pageController,
+                    textAlign: TextAlign.center,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.go,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: colorScheme.onSurface,
+                    ),
+                    inputFormatters: <TextInputFormatter>[
+                      FilteringTextInputFormatter.digitsOnly,
+                    ],
+                    onSubmitted: (_) => _submitJump(),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      filled: true,
+                      fillColor: colorScheme.surfaceContainerLow,
+                      hintText: totalPageCount == null
+                          ? '--'
+                          : '1-$totalPageCount',
+                      hintStyle: TextStyle(
+                        color: colorScheme.onSurface.withValues(alpha: 0.32),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 10,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: colorScheme.outlineVariant,
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: colorScheme.outlineVariant,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: colorScheme.primary,
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  '页',
+                  style: TextStyle(
+                    color: colorScheme.onSurface.withValues(alpha: 0.62),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  height: 38,
+                  child: FilledButton(
+                    onPressed: _submitJump,
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: const Text(
+                      '前往',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _PagerNavButton extends StatelessWidget {
+  const _PagerNavButton({
+    required this.icon,
+    required this.label,
+    this.onPressed,
+    this.reverse = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final bool reverse;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final bool enabled = onPressed != null;
+    final Color buttonColor = enabled
+        ? colorScheme.surfaceContainerHigh
+        : colorScheme.surfaceContainerLow;
+    final Color contentColor = enabled
+        ? colorScheme.onSurface
+        : colorScheme.onSurface.withValues(alpha: 0.36);
+    return Material(
+      color: buttonColor,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: reverse
+                ? <Widget>[
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                        color: contentColor,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(icon, size: 16, color: contentColor),
+                  ]
+                : <Widget>[
+                    Icon(icon, size: 16, color: contentColor),
+                    const SizedBox(width: 4),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                        color: contentColor,
+                      ),
+                    ),
+                  ],
+          ),
+        ),
       ),
     );
   }

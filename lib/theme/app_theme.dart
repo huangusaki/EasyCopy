@@ -3,19 +3,43 @@ import 'package:flutter/material.dart';
 class AppTheme {
   AppTheme._();
 
-  static const Color _seedColor = Color(0xFF0E8B84);
-  static const Color _accentColor = Color(0xFFFF7B54);
-  static const Color _lightBackground = Color(0xFFF5F1E8);
+  static const Color _seedColor = Color(0xFF1D63F2);
+  static const Color _accentColor = Color(0xFF5A91FF);
+  static const Color _lightBackground = Color(0xFFFFFFFF);
   static const Color _darkBackground = Color(0xFF151A1F);
 
   static ThemeData buildLightTheme() {
-    final ColorScheme colorScheme = ColorScheme.fromSeed(
+    final ColorScheme base = ColorScheme.fromSeed(
       seedColor: _seedColor,
       primary: _seedColor,
       secondary: _accentColor,
       surface: Colors.white,
       surfaceTint: Colors.white,
       brightness: Brightness.light,
+    );
+    final ColorScheme colorScheme = base.copyWith(
+      primary: _seedColor,
+      onPrimary: Colors.white,
+      primaryContainer: const Color(0xFFE3E8F3),
+      onPrimaryContainer: const Color(0xFF163266),
+      secondary: const Color(0xFF4F89FF),
+      onSecondary: Colors.white,
+      secondaryContainer: const Color(0xFFE7EBF3),
+      onSecondaryContainer: const Color(0xFF173666),
+      tertiary: const Color(0xFF6D86B8),
+      tertiaryContainer: const Color(0xFFE6E9F0),
+      onTertiaryContainer: const Color(0xFF263C69),
+      surface: const Color(0xFFF3F4F6),
+      surfaceTint: const Color(0xFFF3F4F6),
+      surfaceContainerLowest: Colors.white,
+      surfaceContainerLow: const Color(0xFFEFEFF2),
+      surfaceContainer: const Color(0xFFE8E9ED),
+      surfaceContainerHigh: const Color(0xFFE1E3E8),
+      surfaceContainerHighest: const Color(0xFFD9DCE2),
+      outline: const Color(0xFFB2B8C2),
+      outlineVariant: const Color(0xFFD2D6DE),
+      onSurface: const Color(0xFF10213F),
+      onSurfaceVariant: const Color(0xFF4F6287),
     );
 
     return _buildTheme(
@@ -63,9 +87,7 @@ class AppTheme {
         color: colorScheme.surface,
         elevation: 0,
         margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       ),
       dividerColor: colorScheme.outlineVariant,
       bottomSheetTheme: BottomSheetThemeData(

@@ -14,6 +14,7 @@ typedef HostNowProvider = DateTime Function();
 typedef HostDirectoryProvider = Future<Directory> Function();
 typedef HostProbeRunner = Future<HostProbeRecord> Function(String host);
 typedef HostConnectivityRunner = Future<bool> Function(String host);
+typedef HostAddressLookup = Future<List<String>> Function(String host);
 
 class HostProbeRecord {
   const HostProbeRecord({
@@ -21,6 +22,7 @@ class HostProbeRecord {
     required this.success,
     required this.latencyMs,
     this.statusCode,
+    this.addressSignature,
   });
 
   factory HostProbeRecord.fromJson(Map<String, Object?> json) {
@@ -29,6 +31,7 @@ class HostProbeRecord {
       success: (json['success'] as bool?) ?? false,
       latencyMs: (json['latencyMs'] as num?)?.toInt() ?? 999999,
       statusCode: (json['statusCode'] as num?)?.toInt(),
+      addressSignature: (json['addressSignature'] as String?)?.trim(),
     );
   }
 
@@ -36,6 +39,7 @@ class HostProbeRecord {
   final bool success;
   final int latencyMs;
   final int? statusCode;
+  final String? addressSignature;
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
@@ -43,8 +47,23 @@ class HostProbeRecord {
       'success': success,
       'latencyMs': latencyMs,
       'statusCode': statusCode,
+      'addressSignature': addressSignature,
     };
   }
+}
+
+class _HostAliasGroup {
+  const _HostAliasGroup({
+    required this.primaryHost,
+    required this.aliases,
+    required this.bestLatencyMs,
+    required this.preferenceIndex,
+  });
+
+  final String primaryHost;
+  final List<String> aliases;
+  final int bestLatencyMs;
+  final int preferenceIndex;
 }
 
 class HostProbeSnapshot {
@@ -102,6 +121,7 @@ class HostManager {
     HostNowProvider? now,
     HostProbeRunner? probeRunner,
     HostConnectivityRunner? connectivityRunner,
+    HostAddressLookup? addressLookup,
     String userAgent = defaultDesktopUserAgent,
   }) : _client = client ?? http.Client(),
        _seedHosts = _normalizeHosts(
@@ -112,6 +132,7 @@ class HostManager {
        _now = now ?? DateTime.now,
        _probeRunner = probeRunner,
        _connectivityRunner = connectivityRunner,
+       _addressLookup = addressLookup,
        _userAgent = userAgent,
        _currentHost = _firstHost(
          candidateHosts ?? _buildDefaultCandidateHosts(),
@@ -130,6 +151,7 @@ class HostManager {
   final HostNowProvider _now;
   final HostProbeRunner? _probeRunner;
   final HostConnectivityRunner? _connectivityRunner;
+  final HostAddressLookup? _addressLookup;
   final String _userAgent;
 
   Future<void>? _initialization;
@@ -137,8 +159,19 @@ class HostManager {
   HostProbeSnapshot? _snapshot;
   String _currentHost;
   String? _sessionPinnedHost;
+  Map<String, List<String>> _candidateHostAliases =
+      const <String, List<String>>{};
+  final Map<String, String> _addressSignatureCache = <String, String>{};
 
   List<String> get candidateHosts => List<String>.unmodifiable(_candidateHosts);
+
+  Map<String, List<String>> get candidateHostAliases =>
+      Map<String, List<String>>.unmodifiable(
+        _candidateHostAliases.map(
+          (String host, List<String> aliases) =>
+              MapEntry(host, List<String>.unmodifiable(aliases)),
+        ),
+      );
 
   Set<String> get allowedHosts => <String>{
     ..._seedHosts,
@@ -190,6 +223,7 @@ class HostManager {
         _snapshot != null &&
         _now().difference(_snapshot!.checkedAt) < probeCacheTtl) {
       _candidateHosts = _successfulProbeHosts(_snapshot!.probes);
+      _candidateHostAliases = _buildCandidateHostAliases(_snapshot!.probes);
       return;
     }
     final List<String> reachableHosts = await _discoverReachableHosts();
@@ -198,6 +232,7 @@ class HostManager {
         : await Future.wait(reachableHosts.map(_probeHost));
     final List<HostProbeRecord> ranked = _sortProbes(probes);
     _candidateHosts = _successfulProbeHosts(ranked);
+    _candidateHostAliases = _buildCandidateHostAliases(ranked);
     final String? pinnedHost = _sessionPinnedHost == null
         ? null
         : _normalizeHost(_sessionPinnedHost!);
@@ -227,7 +262,7 @@ class HostManager {
     await ensureInitialized();
     final String normalizedHost = _normalizeHost(host);
     if (normalizedHost.isEmpty) {
-      throw StateError('节点不可用，请选择测速成功的节点。');
+      throw StateError('域名不可用，请选择测速成功的域名。');
     }
     final HostProbeRecord? cachedProbe = _probeForHost(normalizedHost);
     final bool cacheFresh =
@@ -239,7 +274,6 @@ class HostManager {
         : await _validateSelectableHost(normalizedHost);
     _sessionPinnedHost = normalizedHost;
     _currentHost = normalizedHost;
-    _candidateHosts = _mergeHosts(<String>[normalizedHost, ..._candidateHosts]);
     _snapshot = HostProbeSnapshot(
       selectedHost: (_snapshot?.selectedHost ?? '').trim().isEmpty
           ? normalizedHost
@@ -251,6 +285,8 @@ class HostManager {
       ),
       sessionPinnedHost: _sessionPinnedHost,
     );
+    _candidateHosts = _successfulProbeHosts(_snapshot!.probes);
+    _candidateHostAliases = _buildCandidateHostAliases(_snapshot!.probes);
     await _saveSnapshot();
   }
 
@@ -341,6 +377,7 @@ class HostManager {
           ? null
           : _normalizeHost(_snapshot!.sessionPinnedHost!);
       _candidateHosts = _successfulProbeHosts(_snapshot!.probes);
+      _candidateHostAliases = _buildCandidateHostAliases(_snapshot!.probes);
     }
     // Cold start should reuse the last known host immediately. Fresh probes run
     // later in the background so the first screen is not blocked on network.
@@ -371,6 +408,7 @@ class HostManager {
       return _probeRunner(host);
     }
     final Stopwatch stopwatch = Stopwatch()..start();
+    final String? addressSignature = await _resolveAddressSignature(host);
     try {
       final http.Response response = await _client
           .get(
@@ -387,10 +425,16 @@ class HostManager {
         success: response.statusCode < 500 && isCompatible,
         latencyMs: stopwatch.elapsedMilliseconds,
         statusCode: response.statusCode,
+        addressSignature: addressSignature,
       );
     } catch (_) {
       stopwatch.stop();
-      return HostProbeRecord(host: host, success: false, latencyMs: 999999);
+      return HostProbeRecord(
+        host: host,
+        success: false,
+        latencyMs: 999999,
+        addressSignature: addressSignature,
+      );
     }
   }
 
@@ -403,11 +447,13 @@ class HostManager {
       return false;
     }
     try {
-      final List<InternetAddress> addresses = await InternetAddress.lookup(
-        normalizedHost,
-      ).timeout(connectTimeout);
+      final List<String> addresses = await _lookupHostAddresses(normalizedHost);
       if (addresses.isEmpty) {
         return false;
+      }
+      final String? addressSignature = _signatureForAddresses(addresses);
+      if (addressSignature != null) {
+        _addressSignatureCache[normalizedHost] = addressSignature;
       }
     } catch (_) {
       return false;
@@ -430,11 +476,11 @@ class HostManager {
   Future<HostProbeRecord> _validateSelectableHost(String host) async {
     final bool reachable = await _isHostReachable(host);
     if (!reachable) {
-      throw StateError('节点不可用，请选择测速成功的节点。');
+      throw StateError('域名不可用，请选择测速成功的域名。');
     }
     final HostProbeRecord probe = await _probeHost(host);
     if (!probe.success) {
-      throw StateError('节点不可用，请选择测速成功的节点。');
+      throw StateError('域名不可用，请选择测速成功的域名。');
     }
     return probe;
   }
@@ -451,11 +497,142 @@ class HostManager {
   }
 
   List<String> _successfulProbeHosts(List<HostProbeRecord> probes) {
-    return _mergeHosts(
-      probes
-          .where((HostProbeRecord probe) => probe.success)
-          .map((HostProbeRecord probe) => probe.host),
+    return _buildHostAliasGroups(
+      probes,
+    ).map((_HostAliasGroup group) => group.primaryHost).toList(growable: false);
+  }
+
+  Map<String, List<String>> _buildCandidateHostAliases(
+    List<HostProbeRecord> probes,
+  ) {
+    final Map<String, List<String>> aliases = <String, List<String>>{};
+    for (final _HostAliasGroup group in _buildHostAliasGroups(probes)) {
+      aliases[group.primaryHost] = List<String>.unmodifiable(group.aliases);
+    }
+    return aliases;
+  }
+
+  List<_HostAliasGroup> _buildHostAliasGroups(List<HostProbeRecord> probes) {
+    final List<HostProbeRecord> successful = probes
+        .where(
+          (HostProbeRecord probe) =>
+              probe.success && _normalizeHost(probe.host).isNotEmpty,
+        )
+        .toList(growable: false);
+    if (successful.isEmpty) {
+      return const <_HostAliasGroup>[];
+    }
+    final Set<String> successfulHosts = <String>{
+      for (final HostProbeRecord probe in successful)
+        _normalizeHost(probe.host),
+    };
+    final List<String> preferenceOrder = _mergeHosts(<String>[
+      ..._seedHosts,
+      if (_sessionPinnedHost != null) _sessionPinnedHost!,
+      _currentHost,
+      ..._candidateHosts,
+      if ((_snapshot?.selectedHost ?? '').trim().isNotEmpty)
+        _snapshot!.selectedHost,
+      for (final HostProbeRecord probe
+          in _snapshot?.probes ?? const <HostProbeRecord>[])
+        probe.host,
+      for (final HostProbeRecord probe in successful) probe.host,
+    ]);
+    final Map<String, int> preferenceIndex = <String, int>{
+      for (int index = 0; index < preferenceOrder.length; index += 1)
+        preferenceOrder[index]: index,
+    };
+    final Map<String, List<HostProbeRecord>> probesByGroup =
+        <String, List<HostProbeRecord>>{};
+    for (final HostProbeRecord probe in successful) {
+      final String normalizedHost = _normalizeHost(probe.host);
+      final String groupKey = _probeGroupKey(probe, successfulHosts);
+      probesByGroup
+          .putIfAbsent(groupKey, () => <HostProbeRecord>[])
+          .add(
+            HostProbeRecord(
+              host: normalizedHost,
+              success: probe.success,
+              latencyMs: probe.latencyMs,
+              statusCode: probe.statusCode,
+              addressSignature: probe.addressSignature,
+            ),
+          );
+    }
+    final List<_HostAliasGroup> groups = <_HostAliasGroup>[];
+    for (final List<HostProbeRecord> groupedProbes in probesByGroup.values) {
+      final List<String> groupedHosts =
+          _mergeHosts(groupedProbes.map((HostProbeRecord probe) => probe.host))
+            ..sort((String left, String right) {
+              final int leftIndex = preferenceIndex[left] ?? 1 << 30;
+              final int rightIndex = preferenceIndex[right] ?? 1 << 30;
+              if (leftIndex != rightIndex) {
+                return leftIndex.compareTo(rightIndex);
+              }
+              return left.compareTo(right);
+            });
+      final String primaryHost = groupedHosts.first;
+      final int bestLatencyMs = groupedProbes.fold<int>(
+        groupedProbes.first.latencyMs,
+        (int current, HostProbeRecord probe) =>
+            probe.latencyMs < current ? probe.latencyMs : current,
+      );
+      groups.add(
+        _HostAliasGroup(
+          primaryHost: primaryHost,
+          aliases: <String>[
+            for (final String host in groupedHosts)
+              if (host != primaryHost) host,
+          ],
+          bestLatencyMs: bestLatencyMs,
+          preferenceIndex: preferenceIndex[primaryHost] ?? 1 << 30,
+        ),
+      );
+    }
+    groups.sort((_HostAliasGroup left, _HostAliasGroup right) {
+      if (left.bestLatencyMs != right.bestLatencyMs) {
+        return left.bestLatencyMs.compareTo(right.bestLatencyMs);
+      }
+      if (left.preferenceIndex != right.preferenceIndex) {
+        return left.preferenceIndex.compareTo(right.preferenceIndex);
+      }
+      return left.primaryHost.compareTo(right.primaryHost);
+    });
+    return groups;
+  }
+
+  String _probeGroupKey(HostProbeRecord probe, Set<String> successfulHosts) {
+    final String normalizedHost = _normalizeHost(probe.host);
+    final String? pairKey = _wwwPairGroupKey(normalizedHost, successfulHosts);
+    if (pairKey != null) {
+      return pairKey;
+    }
+    final String? normalizedSignature = _normalizeAddressSignature(
+      probe.addressSignature,
     );
+    if (normalizedSignature != null) {
+      return 'ip:$normalizedSignature';
+    }
+    return 'host:$normalizedHost';
+  }
+
+  String? _wwwPairGroupKey(String host, Set<String> successfulHosts) {
+    final String normalizedHost = _normalizeHost(host);
+    if (normalizedHost.isEmpty) {
+      return null;
+    }
+    if (normalizedHost.startsWith('www.')) {
+      final String bareHost = normalizedHost.substring(4);
+      if (bareHost.isNotEmpty && successfulHosts.contains(bareHost)) {
+        return 'pair:$bareHost';
+      }
+      return null;
+    }
+    final String wwwHost = 'www.$normalizedHost';
+    if (successfulHosts.contains(wwwHost)) {
+      return 'pair:$normalizedHost';
+    }
+    return null;
   }
 
   HostProbeRecord? _probeForHost(String host) {
@@ -553,27 +730,97 @@ class HostManager {
   }
 
   static List<String> _buildDefaultCandidateHosts() {
-    final int year = DateTime.now().year;
     return _normalizeHosts(<String>[
-      'www.${year + 1}copy.com',
-      '${year + 1}copy.com',
-      'www.${year}copy.com',
-      '${year}copy.com',
-      'www.${year - 1}copy.com',
-      '${year - 1}copy.com',
+      'www.2026copy.com',
+      '2026copy.com',
+      'www.2025copy.com',
+      '2025copy.com',
       'www.copy20.com',
       'copy20.com',
-      'www.copy-manga.com',
-      'copy-manga.com',
-      'www.copymanga.tv',
-      'copymanga.tv',
       'www.mangacopy.com',
       'mangacopy.com',
-      'www.copy2000.site',
       'copy2000.site',
-      'www.copy2000.online',
+      'www.copy2000.site',
+      'copy-manga.com',
+      'www.copy-manga.com',
       'copy2000.online',
+      'www.copy2000.online',
+      'www.2027copy.com',
+      '2027copy.com',
+      'www.2024copy.com',
+      '2024copy.com',
+      'www.copymanga.tv',
+      'copymanga.tv',
     ]);
+  }
+
+  Future<List<String>> _lookupHostAddresses(String host) async {
+    if (_addressLookup != null) {
+      return _normalizeAddresses(await _addressLookup(host));
+    }
+    final List<InternetAddress> addresses = await InternetAddress.lookup(
+      host,
+    ).timeout(connectTimeout);
+    return _normalizeAddresses(
+      addresses
+          .where(
+            (InternetAddress address) =>
+                address.type == InternetAddressType.IPv4,
+          )
+          .map((InternetAddress address) => address.address),
+    );
+  }
+
+  Future<String?> _resolveAddressSignature(String host) async {
+    final String normalizedHost = _normalizeHost(host);
+    if (normalizedHost.isEmpty) {
+      return null;
+    }
+    final String? cached = _addressSignatureCache[normalizedHost];
+    if (cached != null && cached.isNotEmpty) {
+      return cached;
+    }
+    try {
+      final String? signature = _signatureForAddresses(
+        await _lookupHostAddresses(normalizedHost),
+      );
+      if (signature != null) {
+        _addressSignatureCache[normalizedHost] = signature;
+      }
+      return signature;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static List<String> _normalizeAddresses(Iterable<String> addresses) {
+    final List<String> values = <String>[];
+    final Set<String> seen = <String>{};
+    for (final String address in addresses) {
+      final String normalized = address.trim();
+      if (normalized.isEmpty || !seen.add(normalized)) {
+        continue;
+      }
+      values.add(normalized);
+    }
+    values.sort();
+    return values;
+  }
+
+  static String? _signatureForAddresses(Iterable<String> addresses) {
+    final List<String> normalized = _normalizeAddresses(addresses);
+    if (normalized.isEmpty) {
+      return null;
+    }
+    return normalized.join('|');
+  }
+
+  static String? _normalizeAddressSignature(String? value) {
+    final String normalized = (value ?? '').trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
   }
 
   static List<String> _normalizeHosts(Iterable<String> hosts) {
