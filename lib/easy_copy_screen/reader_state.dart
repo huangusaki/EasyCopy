@@ -10,13 +10,87 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
   Axis get _readerNextChapterGestureAxis =>
       _readerPreferences.isPaged ? Axis.horizontal : Axis.vertical;
 
-  double get _readerNextChapterTriggerDistance =>
-      _readerPreferences.isPaged
+  double get _readerNextChapterTriggerDistance => _readerPreferences.isPaged
       ? _readerNextChapterPagedTriggerDistance
       : _readerNextChapterPullTriggerDistance;
 
+  bool get _isReaderZoomGestureLocked =>
+      _isReaderScaleGestureActive || _zoomedReaderImageKeys.isNotEmpty;
+
+  void _setReaderScaleGestureActive(bool value) {
+    if (_isReaderScaleGestureActive == value) {
+      return;
+    }
+    final bool wasLocked = _isReaderZoomGestureLocked;
+    if (!mounted) {
+      _isReaderScaleGestureActive = value;
+      return;
+    }
+    _setStateIfMounted(() {
+      _isReaderScaleGestureActive = value;
+    });
+    _handleReaderZoomLockChanged(wasLocked);
+  }
+
+  void _setReaderImageZoomed(String imageKey, bool isZoomed) {
+    final bool alreadyZoomed = _zoomedReaderImageKeys.contains(imageKey);
+    if (alreadyZoomed == isZoomed) {
+      return;
+    }
+    final bool wasLocked = _isReaderZoomGestureLocked;
+    if (!mounted) {
+      if (isZoomed) {
+        _zoomedReaderImageKeys.add(imageKey);
+      } else {
+        _zoomedReaderImageKeys.remove(imageKey);
+      }
+      return;
+    }
+    _setStateIfMounted(() {
+      if (isZoomed) {
+        _zoomedReaderImageKeys.add(imageKey);
+      } else {
+        _zoomedReaderImageKeys.remove(imageKey);
+      }
+    });
+    _handleReaderZoomLockChanged(wasLocked);
+  }
+
+  void _resetReaderZoomState() {
+    if (!_isReaderScaleGestureActive && _zoomedReaderImageKeys.isEmpty) {
+      return;
+    }
+    final bool wasLocked = _isReaderZoomGestureLocked;
+    if (!mounted) {
+      _isReaderScaleGestureActive = false;
+      _zoomedReaderImageKeys.clear();
+      return;
+    }
+    _setStateIfMounted(() {
+      _isReaderScaleGestureActive = false;
+      _zoomedReaderImageKeys.clear();
+    });
+    _handleReaderZoomLockChanged(wasLocked);
+  }
+
+  void _handleReaderZoomLockChanged(bool wasLocked) {
+    final bool isLocked = _isReaderZoomGestureLocked;
+    if (wasLocked == isLocked) {
+      return;
+    }
+    if (isLocked) {
+      _readerAutoTurnTimer?.cancel();
+      _resetReaderChapterBoundaryState();
+      _hideReaderChapterControls();
+      return;
+    }
+    _restartReaderAutoTurn();
+  }
+
   void _handleReaderVolumeKeyAction(ReaderVolumeKeyAction action) {
-    if (!_isReaderMode || !_readerPreferences.useVolumeKeysForPaging) {
+    if (!_isReaderMode ||
+        !_readerPreferences.useVolumeKeysForPaging ||
+        _isReaderZoomGestureLocked) {
       return;
     }
     switch (action) {
@@ -28,6 +102,9 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
   }
 
   Future<void> _stepReaderForward() async {
+    if (_isReaderZoomGestureLocked) {
+      return;
+    }
     _readerRestoreCoordinator.noteUserInteraction();
     if (_readerPreferences.isPaged) {
       final EasyCopyPage? page = _page;
@@ -63,6 +140,9 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
   }
 
   Future<void> _stepReaderBackward() async {
+    if (_isReaderZoomGestureLocked) {
+      return;
+    }
     _readerRestoreCoordinator.noteUserInteraction();
     if (_readerPreferences.isPaged) {
       final int previousPageIndex = _currentReaderPageIndex - 1;
@@ -200,7 +280,8 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
     final EasyCopyPage? page = _page;
     if (page is! ReaderPageData ||
         _readerPreferences.autoPageTurnSeconds <= 0 ||
-        _isReaderSettingsOpen) {
+        _isReaderSettingsOpen ||
+        _isReaderZoomGestureLocked) {
       return;
     }
     _readerAutoTurnTimer = Timer(
@@ -553,6 +634,7 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
     final bool hasPreviousChapter = page.prevHref.trim().isNotEmpty;
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
     if ((!hasPreviousChapter && !hasNextChapter) ||
+        _isReaderZoomGestureLocked ||
         notification.depth != 0 ||
         notification.metrics.axis != axis ||
         _isReaderNextChapterLoading) {

@@ -222,6 +222,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   bool _isReaderSettingsOpen = false;
   bool _isReaderChapterControlsVisible = false;
   bool _isReaderExitTransitionActive = false;
+  bool _isReaderScaleGestureActive = false;
   bool _isReaderNextChapterLoading = false;
   bool _isReaderCommentsLoading = false;
   bool _isReaderCommentsLoadingMore = false;
@@ -239,6 +240,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   double _readerPreviousChapterPullDistance = 0;
   double _readerNextChapterPullDistance = 0;
   final Map<String, double> _readerImageAspectRatios = <String, double>{};
+  final Set<String> _zoomedReaderImageKeys = <String>{};
   int? _batteryLevel;
   int _discardedNavigationCommitCount = 0;
   int _discardedNavigationCallbackCount = 0;

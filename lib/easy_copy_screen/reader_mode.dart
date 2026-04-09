@@ -520,13 +520,18 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     final double topPadding = _readerPreferences.fullscreen && showGap ? 0 : 8;
     final bool showCommentTail = _shouldShowReaderCommentTailPage(page);
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
+    final ScrollPhysics scrollPhysics = _isReaderZoomGestureLocked
+        ? const NeverScrollableScrollPhysics()
+        : const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics());
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
-        _handleReaderNextChapterPullNotification(
-          notification,
-          page: page,
-          controller: _readerScrollController,
-        );
+        if (!_isReaderZoomGestureLocked) {
+          _handleReaderNextChapterPullNotification(
+            notification,
+            page: page,
+            controller: _readerScrollController,
+          );
+        }
         return _handleReaderScrollNotification(notification);
       },
       child: ListView.builder(
@@ -534,9 +539,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
           'reader-scroll-${page.uri}-${_readerPreferences.pageFit.name}-$showGap-$showCommentTail',
         ),
         controller: _readerScrollController,
-        physics: const AlwaysScrollableScrollPhysics(
-          parent: BouncingScrollPhysics(),
-        ),
+        physics: scrollPhysics,
         padding: EdgeInsets.only(top: topPadding, bottom: 16),
         itemCount:
             page.imageUrls.length + (showCommentTail || hasNextChapter ? 1 : 0),
@@ -551,6 +554,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
             padding: EdgeInsets.only(bottom: showGap ? 10 : 0),
             child: _buildReaderImageFrame(
               context,
+              page: page,
+              imageIndex: index,
               imageUrl: page.imageUrls[index],
               viewportHeight:
                   _readerPreferences.pageFit == ReaderPageFit.fitScreen
@@ -571,11 +576,17 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         _readerPreferences.fullscreen && _readerPreferences.showPageGap ? 0 : 8;
     final bool showCommentTail = _shouldShowReaderCommentTailPage(page);
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
+    final ScrollPhysics pagePhysics = _isReaderZoomGestureLocked
+        ? const NeverScrollableScrollPhysics()
+        : const _ReaderPagedScrollPhysics(
+            triggerPageRatio: 0.65,
+            parent: BouncingScrollPhysics(),
+          );
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
         final bool isLastReaderPage =
             _currentReaderPageIndex >= _readerPagedPageCount(page) - 1;
-        if (isLastReaderPage && hasNextChapter) {
+        if (!_isReaderZoomGestureLocked && isLastReaderPage && hasNextChapter) {
           _handleReaderNextChapterPullNotification(
             notification,
             page: page,
@@ -590,10 +601,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
           'reader-paged-${page.uri}-${_readerPreferences.readingDirection.name}-${_readerPreferences.pageFit.name}-${_readerPreferences.showPageGap}-$showCommentTail',
         ),
         controller: _readerPageController,
-        physics: const _ReaderPagedScrollPhysics(
-          triggerPageRatio: 0.65,
-          parent: BouncingScrollPhysics(),
-        ),
+        physics: pagePhysics,
         reverse: reverse,
         itemCount: _readerPagedPageCount(page),
         onPageChanged: _handleReaderPageChanged,
@@ -612,6 +620,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                   : _buildReaderPagedPageBody(
                       context,
                       page: page,
+                      imageIndex: index,
                       imageUrl: page.imageUrls[index],
                       constraints: constraints,
                       showNextChapterFooter:
@@ -625,7 +634,9 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                       onNotification: _handleReaderScrollNotification,
                       child: SingleChildScrollView(
                         controller: scrollController,
-                        physics: const BouncingScrollPhysics(),
+                        physics: _isReaderZoomGestureLocked
+                            ? const NeverScrollableScrollPhysics()
+                            : const BouncingScrollPhysics(),
                         child: pageBody,
                       ),
                     );
@@ -642,8 +653,18 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     );
   }
 
+  String _readerZoomInteractionKey(
+    String pageUri,
+    int imageIndex,
+    String imageUrl,
+  ) {
+    return '$pageUri::$imageIndex::$imageUrl';
+  }
+
   Widget _buildReaderImageFrame(
     BuildContext context, {
+    required ReaderPageData page,
+    required int imageIndex,
     required String imageUrl,
     double? viewportHeight,
   }) {
@@ -672,30 +693,42 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         cacheManager: EasyCopyImageCaches.readerCache,
       );
     }
+    final String interactionKey = _readerZoomInteractionKey(
+      page.uri,
+      imageIndex,
+      imageUrl,
+    );
 
     return ColoredBox(
       color: showGap ? colorScheme.surface : colorScheme.surfaceContainerLowest,
-      child: _ReaderChapterImage(
-        key: ValueKey<String>('reader-image-$imageUrl-$viewportHeight'),
-        imageProvider: imageProvider,
-        debugUrl: imageUrl,
-        fit: fit,
-        viewportHeight: viewportHeight,
-        aspectRatio: _readerImageAspectRatios[imageUrl],
-        onResolvedAspectRatio: (double aspectRatio) {
-          if (!aspectRatio.isFinite || aspectRatio <= 0) {
-            return;
-          }
-          final double? previousAspectRatio =
-              _readerImageAspectRatios[imageUrl];
-          if (previousAspectRatio != null &&
-              (previousAspectRatio - aspectRatio).abs() < 0.01) {
-            return;
-          }
-          _setStateIfMounted(() {
-            _readerImageAspectRatios[imageUrl] = aspectRatio;
-          });
+      child: _ReaderZoomableImage(
+        key: ValueKey<String>('reader-image-zoom-$interactionKey'),
+        onZoomChanged: (bool isZoomed) {
+          _setReaderImageZoomed(interactionKey, isZoomed);
         },
+        onScaleGestureActiveChanged: _setReaderScaleGestureActive,
+        child: _ReaderChapterImage(
+          key: ValueKey<String>('reader-image-$imageUrl-$viewportHeight'),
+          imageProvider: imageProvider,
+          debugUrl: imageUrl,
+          fit: fit,
+          viewportHeight: viewportHeight,
+          aspectRatio: _readerImageAspectRatios[imageUrl],
+          onResolvedAspectRatio: (double aspectRatio) {
+            if (!aspectRatio.isFinite || aspectRatio <= 0) {
+              return;
+            }
+            final double? previousAspectRatio =
+                _readerImageAspectRatios[imageUrl];
+            if (previousAspectRatio != null &&
+                (previousAspectRatio - aspectRatio).abs() < 0.01) {
+              return;
+            }
+            _setStateIfMounted(() {
+              _readerImageAspectRatios[imageUrl] = aspectRatio;
+            });
+          },
+        ),
       ),
     );
   }
@@ -703,6 +736,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   Widget _buildReaderPagedPageBody(
     BuildContext context, {
     required ReaderPageData page,
+    required int imageIndex,
     required String imageUrl,
     required BoxConstraints constraints,
     required bool showNextChapterFooter,
@@ -718,6 +752,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
             children: <Widget>[
               _buildReaderImageFrame(
                 context,
+                page: page,
+                imageIndex: imageIndex,
                 imageUrl: imageUrl,
                 viewportHeight:
                     _readerPreferences.pageFit == ReaderPageFit.fitScreen
@@ -1510,7 +1546,9 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                 Positioned.fill(
                   child: GestureDetector(
                     behavior: HitTestBehavior.translucent,
-                    onTapUp: _handleReaderTapUp,
+                    onTapUp: _isReaderZoomGestureLocked
+                        ? null
+                        : _handleReaderTapUp,
                     child: _readerPreferences.isPaged
                         ? _buildReaderPagedContent(context, page)
                         : _buildReaderScrollableContent(context, page),
@@ -1523,6 +1561,98 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ReaderZoomableImage extends StatefulWidget {
+  const _ReaderZoomableImage({
+    super.key,
+    required this.child,
+    required this.onZoomChanged,
+    required this.onScaleGestureActiveChanged,
+  });
+
+  final Widget child;
+  final ValueChanged<bool> onZoomChanged;
+  final ValueChanged<bool> onScaleGestureActiveChanged;
+
+  @override
+  State<_ReaderZoomableImage> createState() => _ReaderZoomableImageState();
+}
+
+class _ReaderZoomableImageState extends State<_ReaderZoomableImage> {
+  late final TransformationController _transformationController;
+  bool _isZoomed = false;
+  bool _isMultiTouchActive = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _transformationController = TransformationController();
+    _transformationController.addListener(_handleTransformChanged);
+  }
+
+  @override
+  void dispose() {
+    _setMultiTouchActive(false);
+    if (_isZoomed) {
+      widget.onZoomChanged(false);
+    }
+    _transformationController.removeListener(_handleTransformChanged);
+    _transformationController.dispose();
+    super.dispose();
+  }
+
+  void _handleTransformChanged() {
+    final bool isZoomed =
+        _transformationController.value.getMaxScaleOnAxis() > 1.01;
+    if (_isZoomed == isZoomed) {
+      return;
+    }
+    setState(() {
+      _isZoomed = isZoomed;
+    });
+    widget.onZoomChanged(isZoomed);
+  }
+
+  void _setMultiTouchActive(bool value) {
+    if (_isMultiTouchActive == value) {
+      return;
+    }
+    _isMultiTouchActive = value;
+    widget.onScaleGestureActiveChanged(value);
+  }
+
+  void _handleInteractionStart(ScaleStartDetails details) {
+    _setMultiTouchActive(details.pointerCount > 1);
+  }
+
+  void _handleInteractionUpdate(ScaleUpdateDetails details) {
+    _setMultiTouchActive(details.pointerCount > 1);
+  }
+
+  void _handleInteractionEnd(ScaleEndDetails details) {
+    _setMultiTouchActive(false);
+    if (!_isZoomed) {
+      _transformationController.value = Matrix4.identity();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InteractiveViewer(
+      transformationController: _transformationController,
+      clipBehavior: Clip.hardEdge,
+      panEnabled: _isZoomed,
+      scaleEnabled: true,
+      minScale: 1,
+      maxScale: 4,
+      boundaryMargin: const EdgeInsets.all(32),
+      onInteractionStart: _handleInteractionStart,
+      onInteractionUpdate: _handleInteractionUpdate,
+      onInteractionEnd: _handleInteractionEnd,
+      child: widget.child,
     );
   }
 }

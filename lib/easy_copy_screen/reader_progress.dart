@@ -72,6 +72,7 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
     final bool changedPage = previousUri != page.uri;
     if (changedPage || forceRestore) {
       _resetReaderChapterBoundaryState();
+      _resetReaderZoomState();
     }
     if (changedPage) {
       _currentReaderPageIndex = 0;
