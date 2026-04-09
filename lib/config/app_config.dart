@@ -13,6 +13,21 @@ class AppConfig {
   static const String profilePath = '/person/home';
   static const String profileRouteKey = '__profile__';
 
+  static const String debugStartUri = String.fromEnvironment(
+    'EASY_COPY_DEBUG_START_URI',
+    defaultValue: '',
+  );
+
+  static const bool debugProbeImages = bool.fromEnvironment(
+    'EASY_COPY_DEBUG_PROBE_IMAGES',
+    defaultValue: false,
+  );
+
+  static const String debugPinHost = String.fromEnvironment(
+    'EASY_COPY_DEBUG_PIN_HOST',
+    defaultValue: '',
+  );
+
   static HostManager get hostManager => HostManager.instance;
 
   static String get desktopUserAgent => defaultDesktopUserAgent;

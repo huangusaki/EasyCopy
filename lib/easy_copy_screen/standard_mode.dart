@@ -307,6 +307,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
         onOpenHistoryPageNumber: (int page) =>
             _openProfileSubview(ProfileSubview.history, page: page),
         currentHost: _hostManager.currentHost,
+        knownHosts: _hostManager.knownHosts,
         candidateHosts: _hostManager.candidateHosts,
         candidateHostAliases: _hostManager.candidateHostAliases,
         hostSnapshot: _hostManager.probeSnapshot,

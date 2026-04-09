@@ -256,7 +256,7 @@ class _HeroBannerCard extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: <Widget>[
-            _NetworkImageBox(imageUrl: banner.imageUrl, aspectRatio: 1),
+            EasyCopyCoverImage(imageUrl: banner.imageUrl, aspectRatio: 1),
             DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -377,7 +377,7 @@ class _FeatureBannerCard extends StatelessWidget {
               height: 116,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(20),
-                child: _NetworkImageBox(
+                child: EasyCopyCoverImage(
                   imageUrl: banner.imageUrl,
                   aspectRatio: 1,
                 ),
@@ -452,7 +452,7 @@ class _TopicIssueRow extends StatelessWidget {
                     height: 132,
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(18),
-                      child: _NetworkImageBox(
+                      child: EasyCopyCoverImage(
                         imageUrl: item.coverUrl,
                         aspectRatio: 0.8,
                       ),
@@ -1068,7 +1068,7 @@ class _RankCard extends StatelessWidget {
             SizedBox(
               width: 86,
               height: 112,
-              child: _NetworkImageBox(
+              child: EasyCopyCoverImage(
                 imageUrl: item.coverUrl,
                 aspectRatio: 0.72,
               ),
@@ -1182,7 +1182,7 @@ class _DetailHeroCard extends StatelessWidget {
             children: <Widget>[
               SizedBox(
                 width: 122,
-                child: _NetworkImageBox(
+                child: EasyCopyCoverImage(
                   imageUrl: page.coverUrl,
                   aspectRatio: 0.72,
                 ),
@@ -1512,61 +1512,6 @@ class _CachedChapterNavigationContext {
       catalogHref: catalogHref.trim().isNotEmpty
           ? catalogHref
           : fallback.catalogHref,
-    );
-  }
-}
-
-class _NetworkImageBox extends StatelessWidget {
-  const _NetworkImageBox({required this.imageUrl, required this.aspectRatio});
-
-  final String imageUrl;
-  final double aspectRatio;
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: AspectRatio(
-        aspectRatio: aspectRatio,
-        child: imageUrl.isEmpty
-            ? const _PlaceholderImage()
-            : CachedNetworkImage(
-                imageUrl: imageUrl,
-                fit: BoxFit.cover,
-                cacheManager: EasyCopyImageCaches.coverCache,
-                errorWidget: (BuildContext context, String url, Object error) {
-                  return const _PlaceholderImage();
-                },
-              ),
-      ),
-    );
-  }
-}
-
-class _PlaceholderImage extends StatelessWidget {
-  const _PlaceholderImage();
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[
-            colorScheme.surfaceContainerHigh,
-            colorScheme.surfaceContainerHighest,
-          ],
-        ),
-      ),
-      child: Center(
-        child: Icon(
-          Icons.image_outlined,
-          size: 28,
-          color: colorScheme.onSurface.withValues(alpha: 0.42),
-        ),
-      ),
     );
   }
 }

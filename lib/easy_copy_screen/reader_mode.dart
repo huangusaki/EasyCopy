@@ -678,6 +678,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       child: _ReaderChapterImage(
         key: ValueKey<String>('reader-image-$imageUrl-$viewportHeight'),
         imageProvider: imageProvider,
+        debugUrl: imageUrl,
         fit: fit,
         viewportHeight: viewportHeight,
         aspectRatio: _readerImageAspectRatios[imageUrl],
@@ -1564,6 +1565,7 @@ class _ReaderChapterImage extends StatefulWidget {
   const _ReaderChapterImage({
     super.key,
     required this.imageProvider,
+    required this.debugUrl,
     required this.fit,
     required this.onResolvedAspectRatio,
     this.viewportHeight,
@@ -1571,6 +1573,7 @@ class _ReaderChapterImage extends StatefulWidget {
   });
 
   final ImageProvider<Object> imageProvider;
+  final String debugUrl;
   final BoxFit fit;
   final ValueChanged<double> onResolvedAspectRatio;
   final double? viewportHeight;
@@ -1644,6 +1647,10 @@ class _ReaderChapterImageState extends State<_ReaderChapterImage> {
         if (!mounted) {
           return;
         }
+        DebugTrace.log('reader.image_error', <String, Object?>{
+          'url': widget.debugUrl,
+          'error': error.toString(),
+        });
         setState(() {
           _hasError = true;
         });

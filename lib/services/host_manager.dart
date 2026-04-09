@@ -165,6 +165,19 @@ class HostManager {
 
   List<String> get candidateHosts => List<String>.unmodifiable(_candidateHosts);
 
+  List<String> get knownHosts => List<String>.unmodifiable(
+    _mergeHosts(<String>[
+      ..._seedHosts,
+      _currentHost,
+      if (_sessionPinnedHost != null) _sessionPinnedHost!,
+      if ((_snapshot?.selectedHost ?? '').trim().isNotEmpty)
+        _snapshot!.selectedHost,
+      for (final HostProbeRecord probe
+          in _snapshot?.probes ?? const <HostProbeRecord>[])
+        probe.host,
+    ]),
+  );
+
   Map<String, List<String>> get candidateHostAliases =>
       Map<String, List<String>>.unmodifiable(
         _candidateHostAliases.map(
@@ -226,10 +239,10 @@ class HostManager {
       _candidateHostAliases = _buildCandidateHostAliases(_snapshot!.probes);
       return;
     }
-    final List<String> reachableHosts = await _discoverReachableHosts();
-    final List<HostProbeRecord> probes = reachableHosts.isEmpty
+    final List<String> hostsToProbe = knownHosts;
+    final List<HostProbeRecord> probes = hostsToProbe.isEmpty
         ? const <HostProbeRecord>[]
-        : await Future.wait(reachableHosts.map(_probeHost));
+        : await Future.wait(hostsToProbe.map(_probeKnownHost));
     final List<HostProbeRecord> ranked = _sortProbes(probes);
     _candidateHosts = _successfulProbeHosts(ranked);
     _candidateHostAliases = _buildCandidateHostAliases(ranked);
@@ -383,24 +396,25 @@ class HostManager {
     // later in the background so the first screen is not blocked on network.
   }
 
-  Future<List<String>> _discoverReachableHosts() async {
-    final List<String> hostsToCheck = _mergeHosts(<String>[
-      ..._seedHosts,
-      _currentHost,
-      if (_sessionPinnedHost != null) _sessionPinnedHost!,
-      if ((_snapshot?.selectedHost ?? '').trim().isNotEmpty)
-        _snapshot!.selectedHost,
-      for (final HostProbeRecord probe
-          in _snapshot?.probes ?? const <HostProbeRecord>[])
-        probe.host,
-    ]);
-    final List<bool> reachability = await Future.wait(
-      hostsToCheck.map(_isHostReachable),
-    );
-    return <String>[
-      for (int index = 0; index < hostsToCheck.length; index += 1)
-        if (reachability[index]) hostsToCheck[index],
-    ];
+  Future<HostProbeRecord> _probeKnownHost(String host) async {
+    final String normalizedHost = _normalizeHost(host);
+    if (normalizedHost.isEmpty) {
+      return const HostProbeRecord(
+        host: '',
+        success: false,
+        latencyMs: 999999,
+      );
+    }
+    final bool reachable = await _isHostReachable(normalizedHost);
+    if (!reachable) {
+      return HostProbeRecord(
+        host: normalizedHost,
+        success: false,
+        latencyMs: 999999,
+        addressSignature: _addressSignatureCache[normalizedHost],
+      );
+    }
+    return _probeHost(normalizedHost);
   }
 
   Future<HostProbeRecord> _probeHost(String host) async {

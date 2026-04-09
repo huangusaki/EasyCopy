@@ -31,6 +31,7 @@ import 'package:easy_copy/services/rank_filter_selection.dart';
 import 'package:easy_copy/services/primary_tab_session_store.dart';
 import 'package:easy_copy/services/reader_platform_bridge.dart';
 import 'package:easy_copy/services/reader_progress_store.dart';
+import 'package:easy_copy/services/network_diagnostics.dart';
 import 'package:easy_copy/services/site_api_client.dart';
 import 'package:easy_copy/services/site_html_page_loader.dart';
 import 'package:easy_copy/services/site_session.dart';
@@ -39,6 +40,7 @@ import 'package:easy_copy/services/tab_activation_policy.dart';
 import 'package:easy_copy/webview/page_extractor_script.dart';
 import 'package:easy_copy/widgets/auth_webview_screen.dart';
 import 'package:easy_copy/widgets/comic_grid.dart';
+import 'package:easy_copy/widgets/cover_image.dart';
 import 'package:easy_copy/widgets/download_management_page.dart';
 import 'package:easy_copy/widgets/native_login_screen.dart';
 import 'package:easy_copy/widgets/profile_page_view.dart';
@@ -627,7 +629,17 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       'bootId': _bootId,
       'elapsedMs': stopwatch.elapsedMilliseconds,
     });
-    final Uri homeUri = appDestinations.first.uri;
+    Uri? debugUri;
+    if (kDebugMode && AppConfig.debugStartUri.trim().isNotEmpty) {
+      debugUri = Uri.tryParse(AppConfig.debugStartUri.trim());
+      if (debugUri != null) {
+        DebugTrace.log('bootstrap.debug_start_uri', <String, Object?>{
+          'bootId': _bootId,
+          'uri': debugUri.toString(),
+        });
+      }
+    }
+    final Uri homeUri = debugUri ?? appDestinations.first.uri;
     if (!mounted) {
       return;
     }
@@ -1928,6 +1940,15 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
               'source': 'page_cache',
               'elapsedMs': readerLoadStopwatch?.elapsedMilliseconds,
             });
+            final EasyCopyPage cachedPage = cachedHit.page;
+            if (cachedPage is ReaderPageData &&
+                cachedPage.imageUrls.isNotEmpty) {
+              NetworkDiagnostics.probeImageVariants(
+                cachedPage.imageUrls.first,
+                referer: cachedPage.uri,
+                label: 'reader.first_image_page_cache',
+              );
+            }
           }
           if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
             return;
@@ -1978,6 +1999,13 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
           'pageType': freshPage.type.name,
           'elapsedMs': readerLoadStopwatch?.elapsedMilliseconds,
         });
+        if (freshPage is ReaderPageData && freshPage.imageUrls.isNotEmpty) {
+          NetworkDiagnostics.probeImageVariants(
+            freshPage.imageUrls.first,
+            referer: freshPage.uri,
+            label: 'reader.first_image_fresh',
+          );
+        }
       }
       _applyLoadedPage(
         freshPage,

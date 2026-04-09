@@ -1,11 +1,10 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/app_preferences.dart';
 import 'package:easy_copy/models/page_models.dart';
 import 'package:easy_copy/services/host_manager.dart';
-import 'package:easy_copy/services/image_cache.dart';
+import 'package:easy_copy/widgets/cover_image.dart';
 import 'package:easy_copy/widgets/comic_grid.dart';
 import 'package:flutter/material.dart';
 
@@ -26,6 +25,7 @@ class ProfilePageView extends StatelessWidget {
     this.onOpenCachedComic,
     this.onDeleteCachedComic,
     this.currentHost = '',
+    this.knownHosts = const <String>[],
     this.candidateHosts = const <String>[],
     this.candidateHostAliases = const <String, List<String>>{},
     this.hostSnapshot,
@@ -54,6 +54,7 @@ class ProfilePageView extends StatelessWidget {
   final ValueChanged<String>? onOpenCachedComic;
   final ValueChanged<String>? onDeleteCachedComic;
   final String currentHost;
+  final List<String> knownHosts;
   final List<String> candidateHosts;
   final Map<String, List<String>> candidateHostAliases;
   final HostProbeSnapshot? hostSnapshot;
@@ -73,6 +74,7 @@ class ProfilePageView extends StatelessWidget {
   Widget build(BuildContext context) {
     final bool showsHostSettings =
         currentHost.trim().isNotEmpty ||
+        knownHosts.isNotEmpty ||
         candidateHosts.isNotEmpty ||
         hostSnapshot != null;
     final List<ComicCardData> collectionCards = page.collections
@@ -269,6 +271,7 @@ class ProfilePageView extends StatelessWidget {
       addSection(
         _HostSettingsEntryCard(
           currentHost: currentHost,
+          knownHosts: knownHosts,
           candidateHosts: candidateHosts,
           candidateHostAliases: candidateHostAliases,
           snapshot: hostSnapshot,
@@ -516,6 +519,7 @@ class _AppearanceSettingsCard extends StatelessWidget {
 class _HostSettingsEntryCard extends StatelessWidget {
   const _HostSettingsEntryCard({
     required this.currentHost,
+    required this.knownHosts,
     required this.candidateHosts,
     required this.candidateHostAliases,
     required this.snapshot,
@@ -526,6 +530,7 @@ class _HostSettingsEntryCard extends StatelessWidget {
   });
 
   final String currentHost;
+  final List<String> knownHosts;
   final List<String> candidateHosts;
   final Map<String, List<String>> candidateHostAliases;
   final HostProbeSnapshot? snapshot;
@@ -550,6 +555,7 @@ class _HostSettingsEntryCard extends StatelessWidget {
                     builder: (BuildContext context) {
                       return _HostSettingsPage(
                         currentHost: currentHost,
+                        knownHosts: knownHosts,
                         candidateHosts: candidateHosts,
                         candidateHostAliases: candidateHostAliases,
                         snapshot: snapshot,
@@ -583,6 +589,7 @@ String _formatCheckedAt(DateTime checkedAt) {
 class _HostSettingsPage extends StatefulWidget {
   const _HostSettingsPage({
     required this.currentHost,
+    required this.knownHosts,
     required this.candidateHosts,
     required this.candidateHostAliases,
     required this.snapshot,
@@ -593,6 +600,7 @@ class _HostSettingsPage extends StatefulWidget {
   });
 
   final String currentHost;
+  final List<String> knownHosts;
   final List<String> candidateHosts;
   final Map<String, List<String>> candidateHostAliases;
   final HostProbeSnapshot? snapshot;
@@ -683,17 +691,25 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
     final String recommendedKey =
         canonicalHostByAlias[recommendedHost] ?? recommendedHost;
     final Set<String> seenHosts = <String>{};
-    final List<String> hosts = <String>[
-      for (final String host in selectableHosts)
-        if (seenHosts.add(host)) host,
-      if (normalizedCurrentKey.isNotEmpty &&
-          seenHosts.add(normalizedCurrentKey))
-        normalizedCurrentKey,
-      if (normalizedPinnedKey.isNotEmpty && seenHosts.add(normalizedPinnedKey))
-        normalizedPinnedKey,
-      if (recommendedKey.isNotEmpty && seenHosts.add(recommendedKey))
-        recommendedKey,
+    final List<String> rawHosts = <String>[
+      ...selectableHosts,
+      ..._knownHosts(),
+      if (normalizedCurrentKey.isNotEmpty) normalizedCurrentKey,
+      if (normalizedPinnedKey.isNotEmpty) normalizedPinnedKey,
+      if (recommendedKey.isNotEmpty) recommendedKey,
     ];
+    final List<String> hosts = <String>[
+      for (final String host in rawHosts)
+        if (seenHosts.add(canonicalHostByAlias[host] ?? host))
+          canonicalHostByAlias[host] ?? host,
+    ]..sort((String left, String right) {
+        final int leftRank = _hostDisplayRank(probes[left]);
+        final int rightRank = _hostDisplayRank(probes[right]);
+        if (leftRank != rightRank) {
+          return leftRank.compareTo(rightRank);
+        }
+        return rawHosts.indexOf(left).compareTo(rawHosts.indexOf(right));
+      });
 
     return Scaffold(
       appBar: AppBar(title: const Text('访问域名')),
@@ -871,6 +887,8 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
 
   Set<String> _knownHosts() {
     return <String>{
+      for (final String host in widget.knownHosts)
+        if (_normalizeHostValue(host).isNotEmpty) _normalizeHostValue(host),
       if (_currentHost.isNotEmpty) _currentHost,
       for (final String host in widget.candidateHosts)
         if (_normalizeHostValue(host).isNotEmpty) _normalizeHostValue(host),
@@ -887,6 +905,13 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
         if (_normalizeHostValue(probe.host).isNotEmpty)
           _normalizeHostValue(probe.host),
     };
+  }
+
+  int _hostDisplayRank(HostProbeRecord? probe) {
+    if (probe == null) {
+      return 2;
+    }
+    return probe.success ? 0 : 1;
   }
 
   HostProbeSnapshot? _copySnapshot({
@@ -1197,7 +1222,9 @@ class _HostOptionTile extends StatelessWidget {
             Icon(
               isCurrent
                   ? Icons.check_circle_rounded
-                  : Icons.chevron_right_rounded,
+                  : enabled
+                  ? Icons.chevron_right_rounded
+                  : Icons.block_rounded,
               color: isCurrent
                   ? colorScheme.primary
                   : colorScheme.onSurface.withValues(alpha: 0.5),
@@ -1221,7 +1248,7 @@ class _HostOptionTile extends StatelessWidget {
     if (probe.statusCode != null) {
       return '测速失败 · HTTP ${probe.statusCode}';
     }
-    return '测速失败';
+    return '连接失败';
   }
 }
 
@@ -1364,20 +1391,7 @@ class _LibraryCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: item.coverUrl.isEmpty
-                  ? const _PlaceholderBox()
-                  : CachedNetworkImage(
-                      imageUrl: item.coverUrl,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                      cacheManager: EasyCopyImageCaches.coverCache,
-                      errorWidget: (_, __, ___) => const _PlaceholderBox(),
-                    ),
-            ),
-          ),
+          Expanded(child: EasyCopyCoverImage(imageUrl: item.coverUrl)),
           const SizedBox(height: 8),
           SizedBox(
             height: _titleHeight,
@@ -1449,16 +1463,9 @@ class _HistoryTile extends StatelessWidget {
             SizedBox(
               width: 68,
               height: 92,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: item.coverUrl.isEmpty
-                    ? const _PlaceholderBox()
-                    : CachedNetworkImage(
-                        imageUrl: item.coverUrl,
-                        fit: BoxFit.cover,
-                        cacheManager: EasyCopyImageCaches.coverCache,
-                        errorWidget: (_, __, ___) => const _PlaceholderBox(),
-                      ),
+              child: EasyCopyCoverImage(
+                imageUrl: item.coverUrl,
+                borderRadius: 16,
               ),
             ),
             const SizedBox(width: 14),
@@ -1504,33 +1511,6 @@ class _HistoryTile extends StatelessWidget {
             ),
             const Icon(Icons.chevron_right_rounded),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PlaceholderBox extends StatelessWidget {
-  const _PlaceholderBox();
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[
-            colorScheme.surfaceContainerHigh,
-            colorScheme.surfaceContainerHighest,
-          ],
-        ),
-      ),
-      child: Center(
-        child: Icon(
-          Icons.image_outlined,
-          color: colorScheme.onSurface.withValues(alpha: 0.42),
         ),
       ),
     );

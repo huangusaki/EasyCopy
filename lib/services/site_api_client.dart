@@ -401,8 +401,13 @@ class SiteApiClient {
   }) async {
     await _session.ensureInitialized();
     final int offset = (page - 1) * _searchPageSize;
-    final Uri uri = AppConfig.resolvePath('/api/kb/web/searchch/comics')
-        .replace(
+    Object? lastError;
+    for (final String path in const <String>[
+      '/api/kb/web/searchci/comics',
+      '/api/kb/web/searchch/comics',
+    ]) {
+      try {
+        final Uri uri = AppConfig.resolvePath(path).replace(
           queryParameters: <String, String>{
             'offset': '$offset',
             'platform': '2',
@@ -411,27 +416,39 @@ class SiteApiClient {
             'q_type': qType,
           },
         );
-    final http.Response response = await _client.get(
-      uri,
-      headers: <String, String>{
-        'Accept': 'application/json',
-        'User-Agent': AppConfig.desktopUserAgent,
-        'platform': '2',
-        if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
-      },
-    );
-    final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    if (decoded is! Map) {
-      throw SiteApiException('搜索接口返回格式异常。');
+        final http.Response response = await _client.get(
+          uri,
+          headers: <String, String>{
+            'Accept': 'application/json',
+            'User-Agent': AppConfig.desktopUserAgent,
+            'platform': '2',
+            if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
+          },
+        );
+        final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        if (decoded is! Map) {
+          throw SiteApiException('搜索接口返回格式异常。');
+        }
+        final Map<String, Object?> payload = decoded.map(
+          (Object? key, Object? value) => MapEntry(key.toString(), value),
+        );
+        final int code =
+            (payload['code'] as num?)?.toInt() ?? response.statusCode;
+        if (code != 200) {
+          throw SiteApiException(
+            (payload['message'] as String?) ?? '搜索失败：$code',
+          );
+        }
+        return payload;
+      } catch (error) {
+        lastError = error;
+      }
     }
-    final Map<String, Object?> payload = decoded.map(
-      (Object? key, Object? value) => MapEntry(key.toString(), value),
-    );
-    final int code = (payload['code'] as num?)?.toInt() ?? response.statusCode;
-    if (code != 200) {
-      throw SiteApiException((payload['message'] as String?) ?? '搜索失败：$code');
+
+    if (lastError is SiteApiException) {
+      throw lastError;
     }
-    return payload;
+    throw SiteApiException('搜索失败，请稍后重试。');
   }
 
   Future<SiteLoginResult> _loginWithPath(

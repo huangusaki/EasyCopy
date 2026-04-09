@@ -1,6 +1,5 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/services/image_cache.dart';
+import 'package:easy_copy/widgets/cover_image.dart';
 import 'package:flutter/material.dart';
 
 class ComicGrid extends StatelessWidget {
@@ -75,7 +74,7 @@ class _ComicCard extends StatelessWidget {
                 child: Stack(
                   children: <Widget>[
                     Positioned.fill(
-                      child: _ComicCoverImage(
+                      child: EasyCopyCoverImage(
                         imageUrl: item.coverUrl,
                         aspectRatio: 0.72,
                       ),
@@ -154,61 +153,6 @@ class _ComicCard extends StatelessWidget {
             ],
           );
         },
-      ),
-    );
-  }
-}
-
-class _ComicCoverImage extends StatelessWidget {
-  const _ComicCoverImage({required this.imageUrl, required this.aspectRatio});
-
-  final String imageUrl;
-  final double aspectRatio;
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: AspectRatio(
-        aspectRatio: aspectRatio,
-        child: imageUrl.isEmpty
-            ? const _PlaceholderImage()
-            : CachedNetworkImage(
-                imageUrl: imageUrl,
-                fit: BoxFit.cover,
-                cacheManager: EasyCopyImageCaches.coverCache,
-                errorWidget: (BuildContext context, String url, Object error) {
-                  return const _PlaceholderImage();
-                },
-              ),
-      ),
-    );
-  }
-}
-
-class _PlaceholderImage extends StatelessWidget {
-  const _PlaceholderImage();
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[
-            colorScheme.surfaceContainerHigh,
-            colorScheme.surfaceContainerHighest,
-          ],
-        ),
-      ),
-      child: Center(
-        child: Icon(
-          Icons.image_outlined,
-          size: 28,
-          color: colorScheme.onSurface.withValues(alpha: 0.42),
-        ),
       ),
     );
   }

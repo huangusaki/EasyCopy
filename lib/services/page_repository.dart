@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/page_models.dart';
 import 'package:easy_copy/services/debug_trace.dart';
+import 'package:easy_copy/services/network_diagnostics.dart';
 import 'package:easy_copy/services/navigation_request_guard.dart';
 import 'package:easy_copy/services/page_cache_store.dart';
 import 'package:easy_copy/services/page_probe_service.dart';
@@ -263,7 +264,18 @@ class PageRepository {
       DebugTrace.log('reader.html_loader_start', <String, Object?>{
         'uri': uri.toString(),
       });
-      return await _htmlPageLoader(uri, authScope: requestedKey.authScope);
+      final EasyCopyPage page = await _htmlPageLoader(
+        uri,
+        authScope: requestedKey.authScope,
+      );
+      if (page is ReaderPageData && page.imageUrls.isNotEmpty) {
+        NetworkDiagnostics.probeImageVariants(
+          page.imageUrls.first,
+          referer: page.uri,
+          label: 'reader.first_image',
+        );
+      }
+      return page;
     } catch (error) {
       DebugTrace.log('reader.html_loader_fallback', <String, Object?>{
         'uri': uri.toString(),
@@ -273,11 +285,19 @@ class PageRepository {
         'Reader HTML loader failed for ${uri.path}; '
         'falling back to standard loader. $error',
       );
-      return _standardPageLoader(
+      final EasyCopyPage page = await _standardPageLoader(
         uri,
         authScope: requestedKey.authScope,
         requestContext: requestContext,
       );
+      if (page is ReaderPageData && page.imageUrls.isNotEmpty) {
+        NetworkDiagnostics.probeImageVariants(
+          page.imageUrls.first,
+          referer: page.uri,
+          label: 'reader.first_image_fallback',
+        );
+      }
+      return page;
     }
   }
 

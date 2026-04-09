@@ -23,7 +23,7 @@ jobs:
   build-android-release:
     runs-on: ubuntu-latest
     env:
-      FLUTTER_VERSION: "3.38.7"
+      FLUTTER_VERSION: "3.41.4"
       JAVA_VERSION: "17"
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
 

@@ -41,6 +41,7 @@ flutter_run.log
 build_arm64.ps1
 build_apk_arm64_v8a.ps1
 package_release.ps1
+docs/workflow.md
 
 # Symbolication related
 app.*.symbols
