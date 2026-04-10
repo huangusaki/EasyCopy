@@ -77,7 +77,6 @@ class DownloadManagementPage extends StatefulWidget {
     required this.onRemoveTask,
     required this.onRetryTask,
     this.onPickStorageDirectory,
-    this.onResetStorageDirectory,
     this.onRescanStorageDirectory,
     super.key,
   });
@@ -99,7 +98,6 @@ class DownloadManagementPage extends StatefulWidget {
   final ValueChanged<DownloadQueueTask> onRemoveTask;
   final ValueChanged<DownloadQueueTask> onRetryTask;
   final VoidCallback? onPickStorageDirectory;
-  final VoidCallback? onResetStorageDirectory;
   final AsyncValueGetter<String>? onRescanStorageDirectory;
 
   @override
@@ -184,8 +182,6 @@ class _DownloadManagementPageState extends State<DownloadManagementPage> {
                                               .supportsCustomDirectorySelection,
                                           onPickStorageDirectory:
                                               widget.onPickStorageDirectory,
-                                          onResetStorageDirectory:
-                                              widget.onResetStorageDirectory,
                                           onRescanStorageDirectory:
                                               widget.onRescanStorageDirectory,
                                         ),
@@ -473,17 +469,14 @@ class _CachedLibrarySection extends StatelessWidget {
     if (comics.isEmpty) {
       return const AppSurfaceCard(title: '已缓存', child: Text('还没有已缓存漫画。'));
     }
-    final List<CachedComicLibraryEntry> visibleComics = comics
-        .take(8)
-        .toList(growable: false);
     return AppSurfaceCard(
       title: '已缓存',
       child: Column(
-        children: visibleComics
+        children: comics
             .map((CachedComicLibraryEntry entry) {
               return Padding(
                 padding: EdgeInsets.only(
-                  bottom: identical(entry, visibleComics.last) ? 0 : 12,
+                  bottom: identical(entry, comics.last) ? 0 : 12,
                 ),
                 child: _CachedComicRow(
                   entry: entry,
@@ -586,7 +579,6 @@ class _StorageSection extends StatefulWidget {
     required this.migrationProgress,
     required this.supportsCustomDirectorySelection,
     this.onPickStorageDirectory,
-    this.onResetStorageDirectory,
     this.onRescanStorageDirectory,
   });
 
@@ -595,7 +587,6 @@ class _StorageSection extends StatefulWidget {
   final DownloadStorageMigrationProgress? migrationProgress;
   final bool supportsCustomDirectorySelection;
   final VoidCallback? onPickStorageDirectory;
-  final VoidCallback? onResetStorageDirectory;
   final AsyncValueGetter<String>? onRescanStorageDirectory;
 
   @override

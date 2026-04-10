@@ -426,9 +426,6 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             onPickStorageDirectory: () {
               unawaited(_pickDownloadStorageDirectory());
             },
-            onResetStorageDirectory: () {
-              unawaited(_resetDownloadStorageDirectory());
-            },
             onRescanStorageDirectory: _rescanCurrentDownloadStorage,
           );
         },

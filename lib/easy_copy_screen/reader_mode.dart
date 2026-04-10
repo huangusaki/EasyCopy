@@ -38,6 +38,10 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   }
 
   void _handleReaderTapUp(TapUpDetails details) {
+    if (_suppressReaderTapUp) {
+      _suppressReaderTapUp = false;
+      return;
+    }
     final BuildContext? viewportContext = _readerViewportKey.currentContext;
     final RenderBox? renderBox =
         viewportContext?.findRenderObject() as RenderBox?;
@@ -50,6 +54,99 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       return;
     }
     _toggleReaderChapterControls();
+  }
+
+  void _markReaderImageTapPending() {
+    _suppressReaderTapUp = true;
+  }
+
+  void _clearReaderImageTapPending() {
+    _suppressReaderTapUp = false;
+  }
+
+  void _deferReaderImageTapClear() {
+    scheduleMicrotask(() {
+      _suppressReaderTapUp = false;
+    });
+  }
+
+  int _readerPreviewInitialIndex(ReaderPageData page) {
+    if (page.imageUrls.isEmpty) {
+      return 0;
+    }
+    final int rawIndex = _readerPreferences.isPaged
+        ? _currentReaderPageIndex
+        : _currentVisibleReaderImageIndex;
+    return rawIndex.clamp(0, page.imageUrls.length - 1);
+  }
+
+  Future<void> _openReaderImagePreview(
+    ReaderPageData page,
+    int initialIndex,
+  ) async {
+    if (!mounted || page.imageUrls.isEmpty) {
+      return;
+    }
+    _clearReaderImageTapPending();
+    _readerRestoreCoordinator.noteUserInteraction();
+    _hideReaderChapterControls();
+    _readerAutoTurnTimer?.cancel();
+    final int previewIndex = initialIndex.clamp(0, page.imageUrls.length - 1);
+    await Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        fullscreenDialog: true,
+        transitionDuration: const Duration(milliseconds: 180),
+        reverseTransitionDuration: const Duration(milliseconds: 160),
+        opaque: true,
+        pageBuilder:
+            (
+              BuildContext context,
+              Animation<double> animation,
+              Animation<double> secondaryAnimation,
+            ) {
+              return FadeTransition(
+                opacity: CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeOutCubic,
+                ),
+                child: ReaderImagePreviewScreen(
+                  imageUrls: page.imageUrls,
+                  initialIndex: previewIndex,
+                  imageProviderBuilder: _readerImageProviderFor,
+                  onClose: () => Navigator.of(context).maybePop(),
+                ),
+              );
+            },
+      ),
+    );
+    if (!mounted) {
+      return;
+    }
+    _scheduleReaderPresentationSync();
+    _restartReaderAutoTurn();
+  }
+
+  ImageProvider<Object> _readerImageProviderFor(String imageUrl) {
+    final Uri? parsedUri = Uri.tryParse(imageUrl);
+    final bool isLocalFile = parsedUri != null && parsedUri.scheme == 'file';
+    final bool isDocumentTreeFile =
+        parsedUri != null && parsedUri.scheme == 'content';
+    final bool isDocumentTreeRelativeFile =
+        parsedUri != null &&
+        parsedUri.scheme == documentTreeRelativeImageScheme;
+    if (isLocalFile) {
+      return FileImage(File.fromUri(parsedUri));
+    }
+    if (isDocumentTreeRelativeFile) {
+      return DocumentTreeRelativeImageProvider.fromUri(parsedUri);
+    }
+    if (isDocumentTreeFile) {
+      return DocumentTreeImageProvider(imageUrl);
+    }
+    return CachedNetworkImageProvider(
+      imageUrl,
+      cacheManager: EasyCopyImageCaches.readerCache,
+    );
   }
 
   Widget _buildReaderSettingsSheet(BuildContext context) {
@@ -441,6 +538,22 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
+                IconButton(
+                  onPressed: page.imageUrls.isEmpty
+                      ? null
+                      : () => unawaited(
+                          _openReaderImagePreview(
+                            page,
+                            _readerPreviewInitialIndex(page),
+                          ),
+                        ),
+                  style: IconButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  icon: const Icon(Icons.zoom_out_map_rounded, size: 18),
+                  tooltip: '全屏预览',
+                ),
                 if (_readerPreferences.showProgress)
                   Text(
                     _readerPageCountLabel(page),
@@ -551,6 +664,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
             padding: EdgeInsets.only(bottom: showGap ? 10 : 0),
             child: _buildReaderImageFrame(
               context,
+              page: page,
+              imageIndex: index,
               imageUrl: page.imageUrls[index],
               viewportHeight:
                   _readerPreferences.pageFit == ReaderPageFit.fitScreen
@@ -612,6 +727,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                   : _buildReaderPagedPageBody(
                       context,
                       page: page,
+                      imageIndex: index,
                       imageUrl: page.imageUrls[index],
                       constraints: constraints,
                       showNextChapterFooter:
@@ -644,6 +760,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
 
   Widget _buildReaderImageFrame(
     BuildContext context, {
+    required ReaderPageData page,
+    required int imageIndex,
     required String imageUrl,
     double? viewportHeight,
   }) {
@@ -652,50 +770,42 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     final BoxFit fit = _readerPreferences.pageFit == ReaderPageFit.fitWidth
         ? BoxFit.fitWidth
         : BoxFit.contain;
-    final Uri? parsedUri = Uri.tryParse(imageUrl);
-    final bool isLocalFile = parsedUri != null && parsedUri.scheme == 'file';
-    final bool isDocumentTreeFile =
-        parsedUri != null && parsedUri.scheme == 'content';
-    final bool isDocumentTreeRelativeFile =
-        parsedUri != null &&
-        parsedUri.scheme == documentTreeRelativeImageScheme;
-    final ImageProvider<Object> imageProvider;
-    if (isLocalFile) {
-      imageProvider = FileImage(File.fromUri(parsedUri));
-    } else if (isDocumentTreeRelativeFile) {
-      imageProvider = DocumentTreeRelativeImageProvider.fromUri(parsedUri);
-    } else if (isDocumentTreeFile) {
-      imageProvider = DocumentTreeImageProvider(imageUrl);
-    } else {
-      imageProvider = CachedNetworkImageProvider(
-        imageUrl,
-        cacheManager: EasyCopyImageCaches.readerCache,
-      );
-    }
+    final ImageProvider<Object> imageProvider = _readerImageProviderFor(
+      imageUrl,
+    );
 
     return ColoredBox(
       color: showGap ? colorScheme.surface : colorScheme.surfaceContainerLowest,
-      child: _ReaderChapterImage(
-        key: ValueKey<String>('reader-image-$imageUrl-$viewportHeight'),
-        imageProvider: imageProvider,
-        debugUrl: imageUrl,
-        fit: fit,
-        viewportHeight: viewportHeight,
-        aspectRatio: _readerImageAspectRatios[imageUrl],
-        onResolvedAspectRatio: (double aspectRatio) {
-          if (!aspectRatio.isFinite || aspectRatio <= 0) {
-            return;
-          }
-          final double? previousAspectRatio =
-              _readerImageAspectRatios[imageUrl];
-          if (previousAspectRatio != null &&
-              (previousAspectRatio - aspectRatio).abs() < 0.01) {
-            return;
-          }
-          _setStateIfMounted(() {
-            _readerImageAspectRatios[imageUrl] = aspectRatio;
-          });
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => _markReaderImageTapPending(),
+        onTapCancel: _clearReaderImageTapPending,
+        onTapUp: (_) {
+          unawaited(_openReaderImagePreview(page, imageIndex));
+          _deferReaderImageTapClear();
         },
+        child: _ReaderChapterImage(
+          key: ValueKey<String>('reader-image-$imageUrl-$viewportHeight'),
+          imageProvider: imageProvider,
+          debugUrl: imageUrl,
+          fit: fit,
+          viewportHeight: viewportHeight,
+          aspectRatio: _readerImageAspectRatios[imageUrl],
+          onResolvedAspectRatio: (double aspectRatio) {
+            if (!aspectRatio.isFinite || aspectRatio <= 0) {
+              return;
+            }
+            final double? previousAspectRatio =
+                _readerImageAspectRatios[imageUrl];
+            if (previousAspectRatio != null &&
+                (previousAspectRatio - aspectRatio).abs() < 0.01) {
+              return;
+            }
+            _setStateIfMounted(() {
+              _readerImageAspectRatios[imageUrl] = aspectRatio;
+            });
+          },
+        ),
       ),
     );
   }
@@ -703,6 +813,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   Widget _buildReaderPagedPageBody(
     BuildContext context, {
     required ReaderPageData page,
+    required int imageIndex,
     required String imageUrl,
     required BoxConstraints constraints,
     required bool showNextChapterFooter,
@@ -718,6 +829,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
             children: <Widget>[
               _buildReaderImageFrame(
                 context,
+                page: page,
+                imageIndex: imageIndex,
                 imageUrl: imageUrl,
                 viewportHeight:
                     _readerPreferences.pageFit == ReaderPageFit.fitScreen
