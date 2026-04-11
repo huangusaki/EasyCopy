@@ -112,7 +112,10 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   }
 
   bool get _shouldShowDiscoverSearchChrome {
-    if (_selectedIndex != 1 || _isDetailRoute || _isSecondaryDiscoverRoute) {
+    if (_isDetailRoute || _isSecondaryDiscoverRoute) {
+      return false;
+    }
+    if (_selectedIndex != 1 && !_isPrimaryDiscoverUri(_currentUri)) {
       return false;
     }
     final EasyCopyPage? page = _page;
@@ -152,7 +155,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                 Expanded(
                   child: TextField(
                     controller: _searchController,
-                    onSubmitted: _submitSearch,
+                    onSubmitted: _submitSearchFromVisibleDiscoverContext,
                     textInputAction: TextInputAction.search,
                     decoration: const InputDecoration(
                       hintText: '搜索漫画、作者或题材',
@@ -170,23 +173,13 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                 ),
                 if (_searchController.text.trim().isNotEmpty)
                   IconButton(
-                    onPressed: () {
-                      if (_currentUri.path == '/search') {
-                        _searchController.clear();
-                        unawaited(
-                          _loadUri(
-                            AppConfig.resolvePath('/comics'),
-                            historyMode: NavigationIntent.preserve,
-                          ),
-                        );
-                        return;
-                      }
-                      _setStateIfMounted(_searchController.clear);
-                    },
+                    onPressed: _clearVisibleDiscoverSearch,
                     icon: const Icon(Icons.close_rounded),
                   ),
                 IconButton(
-                  onPressed: () => _submitSearch(_searchController.text),
+                  onPressed: () => _submitSearchFromVisibleDiscoverContext(
+                    _searchController.text,
+                  ),
                   icon: const Icon(Icons.arrow_forward_rounded),
                 ),
               ],
@@ -213,7 +206,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
           Expanded(
             child: TextField(
               controller: _searchController,
-              onSubmitted: _submitSearch,
+              onSubmitted: _submitSearchFromVisibleDiscoverContext,
               textInputAction: TextInputAction.search,
               decoration: const InputDecoration(
                 border: InputBorder.none,
@@ -222,7 +215,8 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             ),
           ),
           IconButton(
-            onPressed: () => _submitSearch(_searchController.text),
+            onPressed: () =>
+                _submitSearchFromVisibleDiscoverContext(_searchController.text),
             icon: const Icon(Icons.arrow_forward_rounded),
           ),
         ],
@@ -315,6 +309,14 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
         themePreference: _preferencesController.themePreference,
         onThemePreferenceChanged: (AppThemePreference preference) {
           unawaited(_preferencesController.setThemePreference(preference));
+        },
+        versionLabel: _appVersionLabel,
+        isCheckingForUpdates: _isCheckingForUpdates,
+        onCheckForUpdates: () {
+          unawaited(_checkForUpdates());
+        },
+        onOpenProjectRepository: () {
+          unawaited(_openProjectRepository());
         },
         afterContinueReading: _buildDownloadManagementEntry(),
         cachedComicCards: _cachedComicCardsForProfile(),
@@ -1218,37 +1220,6 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   List<Widget> _buildHomeSections(HomePageData page) {
     final List<Widget> sections = <Widget>[];
 
-    if (page.heroBanners.isNotEmpty) {
-      sections.add(
-        _SurfaceBlock(
-          title: '推薦焦點',
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(20),
-            child: SizedBox(
-              height: 220,
-              child: ListView.separated(
-                padding: EdgeInsets.zero,
-                scrollDirection: Axis.horizontal,
-                itemCount: page.heroBanners.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 14),
-                itemBuilder: (BuildContext context, int index) {
-                  final HeroBannerData banner = page.heroBanners[index];
-                  return SizedBox(
-                    width: 300,
-                    child: _HeroBannerCard(
-                      banner: banner,
-                      onTap: () => _navigateToHref(banner.href),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
-        ),
-      );
-      sections.add(const SizedBox(height: 18));
-    }
-
     if (page.feature != null) {
       sections.add(
         _FeatureBannerCard(
@@ -1266,7 +1237,9 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
           title: section.title,
           actionLabel: section.href.isNotEmpty ? '更多' : null,
           onActionTap: section.href.isNotEmpty
-              ? () => _navigateToHref(section.href)
+              ? () {
+                  unawaited(_openHomeSectionHref(section.href));
+                }
               : null,
           child: ComicGrid(items: section.items, onTap: _navigateToHref),
         ),
@@ -1275,6 +1248,22 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     }
 
     return sections;
+  }
+
+  Future<void> _openHomeSectionHref(String href) async {
+    if (href.trim().isEmpty) {
+      return;
+    }
+    final Uri targetUri = AppConfig.resolveNavigationUri(
+      href,
+      currentUri: _currentUri,
+    );
+    await _loadUri(
+      targetUri,
+      sourceTabIndex: _selectedIndex,
+      targetTabIndexOverride: _selectedIndex,
+      historyMode: NavigationIntent.push,
+    );
   }
 
   List<Widget> _buildDiscoverSections(DiscoverPageData page) {
@@ -1300,7 +1289,6 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
       sections.add(
         _SurfaceBlock(
-          title: '篩選器',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
@@ -1538,7 +1526,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             ? null
             : () => unawaited(_toggleDetailCollection(page)),
         isCollectionBusy: _isUpdatingCollection,
-        onTagTap: _navigateToHref,
+        onTagTap: _submitSearchFromCurrentStack,
       ),
       const SizedBox(height: 18),
     ];

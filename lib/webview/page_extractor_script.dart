@@ -512,25 +512,29 @@ const String _pageExtractionScriptTemplate = r"""
   const pageTitle = () =>
     cleanText(document.title.replace(/- 拷[^-]+$/, '')) || 'EasyCopy';
   const buildHomePayload = () => {
-    const heroBanners = uniqueBy(
-      Array.from(document.querySelectorAll('.carousel-item'))
-        .map((item) => {
-          const anchor = item.querySelector('a[href]');
-          return {
-            title: queryText(item, '.carousel-caption p'),
-            subtitle: '',
-            imageUrl: imageUrl(item.querySelector('img')),
-            href: linkUrl(anchor),
-          };
-        })
-        .filter((item) => item.title && item.href),
-      (item) => item.href,
-    );
-
     const sections = Array.from(document.querySelectorAll('.index-all-icon'))
       .map((header) => {
         const title = text(header.querySelector('.index-all-icon-left-txt'));
+        const sectionHref = linkUrl(
+          header.querySelector('.index-all-icon-right a'),
+        );
+        const normalizedTitle = title.replace(/\s+/g, '');
+        const normalizedSectionPath = (() => {
+          try {
+            return new URL(sectionHref, location.href).pathname.toLowerCase();
+          } catch (_) {
+            return sectionHref.trim().toLowerCase();
+          }
+        })();
         if (!title || title.includes('排行榜')) {
+          return null;
+        }
+        if (
+          normalizedTitle.includes('熱門更新') ||
+          normalizedTitle.includes('热门更新') ||
+          normalizedSectionPath === '/comics' ||
+          normalizedSectionPath === '/comics/'
+        ) {
           return null;
         }
 
@@ -559,7 +563,7 @@ const String _pageExtractionScriptTemplate = r"""
         return {
           title,
           subtitle: '',
-          href: linkUrl(header.querySelector('.index-all-icon-right a')),
+          href: sectionHref,
           items,
         };
       })
@@ -583,7 +587,7 @@ const String _pageExtractionScriptTemplate = r"""
       type: 'home',
       title: '首頁',
       uri: location.href,
-      heroBanners,
+      heroBanners: [],
       sections,
       feature: featureCard,
     };

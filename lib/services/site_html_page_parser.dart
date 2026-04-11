@@ -110,78 +110,69 @@ class SiteHtmlPageParser {
   }
 
   HomePageData _buildHomePage(Uri uri, dom.Document document) {
-    final List<HeroBannerData> heroBanners = _uniqueBy<HeroBannerData>(
-      _querySelectorAll(document, '.carousel-item').map((dom.Element item) {
-        final dom.Element? anchor = _querySelector(item, 'a[href]');
-        final String href = _linkUrl(uri, anchor);
-        final String title = _queryText(item, '.carousel-caption p');
-        if (title.isEmpty || href.isEmpty) {
-          return null;
-        }
-        return HeroBannerData(
-          title: title,
-          subtitle: '',
-          imageUrl: _imageUrl(uri, _querySelector(item, 'img')),
-          href: href,
-        );
-      }).whereType<HeroBannerData>(),
-      (HeroBannerData banner) => banner.href,
-    );
+    final List<ComicSectionData>
+    sections = _querySelectorAll(document, '.index-all-icon')
+        .map((dom.Element header) {
+          final String title = _queryText(header, '.index-all-icon-left-txt');
+          final String sectionHref = _linkUrl(
+            uri,
+            _querySelector(header, '.index-all-icon-right a'),
+          );
+          final Uri? sectionUri = Uri.tryParse(sectionHref);
+          final String normalizedTitle = title.replaceAll(RegExp(r'\s+'), '');
+          final String normalizedSectionPath = (sectionUri?.path ?? sectionHref)
+              .trim()
+              .toLowerCase();
+          if (title.isEmpty || title.contains('排行榜')) {
+            return null;
+          }
+          if (normalizedTitle.contains('熱門更新') ||
+              normalizedTitle.contains('热门更新') ||
+              normalizedSectionPath == '/comics' ||
+              normalizedSectionPath == '/comics/') {
+            return null;
+          }
 
-    final List<ComicSectionData> sections =
-        _querySelectorAll(document, '.index-all-icon')
-            .map((dom.Element header) {
-              final String title = _queryText(
-                header,
-                '.index-all-icon-left-txt',
-              );
-              if (title.isEmpty || title.contains('排行榜')) {
-                return null;
-              }
+          final dom.Element? container = _parentElement(header);
+          if (container == null) {
+            return null;
+          }
+          final int headerIndex = container.children.indexOf(header);
+          if (headerIndex < 0) {
+            return null;
+          }
 
-              final dom.Element? container = _parentElement(header);
-              if (container == null) {
-                return null;
-              }
-              final int headerIndex = container.children.indexOf(header);
-              if (headerIndex < 0) {
-                return null;
-              }
+          dom.Element? row;
+          for (final dom.Element sibling in container.children.skip(
+            headerIndex + 1,
+          )) {
+            if (sibling.classes.contains('row')) {
+              row = sibling;
+              break;
+            }
+          }
+          if (row == null) {
+            return null;
+          }
 
-              dom.Element? row;
-              for (final dom.Element sibling in container.children.skip(
-                headerIndex + 1,
-              )) {
-                if (sibling.classes.contains('row')) {
-                  row = sibling;
-                  break;
-                }
-              }
-              if (row == null) {
-                return null;
-              }
+          final List<ComicCardData> items = _collectComicCards(
+            row,
+            uri,
+            'a[href*="/comic/"]',
+          );
+          if (items.isEmpty) {
+            return null;
+          }
 
-              final List<ComicCardData> items = _collectComicCards(
-                row,
-                uri,
-                'a[href*="/comic/"]',
-              );
-              if (items.isEmpty) {
-                return null;
-              }
-
-              return ComicSectionData(
-                title: title,
-                subtitle: '',
-                href: _linkUrl(
-                  uri,
-                  _querySelector(header, '.index-all-icon-right a'),
-                ),
-                items: items,
-              );
-            })
-            .whereType<ComicSectionData>()
-            .toList(growable: false);
+          return ComicSectionData(
+            title: title,
+            subtitle: '',
+            href: sectionHref,
+            items: items,
+          );
+        })
+        .whereType<ComicSectionData>()
+        .toList(growable: false);
 
     final dom.Element? featureBlock = _querySelector(document, '.special');
     final dom.Element? featureAnchor = featureBlock == null
@@ -200,7 +191,7 @@ class SiteHtmlPageParser {
     return HomePageData(
       title: '首頁',
       uri: uri.toString(),
-      heroBanners: heroBanners,
+      heroBanners: const <HeroBannerData>[],
       sections: sections,
       feature: feature == null || feature.title.isEmpty || feature.href.isEmpty
           ? null

@@ -2,13 +2,13 @@ part of '../easy_copy_screen.dart';
 
 class _SurfaceBlock extends StatelessWidget {
   const _SurfaceBlock({
-    required this.title,
+    this.title,
     required this.child,
     this.actionLabel,
     this.onActionTap,
   });
 
-  final String title;
+  final String? title;
   final Widget child;
   final String? actionLabel;
   final VoidCallback? onActionTap;
@@ -236,72 +236,6 @@ class _AppliedReaderEnvironment {
     volumePagingEnabled,
     isReader,
   );
-}
-
-class _HeroBannerCard extends StatelessWidget {
-  const _HeroBannerCard({required this.banner, required this.onTap});
-
-  final HeroBannerData banner;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    return Material(
-      color: isDark ? const Color(0xFF18222D) : const Color(0xFF102038),
-      borderRadius: BorderRadius.circular(24),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Stack(
-          fit: StackFit.expand,
-          children: <Widget>[
-            EasyCopyCoverImage(imageUrl: banner.imageUrl, aspectRatio: 1),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  colors: isDark
-                      ? const <Color>[Color(0xDD0D1117), Color(0x550D1117)]
-                      : const <Color>[Color(0xCC0F1320), Color(0x330F1320)],
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: <Widget>[
-                  Text(
-                    banner.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      height: 1.1,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  if (banner.subtitle.isNotEmpty) ...<Widget>[
-                    const SizedBox(height: 8),
-                    Text(
-                      banner.subtitle,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.84),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _FeatureBannerCard extends StatelessWidget {
@@ -1170,9 +1104,24 @@ class _DetailHeroCard extends StatelessWidget {
   final bool isCollectionBusy;
   final ValueChanged<String> onTagTap;
 
+  List<String> _searchLabels(String value) {
+    final List<String> labels = <String>[];
+    for (final String segment in value.split(RegExp(r'\s*[\/／]\s*'))) {
+      final String normalized = segment.trim();
+      if (normalized.isEmpty || labels.contains(normalized)) {
+        continue;
+      }
+      labels.add(normalized);
+    }
+    if (labels.isEmpty && value.trim().isNotEmpty) {
+      labels.add(value.trim());
+    }
+    return labels;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final List<String> authorLabels = _searchLabels(page.authors);
     return AppSurfaceCard(
       padding: const EdgeInsets.all(18),
       child: Column(
@@ -1200,31 +1149,32 @@ class _DetailHeroCard extends StatelessWidget {
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    if (page.authors.isNotEmpty) ...<Widget>[
-                      const SizedBox(height: 10),
-                      Text(
-                        page.authors,
-                        style: TextStyle(
-                          color: colorScheme.onSurface.withValues(alpha: 0.72),
-                          fontWeight: FontWeight.w600,
-                        ),
+                    if (authorLabels.isNotEmpty ||
+                        page.tags.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 14),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: <Widget>[
+                          ...authorLabels.map(
+                            (String author) => _LinkChip(
+                              label: author,
+                              active: true,
+                              onTap: () => onTagTap(author),
+                            ),
+                          ),
+                          ...page.tags
+                              .take(6)
+                              .map(
+                                (LinkAction tag) => _LinkChip(
+                                  label: tag.label,
+                                  active: true,
+                                  onTap: () => onTagTap(tag.label),
+                                ),
+                              ),
+                        ],
                       ),
                     ],
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: page.tags
-                          .take(6)
-                          .map(
-                            (LinkAction tag) => _LinkChip(
-                              label: tag.label,
-                              active: false,
-                              onTap: () => onTagTap(tag.href),
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
                   ],
                 ),
               ),

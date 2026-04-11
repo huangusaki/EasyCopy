@@ -11,6 +11,7 @@ import 'package:easy_copy/models/chapter_comment.dart';
 import 'package:easy_copy/models/page_models.dart';
 import 'package:easy_copy/page_transition_scope.dart';
 import 'package:easy_copy/services/android_document_tree_bridge.dart';
+import 'package:easy_copy/services/app_update_checker.dart';
 import 'package:easy_copy/services/app_preferences_controller.dart';
 import 'package:easy_copy/services/comic_download_service.dart';
 import 'package:easy_copy/services/deferred_viewport_coordinator.dart';
@@ -47,9 +48,12 @@ import 'package:easy_copy/widgets/profile_page_view.dart';
 import 'package:easy_copy/widgets/settings_ui.dart';
 import 'package:easy_copy/widgets/top_notice.dart';
 import 'package:flutter/foundation.dart' show ValueListenable, kDebugMode;
+import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 part 'easy_copy_screen/reader_state.dart';
@@ -62,9 +66,9 @@ part 'easy_copy_screen/widgets.dart';
 const Duration _pageFadeTransitionDuration = Duration(milliseconds: 200);
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
 const String _detailAllChapterTabKey = '__detail_all__';
-const double _readerNextChapterPullTriggerDistance = 220;
-const double _readerNextChapterPagedTriggerDistance = 120;
-const double _readerNextChapterPullActivationExtent = 80;
+const double _readerNextChapterPullTriggerDistance = 280;
+const double _readerNextChapterPagedTriggerDistance = 160;
+const double _readerNextChapterPullActivationExtent = 100;
 
 typedef ReaderPageMaybeLoader = Future<ReaderPageData?> Function(Uri uri);
 typedef ReaderPageLoader = Future<ReaderPageData> Function(Uri uri);
@@ -218,11 +222,16 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   Timer? _readerClockTimer;
   ReaderPosition? _lastPersistedReaderPosition;
   bool _isUpdatingHostSettings = false;
+  bool _isCheckingForUpdates = false;
   bool _isUpdatingCollection = false;
   bool _isReaderSettingsOpen = false;
   bool _isReaderChapterControlsVisible = false;
   bool _isReaderExitTransitionActive = false;
   bool _isReaderScaleGestureActive = false;
+  double _readerZoomScale = 1.0;
+  double _readerZoomBaseScale = 1.0;
+  double _readerPanOffsetX = 0;
+  double _readerPanOffsetY = 0;
   bool _isReaderNextChapterLoading = false;
   bool _isReaderCommentsLoading = false;
   bool _isReaderCommentsLoadingMore = false;
@@ -265,6 +274,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   final StandardPageLoadController<EasyCopyPage> _standardPageLoadController =
       StandardPageLoadController<EasyCopyPage>();
   final String _bootId = DateTime.now().microsecondsSinceEpoch.toString();
+  String _appVersion = '';
+  String _appBuildNumber = '';
 
   ValueListenable<DownloadQueueSnapshot> get _downloadQueueSnapshotNotifier =>
       _downloadQueueManager.snapshotNotifier;
@@ -309,6 +320,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _standardScrollController.addListener(_handleStandardScroll);
     _readerScrollController.addListener(_handleReaderScroll);
     _readerCommentScrollController.addListener(_handleReaderCommentScroll);
+    unawaited(_loadAppVersionInfo());
     if (_readerPlatformBridge.isAndroidSupported) {
       _batterySubscription = _readerPlatformBridge.batteryStream.listen((
         int level,
@@ -332,7 +344,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _readerProgressDebounce?.cancel();
-    unawaited(_persistCurrentReaderProgress());
+    unawaited(_flushReaderProgressPersistence());
     _readerAutoTurnTimer?.cancel();
     _readerClockTimer?.cancel();
     _batterySubscription?.cancel();
@@ -2473,6 +2485,119 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     }
   }
 
+  String get _appVersionLabel {
+    if (_appVersion.isEmpty) {
+      return '--';
+    }
+    if (_appBuildNumber.isEmpty) {
+      return _appVersion;
+    }
+    return '$_appVersion+$_appBuildNumber';
+  }
+
+  Future<void> _loadAppVersionInfo() async {
+    try {
+      final PackageInfo packageInfo = await PackageInfo.fromPlatform();
+      if (!mounted) {
+        _appVersion = packageInfo.version.trim();
+        _appBuildNumber = packageInfo.buildNumber.trim();
+        return;
+      }
+      _setStateIfMounted(() {
+        _appVersion = packageInfo.version.trim();
+        _appBuildNumber = packageInfo.buildNumber.trim();
+      });
+    } catch (_) {
+      // Keep placeholder values when package info is unavailable.
+    }
+  }
+
+  Future<void> _checkForUpdates() async {
+    if (_isCheckingForUpdates) {
+      return;
+    }
+    if (_appVersion.isEmpty) {
+      await _loadAppVersionInfo();
+    }
+    final String currentVersion = _appVersion.trim();
+    if (currentVersion.isEmpty) {
+      _showSnackBar('版本信息不可用');
+      return;
+    }
+
+    _mutateSessionState(() {
+      _isCheckingForUpdates = true;
+    }, syncSearch: false);
+    try {
+      final AppUpdateInfo updateInfo = await AppUpdateChecker.instance
+          .checkForUpdates(currentVersion: currentVersion);
+      if (!mounted) {
+        return;
+      }
+      if (!updateInfo.hasUpdate) {
+        _showSnackBar('已是最新版本');
+        return;
+      }
+
+      final bool? shouldOpenRelease = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('发现新版本'),
+            content: Text(
+              '${updateInfo.currentVersion} -> ${updateInfo.latestVersion}',
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('前往'),
+              ),
+            ],
+          );
+        },
+      );
+      if (shouldOpenRelease == true) {
+        await _launchExternalUri(updateInfo.releaseUri);
+      }
+    } catch (_) {
+      if (mounted) {
+        _showSnackBar('检查更新失败');
+      }
+    } finally {
+      if (mounted) {
+        _mutateSessionState(() {
+          _isCheckingForUpdates = false;
+        }, syncSearch: false);
+      } else {
+        _isCheckingForUpdates = false;
+      }
+    }
+  }
+
+  Future<void> _openProjectRepository() async {
+    await _launchExternalUri(AppUpdateChecker.repositoryUri);
+  }
+
+  Future<void> _launchExternalUri(Uri uri) async {
+    try {
+      final bool launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched && mounted) {
+        _showSnackBar('打开失败');
+      }
+    } catch (_) {
+      if (mounted) {
+        _showSnackBar('打开失败');
+      }
+    }
+  }
+
   Future<void> _refreshHostSettings() async {
     if (_isUpdatingHostSettings) {
       return;
@@ -2612,12 +2737,74 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     );
   }
 
-  void _submitSearch(String value) {
+  void _primeSearchController(String query) {
+    if (_searchController.text == query) {
+      return;
+    }
+    _searchController.value = TextEditingValue(
+      text: query,
+      selection: TextSelection.collapsed(offset: query.length),
+    );
+  }
+
+  void _submitSearch(
+    String value, {
+    int? sourceTabIndex,
+    int? targetTabIndexOverride,
+    NavigationIntent historyMode = NavigationIntent.push,
+  }) {
     final String query = value.trim();
     if (query.isEmpty) {
       return;
     }
-    unawaited(_loadUri(AppConfig.buildSearchUri(query)));
+    _primeSearchController(query);
+    unawaited(
+      _loadUri(
+        AppConfig.buildSearchUri(query),
+        sourceTabIndex: sourceTabIndex,
+        targetTabIndexOverride: targetTabIndexOverride,
+        historyMode: historyMode,
+      ),
+    );
+  }
+
+  void _submitSearchFromCurrentStack(String value) {
+    _submitSearch(
+      value,
+      sourceTabIndex: _selectedIndex,
+      targetTabIndexOverride: _selectedIndex,
+    );
+  }
+
+  bool get _shouldKeepDiscoverSearchInCurrentStack =>
+      _selectedIndex != 1 && _isPrimaryDiscoverUri(_currentUri);
+
+  void _submitSearchFromVisibleDiscoverContext(String value) {
+    if (_shouldKeepDiscoverSearchInCurrentStack) {
+      _submitSearchFromCurrentStack(value);
+      return;
+    }
+    _submitSearch(value);
+  }
+
+  void _clearVisibleDiscoverSearch() {
+    if (_currentUri.path == '/search') {
+      _searchController.clear();
+      unawaited(
+        _loadUri(
+          AppConfig.resolvePath('/comics'),
+          sourceTabIndex: _shouldKeepDiscoverSearchInCurrentStack
+              ? _selectedIndex
+              : null,
+          targetTabIndexOverride: _shouldKeepDiscoverSearchInCurrentStack
+              ? _selectedIndex
+              : null,
+          historyMode: NavigationIntent.preserve,
+        ),
+      );
+      return;
+    }
+    _setStateIfMounted(_searchController.clear);
   }
 
   Uri _targetUriForPrimaryTab(int index, {bool resetToRoot = false}) {
@@ -2672,8 +2859,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   }
 
   Future<void> _handleReaderAwareBackNavigation() async {
-    _persistVisiblePageState();
     final EasyCopyPage? page = _page;
+    if (page is ReaderPageData) {
+      await _flushReaderProgressPersistence();
+    }
+    _persistVisiblePageState();
     if (page is ReaderPageData && await _handleReaderBackNavigation(page)) {
       return;
     }
@@ -3212,10 +3402,12 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   }
 
   void _persistVisiblePageState() {
-    unawaited(_persistCurrentReaderProgress());
-    if (_page == null ||
-        _isReaderMode ||
-        !_standardScrollController.hasClients) {
+    final EasyCopyPage? page = _page;
+    if (page is ReaderPageData) {
+      unawaited(_flushReaderProgressPersistence());
+      return;
+    }
+    if (page == null || !_standardScrollController.hasClients) {
       return;
     }
     _tabSessionStore.updateScroll(
@@ -3354,6 +3546,13 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
 
   bool get _isReaderMode => _page is ReaderPageData;
 
+  Widget _buildReaderLoadingScreen(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      body: const Center(child: CircularProgressIndicator()),
+    );
+  }
+
   bool get _isDetailRoute {
     final EasyCopyPage? page = _page;
     if (page is DetailPageData) {
@@ -3389,7 +3588,18 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   }
 
   bool get _shouldShowHeaderCard =>
-      !_isPrimaryTabContent && !_isDetailRoute && !_isSecondaryProfileRoute;
+      !_isPrimaryTabContent &&
+      !_isDetailRoute &&
+      !_isSecondaryProfileRoute &&
+      !_shouldHideSecondaryDiscoverHeaderCard;
+
+  bool get _shouldHideSecondaryDiscoverHeaderCard {
+    if (!_isSecondaryDiscoverRoute) {
+      return false;
+    }
+    final String path = _currentUri.path.toLowerCase();
+    return path.startsWith('/recommend') || path.startsWith('/newest');
+  }
 
   bool get _shouldShowBackButton {
     final EasyCopyPage? page = _page;
@@ -3545,6 +3755,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
                           'reader-${AppConfig.routeKeyForUri(Uri.parse(page.uri))}',
                         ),
                         child: _buildReaderMode(context, page),
+                      )
+                    : _isReaderChapterUri(_currentUri)
+                    ? KeyedSubtree(
+                        key: const ValueKey<String>('reader-loading'),
+                        child: _buildReaderLoadingScreen(context),
                       )
                     : KeyedSubtree(
                         key: const ValueKey<String>('standard-mode'),
