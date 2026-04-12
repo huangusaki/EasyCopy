@@ -333,13 +333,6 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('确定'),
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -520,9 +513,12 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     final double topPadding = _readerPreferences.fullscreen && showGap ? 0 : 8;
     final bool showCommentTail = _shouldShowReaderCommentTailPage(page);
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
-    final ScrollPhysics scrollPhysics = _isReaderZoomGestureLocked
-        ? const NeverScrollableScrollPhysics()
-        : const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics());
+    final ScrollPhysics scrollPhysics =
+        (_isReaderScaleGestureActive || _readerZoomScale > 1.01)
+            ? const NeverScrollableScrollPhysics()
+            : const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics(),
+              );
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
         if (!_isReaderZoomGestureLocked) {
@@ -653,14 +649,6 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     );
   }
 
-  String _readerZoomInteractionKey(
-    String pageUri,
-    int imageIndex,
-    String imageUrl,
-  ) {
-    return '$pageUri::$imageIndex::$imageUrl';
-  }
-
   Widget _buildReaderImageFrame(
     BuildContext context, {
     required ReaderPageData page,
@@ -693,42 +681,29 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         cacheManager: EasyCopyImageCaches.readerCache,
       );
     }
-    final String interactionKey = _readerZoomInteractionKey(
-      page.uri,
-      imageIndex,
-      imageUrl,
-    );
-
     return ColoredBox(
       color: showGap ? colorScheme.surface : colorScheme.surfaceContainerLowest,
-      child: _ReaderZoomableImage(
-        key: ValueKey<String>('reader-image-zoom-$interactionKey'),
-        onZoomChanged: (bool isZoomed) {
-          _setReaderImageZoomed(interactionKey, isZoomed);
+      child: _ReaderChapterImage(
+        key: ValueKey<String>('reader-image-$imageUrl-$viewportHeight'),
+        imageProvider: imageProvider,
+        debugUrl: imageUrl,
+        fit: fit,
+        viewportHeight: viewportHeight,
+        aspectRatio: _readerImageAspectRatios[imageUrl],
+        onResolvedAspectRatio: (double aspectRatio) {
+          if (!aspectRatio.isFinite || aspectRatio <= 0) {
+            return;
+          }
+          final double? previousAspectRatio =
+              _readerImageAspectRatios[imageUrl];
+          if (previousAspectRatio != null &&
+              (previousAspectRatio - aspectRatio).abs() < 0.01) {
+            return;
+          }
+          _setStateIfMounted(() {
+            _readerImageAspectRatios[imageUrl] = aspectRatio;
+          });
         },
-        onScaleGestureActiveChanged: _setReaderScaleGestureActive,
-        child: _ReaderChapterImage(
-          key: ValueKey<String>('reader-image-$imageUrl-$viewportHeight'),
-          imageProvider: imageProvider,
-          debugUrl: imageUrl,
-          fit: fit,
-          viewportHeight: viewportHeight,
-          aspectRatio: _readerImageAspectRatios[imageUrl],
-          onResolvedAspectRatio: (double aspectRatio) {
-            if (!aspectRatio.isFinite || aspectRatio <= 0) {
-              return;
-            }
-            final double? previousAspectRatio =
-                _readerImageAspectRatios[imageUrl];
-            if (previousAspectRatio != null &&
-                (previousAspectRatio - aspectRatio).abs() < 0.01) {
-              return;
-            }
-            _setStateIfMounted(() {
-              _readerImageAspectRatios[imageUrl] = aspectRatio;
-            });
-          },
-        ),
       ),
     );
   }
@@ -1076,11 +1051,11 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     const double slotWidth = 6;
     const double runSpacing = 6;
     final double maxBubbleWidth = availableWidth >= 420
-        ? availableWidth * 0.58
-        : availableWidth * 0.74;
+        ? availableWidth * 0.72
+        : availableWidth * 0.92;
     final double minBubbleWidth = math.min(
       maxBubbleWidth,
-      availableWidth >= 420 ? 90 : 72,
+      availableWidth >= 420 ? 72 : 56,
     );
     final int slotCount = math.max(1, (availableWidth / slotWidth).floor());
     final List<double> skyline = List<double>.filled(slotCount, 0);
@@ -1225,7 +1200,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: backgroundColor,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(color: foregroundColor.withValues(alpha: 0.06)),
         ),
         child: Padding(
@@ -1288,7 +1263,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     ReaderPageData page,
   ) {
     return SizedBox(
-      height: _readerPreferences.isPaged ? 92 : 112,
+      height: _readerPreferences.isPaged ? 72 : 80,
       child: Center(
         child: _buildReaderChapterBoundaryCue(
           context,
@@ -1408,120 +1383,78 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       (true, true, ReaderReadingDirection.rightToLeft) =>
         Icons.chevron_left_rounded,
       (false, true, _) => Icons.chevron_left_rounded,
-      (false, false, _) => Icons.keyboard_arrow_up_rounded,
-      (true, false, _) => Icons.keyboard_arrow_down_rounded,
+      (false, false, _) => Icons.expand_less_rounded,
+      (true, false, _) => Icons.expand_more_rounded,
       (true, true, _) => Icons.chevron_right_rounded,
     };
-    final Axis axis = _readerNextChapterGestureAxis;
-    final double direction = switch ((
-      isPrevious,
-      _readerPreferences.isPaged,
-      axis,
-    )) {
-      (false, false, Axis.vertical) => -1,
-      (true, false, Axis.vertical) => 1,
-      (false, true, Axis.horizontal)
-          when _readerPreferences.readingDirection ==
-              ReaderReadingDirection.rightToLeft =>
-        1,
-      (true, true, Axis.horizontal)
-          when _readerPreferences.readingDirection ==
-              ReaderReadingDirection.rightToLeft =>
-        -1,
-      (false, true, Axis.horizontal) => -1,
-      (true, true, Axis.horizontal) => 1,
-      _ => -1,
-    };
-    final double size = compact ? 54 : 72;
-    final double ringSize = compact ? 42 : 58;
-    final double chevronSpacing = compact ? 7 : 9;
-    final Color accentColor = isReady
-        ? colorScheme.secondary
-        : colorScheme.primary;
-    final Color surfaceColor = colorScheme.surface.withValues(
-      alpha: compact ? 0.88 : 0.94,
-    );
+    final String label = isPrevious ? '上一章' : '下一章';
+    final Color accentColor = colorScheme.primary;
+    final double bgAlpha = compact ? 0.82 : 0.92;
+    final double height = compact ? 36.0 : 44.0;
+    final double iconSize = compact ? 18.0 : 20.0;
+    final double fontSize = compact ? 12.0 : 13.0;
+
     return AnimatedOpacity(
-      duration: const Duration(milliseconds: 160),
-      curve: Curves.easeOutCubic,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutQuart,
       opacity: !isVisible
           ? 0
-          : (isLoading || progress > 0 ? 1 : (compact ? 0.34 : 0.72)),
+          : (isLoading || isReady ? 1 : (0.5 + progress * 0.5).clamp(0, 1)),
       child: AnimatedScale(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutBack,
-        scale: isReady ? 1.08 : 0.94 + (progress * 0.1),
-        child: DecoratedBox(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutQuart,
+        scale: isReady ? 1.0 : 0.88 + (progress * 0.12),
+        child: Container(
+          height: height,
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 14 : 18,
+          ),
           decoration: BoxDecoration(
-            color: surfaceColor,
-            shape: BoxShape.circle,
+            color: colorScheme.surface.withValues(alpha: bgAlpha),
+            borderRadius: BorderRadius.circular(height / 2),
             border: Border.all(
               color: accentColor.withValues(
-                alpha: 0.22 + (progress * (isReady ? 0.34 : 0.22)),
+                alpha: isReady ? 0.5 : 0.15 + (progress * 0.2),
               ),
+              width: isReady ? 1.5 : 1.0,
             ),
-            boxShadow: <BoxShadow>[
-              BoxShadow(
-                color: accentColor.withValues(
-                  alpha: isReady ? 0.24 : 0.12 + (progress * 0.1),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (isLoading)
+                SizedBox.square(
+                  dimension: iconSize,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.0,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      accentColor.withValues(alpha: 0.8),
+                    ),
+                  ),
+                )
+              else
+                Icon(
+                  directionIcon,
+                  size: iconSize,
+                  color: accentColor.withValues(
+                    alpha: isReady ? 1 : 0.5 + (progress * 0.5),
+                  ),
                 ),
-                blurRadius: compact ? 16 : 22,
-                spreadRadius: compact ? 1 : 2,
+              SizedBox(width: compact ? 4 : 6),
+              Text(
+                isLoading ? '加载中' : (isReady ? '松手跳转' : label),
+                style: TextStyle(
+                  color: isReady
+                      ? accentColor
+                      : colorScheme.onSurface.withValues(
+                          alpha: 0.6 + (progress * 0.4),
+                        ),
+                  fontSize: fontSize,
+                  fontWeight: isReady ? FontWeight.w700 : FontWeight.w600,
+                  height: 1.0,
+                ),
               ),
             ],
-          ),
-          child: SizedBox.square(
-            dimension: size,
-            child: Stack(
-              alignment: Alignment.center,
-              children: <Widget>[
-                SizedBox.square(
-                  dimension: ringSize,
-                  child: CircularProgressIndicator(
-                    strokeWidth: compact ? 2.4 : 2.8,
-                    value: isLoading ? null : (forceVisible ? progress : null),
-                    backgroundColor: accentColor.withValues(alpha: 0.14),
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      accentColor.withValues(alpha: 0.92),
-                    ),
-                  ),
-                ),
-                for (int index = 0; index < 3; index += 1)
-                  Transform.translate(
-                    offset: axis == Axis.horizontal
-                        ? Offset(
-                            direction *
-                                (index - 1) *
-                                chevronSpacing *
-                                (0.82 + (progress * 0.36)),
-                            0,
-                          )
-                        : Offset(
-                            0,
-                            direction *
-                                (index - 1) *
-                                chevronSpacing *
-                                (0.82 + (progress * 0.36)),
-                          ),
-                    child: Opacity(
-                      opacity: isLoading
-                          ? 0.28 + (index * 0.12)
-                          : (0.18 +
-                                    (((progress * 1.2) - (index * 0.18))
-                                            .clamp(0, 1)
-                                            .toDouble() *
-                                        0.78))
-                                .clamp(0, 1)
-                                .toDouble(),
-                      child: Icon(
-                        directionIcon,
-                        size: compact ? 18 : 22,
-                        color: accentColor,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
           ),
         ),
       ),
@@ -1530,6 +1463,116 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
 
   Widget _buildReaderMode(BuildContext context, ReaderPageData page) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final bool isZoomed = _readerZoomScale > 1.01;
+
+    Widget readerContent = _readerPreferences.isPaged
+        ? _buildReaderPagedContent(context, page)
+        : _buildReaderScrollableContent(context, page);
+
+    // Always keep ClipRect + Transform in the widget tree to preserve the
+    // child ListView's scroll position across zoom state changes.
+    readerContent = ClipRect(
+      child: Transform.translate(
+        offset: isZoomed
+            ? Offset(_readerPanOffsetX, _readerPanOffsetY)
+            : Offset.zero,
+        child: Transform.scale(
+          scale: _readerZoomScale,
+          alignment: Alignment.center,
+          child: readerContent,
+        ),
+      ),
+    );
+
+    if (isZoomed) {
+      final Size screenSize = MediaQuery.sizeOf(context);
+      final double maxPanX = screenSize.width * (_readerZoomScale - 1) / 2;
+      final double maxPanY = screenSize.height * (_readerZoomScale - 1) / 2;
+      readerContent = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        dragStartBehavior: DragStartBehavior.down,
+        onPanUpdate: (DragUpdateDetails details) {
+          if (_isReaderScaleGestureActive) {
+            return;
+          }
+          final double dy = details.delta.dy;
+          // Vertical: first absorb into panY, then scroll the remainder.
+          final double proposedPanY = _readerPanOffsetY + dy;
+          final double clampedPanY =
+              proposedPanY.clamp(-maxPanY, maxPanY);
+          final double consumedDy = clampedPanY - _readerPanOffsetY;
+          final double remainingDy = dy - consumedDy;
+          double overscrollDy = 0;
+          if (remainingDy.abs() > 0.5) {
+            final ScrollController vc = _readerPreferences.isPaged
+                ? _readerPageScrollControllerFor(_currentReaderPageIndex)
+                : _readerScrollController;
+            if (vc.hasClients) {
+              final double oldOffset = vc.offset;
+              final double rawOffset =
+                  oldOffset - remainingDy / _readerZoomScale;
+              final double newOffset = rawOffset.clamp(
+                vc.position.minScrollExtent,
+                vc.position.maxScrollExtent,
+              );
+              vc.jumpTo(newOffset);
+              // Compute overscroll: the drag the scroll controller refused.
+              final double scrolledScreen =
+                  (oldOffset - newOffset) * _readerZoomScale;
+              overscrollDy = remainingDy - scrolledScreen;
+            } else {
+              overscrollDy = remainingDy;
+            }
+          }
+          // Feed vertical overscroll into chapter boundary pull system.
+          if (overscrollDy.abs() > 0.5) {
+            _handleReaderZoomedOverscroll(page, overscrollDy);
+          }
+          _setStateIfMounted(() {
+            _readerPanOffsetX = (_readerPanOffsetX + details.delta.dx)
+                .clamp(-maxPanX, maxPanX);
+            _readerPanOffsetY = clampedPanY;
+          });
+        },
+        onPanEnd: (DragEndDetails details) {
+          if (_isReaderScaleGestureActive) {
+            return;
+          }
+          // Check if chapter pull was triggered.
+          _handleReaderZoomedPanEnd(page);
+          // Apply vertical momentum (fling).
+          final ScrollController vc = _readerPreferences.isPaged
+              ? _readerPageScrollControllerFor(_currentReaderPageIndex)
+              : _readerScrollController;
+          if (vc.hasClients) {
+            final double vy = details.velocity.pixelsPerSecond.dy;
+            if (vy.abs() > 100) {
+              final double targetOffset = (
+                vc.offset - vy * 0.25 / _readerZoomScale
+              ).clamp(
+                vc.position.minScrollExtent,
+                vc.position.maxScrollExtent,
+              );
+              unawaited(
+                vc.animateTo(
+                  targetOffset,
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.easeOutCubic,
+                ),
+              );
+            }
+          }
+        },
+        child: readerContent,
+      );
+    } else {
+      readerContent = GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapUp: _isReaderZoomGestureLocked ? null : _handleReaderTapUp,
+        child: readerContent,
+      );
+    }
+
     return AnimatedOpacity(
       opacity: _isReaderExitTransitionActive ? 0 : 1,
       duration: _readerExitFadeDuration,
@@ -1544,14 +1587,11 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
               fit: StackFit.expand,
               children: <Widget>[
                 Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onTapUp: _isReaderZoomGestureLocked
-                        ? null
-                        : _handleReaderTapUp,
-                    child: _readerPreferences.isPaged
-                        ? _buildReaderPagedContent(context, page)
-                        : _buildReaderScrollableContent(context, page),
+                  child: _ReaderPinchZoomDetector(
+                    onPinchStart: _handleReaderPinchZoomStart,
+                    onPinchUpdate: _handleReaderPinchZoomUpdate,
+                    onPinchEnd: _handleReaderPinchZoomEnd,
+                    child: readerContent,
                   ),
                 ),
                 _buildReaderOverlay(context, page),
@@ -1565,93 +1605,90 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   }
 }
 
-class _ReaderZoomableImage extends StatefulWidget {
-  const _ReaderZoomableImage({
-    super.key,
+
+class _ReaderPinchZoomDetector extends StatefulWidget {
+  const _ReaderPinchZoomDetector({
     required this.child,
-    required this.onZoomChanged,
-    required this.onScaleGestureActiveChanged,
+    required this.onPinchStart,
+    required this.onPinchUpdate,
+    required this.onPinchEnd,
   });
 
   final Widget child;
-  final ValueChanged<bool> onZoomChanged;
-  final ValueChanged<bool> onScaleGestureActiveChanged;
+  final VoidCallback onPinchStart;
+  final ValueChanged<double> onPinchUpdate;
+  final VoidCallback onPinchEnd;
 
   @override
-  State<_ReaderZoomableImage> createState() => _ReaderZoomableImageState();
+  State<_ReaderPinchZoomDetector> createState() =>
+      _ReaderPinchZoomDetectorState();
 }
 
-class _ReaderZoomableImageState extends State<_ReaderZoomableImage> {
-  late final TransformationController _transformationController;
-  bool _isZoomed = false;
-  bool _isMultiTouchActive = false;
+class _ReaderPinchZoomDetectorState extends State<_ReaderPinchZoomDetector> {
+  final Map<int, Offset> _pointers = <int, Offset>{};
+  double? _initialDistance;
+  bool _isPinchActive = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _transformationController = TransformationController();
-    _transformationController.addListener(_handleTransformChanged);
-  }
-
-  @override
-  void dispose() {
-    _setMultiTouchActive(false);
-    if (_isZoomed) {
-      widget.onZoomChanged(false);
+  double _pointerDistance() {
+    if (_pointers.length < 2) {
+      return 0;
     }
-    _transformationController.removeListener(_handleTransformChanged);
-    _transformationController.dispose();
-    super.dispose();
+    final List<Offset> positions = _pointers.values.toList();
+    return (positions[0] - positions[1]).distance;
   }
 
-  void _handleTransformChanged() {
-    final bool isZoomed =
-        _transformationController.value.getMaxScaleOnAxis() > 1.01;
-    if (_isZoomed == isZoomed) {
+  void _handlePointerDown(PointerDownEvent event) {
+    _pointers[event.pointer] = event.position;
+    if (_pointers.length == 2 && !_isPinchActive) {
+      final double distance = _pointerDistance();
+      if (distance > 0) {
+        _initialDistance = distance;
+        _isPinchActive = true;
+        widget.onPinchStart();
+      }
+    }
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (!_pointers.containsKey(event.pointer)) {
       return;
     }
-    setState(() {
-      _isZoomed = isZoomed;
-    });
-    widget.onZoomChanged(isZoomed);
-  }
-
-  void _setMultiTouchActive(bool value) {
-    if (_isMultiTouchActive == value) {
-      return;
+    _pointers[event.pointer] = event.position;
+    if (_isPinchActive &&
+        _pointers.length >= 2 &&
+        _initialDistance != null &&
+        _initialDistance! > 0) {
+      final double currentDistance = _pointerDistance();
+      widget.onPinchUpdate(currentDistance / _initialDistance!);
     }
-    _isMultiTouchActive = value;
-    widget.onScaleGestureActiveChanged(value);
   }
 
-  void _handleInteractionStart(ScaleStartDetails details) {
-    _setMultiTouchActive(details.pointerCount > 1);
-  }
-
-  void _handleInteractionUpdate(ScaleUpdateDetails details) {
-    _setMultiTouchActive(details.pointerCount > 1);
-  }
-
-  void _handleInteractionEnd(ScaleEndDetails details) {
-    _setMultiTouchActive(false);
-    if (!_isZoomed) {
-      _transformationController.value = Matrix4.identity();
+  void _endPinchIfNeeded() {
+    if (_isPinchActive && _pointers.length < 2) {
+      _isPinchActive = false;
+      _initialDistance = null;
+      widget.onPinchEnd();
     }
+  }
+
+  void _handlePointerUp(PointerUpEvent event) {
+    _pointers.remove(event.pointer);
+    _endPinchIfNeeded();
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    _pointers.remove(event.pointer);
+    _endPinchIfNeeded();
   }
 
   @override
   Widget build(BuildContext context) {
-    return InteractiveViewer(
-      transformationController: _transformationController,
-      clipBehavior: Clip.hardEdge,
-      panEnabled: _isZoomed,
-      scaleEnabled: true,
-      minScale: 1,
-      maxScale: 4,
-      boundaryMargin: const EdgeInsets.all(32),
-      onInteractionStart: _handleInteractionStart,
-      onInteractionUpdate: _handleInteractionUpdate,
-      onInteractionEnd: _handleInteractionEnd,
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: _handlePointerDown,
+      onPointerMove: _handlePointerMove,
+      onPointerUp: _handlePointerUp,
+      onPointerCancel: _handlePointerCancel,
       child: widget.child,
     );
   }
