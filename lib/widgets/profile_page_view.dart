@@ -24,6 +24,10 @@ class ProfilePageView extends StatelessWidget {
     this.onOpenHistoryPageNumber,
     this.onOpenCachedComic,
     this.onDeleteCachedComic,
+    this.versionLabel = '--',
+    this.isCheckingForUpdates = false,
+    this.onCheckForUpdates,
+    this.onOpenProjectRepository,
     this.currentHost = '',
     this.knownHosts = const <String>[],
     this.candidateHosts = const <String>[],
@@ -53,6 +57,10 @@ class ProfilePageView extends StatelessWidget {
   final ValueChanged<int>? onOpenHistoryPageNumber;
   final ValueChanged<String>? onOpenCachedComic;
   final ValueChanged<String>? onDeleteCachedComic;
+  final String versionLabel;
+  final bool isCheckingForUpdates;
+  final VoidCallback? onCheckForUpdates;
+  final VoidCallback? onOpenProjectRepository;
   final String currentHost;
   final List<String> knownHosts;
   final List<String> candidateHosts;
@@ -282,6 +290,15 @@ class ProfilePageView extends StatelessWidget {
         ),
       );
     }
+
+    addSection(
+      _VersionEntryCard(
+        versionLabel: versionLabel,
+        isCheckingForUpdates: isCheckingForUpdates,
+        onCheckForUpdates: onCheckForUpdates,
+        onOpenProjectRepository: onOpenProjectRepository,
+      ),
+    );
 
     return Column(children: sections);
   }
@@ -698,18 +715,19 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
       if (normalizedPinnedKey.isNotEmpty) normalizedPinnedKey,
       if (recommendedKey.isNotEmpty) recommendedKey,
     ];
-    final List<String> hosts = <String>[
-      for (final String host in rawHosts)
-        if (seenHosts.add(canonicalHostByAlias[host] ?? host))
-          canonicalHostByAlias[host] ?? host,
-    ]..sort((String left, String right) {
-        final int leftRank = _hostDisplayRank(probes[left]);
-        final int rightRank = _hostDisplayRank(probes[right]);
-        if (leftRank != rightRank) {
-          return leftRank.compareTo(rightRank);
-        }
-        return rawHosts.indexOf(left).compareTo(rawHosts.indexOf(right));
-      });
+    final List<String> hosts =
+        <String>[
+          for (final String host in rawHosts)
+            if (seenHosts.add(canonicalHostByAlias[host] ?? host))
+              canonicalHostByAlias[host] ?? host,
+        ]..sort((String left, String right) {
+          final int leftRank = _hostDisplayRank(probes[left]);
+          final int rightRank = _hostDisplayRank(probes[right]);
+          if (leftRank != rightRank) {
+            return leftRank.compareTo(rightRank);
+          }
+          return rawHosts.indexOf(left).compareTo(rawHosts.indexOf(right));
+        });
 
     return Scaffold(
       appBar: AppBar(title: const Text('访问域名')),
@@ -1280,6 +1298,124 @@ class _HostStateBadge extends StatelessWidget {
           fontWeight: FontWeight.w800,
         ),
       ),
+    );
+  }
+}
+
+class _VersionEntryCard extends StatelessWidget {
+  const _VersionEntryCard({
+    required this.versionLabel,
+    required this.isCheckingForUpdates,
+    this.onCheckForUpdates,
+    this.onOpenProjectRepository,
+  });
+
+  final String versionLabel;
+  final bool isCheckingForUpdates;
+  final VoidCallback? onCheckForUpdates;
+  final VoidCallback? onOpenProjectRepository;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return _SectionCard(
+      title: '版本',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: Column(
+          children: <Widget>[
+            _VersionEntryRow(
+              label: '当前版本',
+              trailing: Text(
+                versionLabel,
+                style: TextStyle(
+                  color: colorScheme.onSurface.withValues(alpha: 0.72),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            _VersionEntryDivider(color: colorScheme.outlineVariant),
+            _VersionEntryRow(
+              label: '检查更新',
+              onTap: onCheckForUpdates,
+              trailing: isCheckingForUpdates
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.chevron_right_rounded),
+            ),
+            _VersionEntryDivider(color: colorScheme.outlineVariant),
+            _VersionEntryRow(
+              label: 'GitHub',
+              onTap: onOpenProjectRepository,
+              trailing: const Icon(Icons.chevron_right_rounded),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VersionEntryRow extends StatelessWidget {
+  const _VersionEntryRow({
+    required this.label,
+    required this.trailing,
+    this.onTap,
+  });
+
+  final String label;
+  final Widget trailing;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            IconTheme(
+              data: IconThemeData(
+                color: colorScheme.onSurface.withValues(alpha: 0.72),
+              ),
+              child: trailing,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VersionEntryDivider extends StatelessWidget {
+  const _VersionEntryDivider({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      child: Divider(height: 1, color: color.withValues(alpha: 0.56)),
     );
   }
 }
