@@ -196,6 +196,22 @@ class PageRepository {
     await _cacheStore.removeAuthScope(authScope);
   }
 
+  Future<void> writeCachedPage(
+    EasyCopyPage page, {
+    required String authScope,
+  }) async {
+    final Uri pageUri = AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
+    final PageQueryKey key = PageQueryKey.forUri(pageUri, authScope: authScope);
+    final CachedPageEnvelope envelope = PageCacheStore.buildEnvelope(
+      routeKey: key.routeKey,
+      page: page,
+      fingerprint: _fingerprintForPage(page),
+      authScope: authScope,
+    );
+    await _cacheStore.writeEnvelope(envelope);
+    _putMemory(CachedPageHit(key: key, page: page, envelope: envelope));
+  }
+
   void clearMemory() {
     _memoryCache.clear();
   }

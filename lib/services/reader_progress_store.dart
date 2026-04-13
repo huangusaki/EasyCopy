@@ -161,6 +161,31 @@ class ReaderProgressStore {
   static const int maxEntries = 60;
   static const String _tableName = 'reader_progress';
   static const String _databaseName = 'reader_state.db';
+  static const String _catalogUpdatedAtIndexName =
+      'idx_reader_progress_catalog_updated_at';
+  static const Map<String, String> _requiredColumnDefinitions =
+      <String, String>{
+        'mode': "TEXT NOT NULL DEFAULT 'scroll'",
+        'offset': 'REAL NOT NULL DEFAULT 0',
+        'page_index': 'INTEGER NOT NULL DEFAULT 0',
+        'page_offset': 'REAL NOT NULL DEFAULT 0',
+        'catalog_path_key': "TEXT NOT NULL DEFAULT ''",
+        'chapter_path_key': "TEXT NOT NULL DEFAULT ''",
+        'updated_at': "TEXT NOT NULL DEFAULT ''",
+      };
+  static const String _createTableStatement =
+      '''
+    CREATE TABLE IF NOT EXISTS $_tableName (
+      key TEXT PRIMARY KEY,
+      mode TEXT NOT NULL DEFAULT 'scroll',
+      offset REAL NOT NULL DEFAULT 0,
+      page_index INTEGER NOT NULL DEFAULT 0,
+      page_offset REAL NOT NULL DEFAULT 0,
+      catalog_path_key TEXT NOT NULL DEFAULT '',
+      chapter_path_key TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
+    )
+  ''';
 
   static String progressKeyForChapterHref(String chapterHref) {
     return _pathKeyFromValue(chapterHref);
@@ -202,6 +227,11 @@ class ReaderProgressStore {
     return position.offset;
   }
 
+  /// Returns the most recently updated progress entry, or `null` if the
+  /// store is empty.
+  ReaderProgressEntry? get latestEntry =>
+      _entries.isEmpty ? null : _entries.first;
+
   String? latestChapterPathKeyForCatalog(String catalogHref) {
     final String targetCatalogPathKey = _pathKey(catalogHref);
     if (targetCatalogPathKey.isEmpty) {
@@ -235,11 +265,11 @@ class ReaderProgressStore {
       return;
     }
     final DateTime now = _now();
-    final int index = _entries.indexWhere(
-      (ReaderProgressEntry entry) => entry.key == normalizedKey,
-    );
-    final ReaderProgressEntry nextEntry = index >= 0
-        ? _entries[index].copyWith(
+    final ReaderProgressEntry? existingEntry =
+        _entryForKey(normalizedKey) ??
+        await _migrateLegacyEntryForKey(normalizedKey);
+    final ReaderProgressEntry nextEntry = existingEntry != null
+        ? existingEntry.copyWith(
             updatedAt: now,
             catalogPathKey: catalogPathKey,
             chapterPathKey: chapterPathKey,
@@ -273,18 +303,18 @@ class ReaderProgressStore {
     final String catalogPathKey = _pathKey(catalogHref);
     final String chapterPathKey = _pathKey(chapterHref);
     final DateTime now = _now();
-    final int index = _entries.indexWhere(
-      (ReaderProgressEntry entry) => entry.key == normalizedKey,
-    );
-    final ReaderProgressEntry nextEntry = index >= 0
-        ? _entries[index].copyWith(
+    final ReaderProgressEntry? existingEntry =
+        _entryForKey(normalizedKey) ??
+        await _migrateLegacyEntryForKey(normalizedKey);
+    final ReaderProgressEntry nextEntry = existingEntry != null
+        ? existingEntry.copyWith(
             position: normalizedPosition,
             updatedAt: now,
             catalogPathKey: catalogPathKey.isEmpty
-                ? _entries[index].catalogPathKey
+                ? existingEntry.catalogPathKey
                 : catalogPathKey,
             chapterPathKey: chapterPathKey.isEmpty
-                ? _entries[index].chapterPathKey
+                ? existingEntry.chapterPathKey
                 : chapterPathKey,
           )
         : ReaderProgressEntry(
@@ -383,28 +413,10 @@ class ReaderProgressStore {
       options: sqflite.OpenDatabaseOptions(
         version: 1,
         onCreate: (sqflite.Database db, int version) async {
-          await db.execute('''
-            CREATE TABLE $_tableName (
-              key TEXT PRIMARY KEY,
-              mode TEXT NOT NULL,
-              offset REAL NOT NULL,
-              page_index INTEGER NOT NULL,
-              page_offset REAL NOT NULL,
-              catalog_path_key TEXT NOT NULL,
-              chapter_path_key TEXT NOT NULL,
-              updated_at TEXT NOT NULL
-            )
-          ''');
-          await db.execute('''
-            CREATE INDEX idx_reader_progress_catalog_updated_at
-            ON $_tableName (catalog_path_key, updated_at DESC)
-          ''');
+          await _ensureDatabaseSchema(db);
         },
         onOpen: (sqflite.Database db) async {
-          await db.execute('''
-            CREATE INDEX IF NOT EXISTS idx_reader_progress_catalog_updated_at
-            ON $_tableName (catalog_path_key, updated_at DESC)
-          ''');
+          await _ensureDatabaseSchema(db);
         },
       ),
     );
@@ -514,6 +526,36 @@ class ReaderProgressStore {
     }
     _replaceEntry(entry);
     await _persistEntry(entry);
+  }
+
+  Future<void> _ensureDatabaseSchema(sqflite.Database db) async {
+    await db.execute(_createTableStatement);
+    final Set<String> existingColumns = await _tableColumns(db);
+    for (final MapEntry<String, String> entry
+        in _requiredColumnDefinitions.entries) {
+      if (existingColumns.contains(entry.key)) {
+        continue;
+      }
+      await db.execute(
+        'ALTER TABLE $_tableName ADD COLUMN ${entry.key} ${entry.value}',
+      );
+    }
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS $_catalogUpdatedAtIndexName
+      ON $_tableName (catalog_path_key, updated_at DESC)
+    ''');
+  }
+
+  Future<Set<String>> _tableColumns(sqflite.Database db) async {
+    final List<Map<String, Object?>> rows = await db.rawQuery(
+      'PRAGMA table_info($_tableName)',
+    );
+    return rows
+        .map(
+          (Map<String, Object?> row) => (row['name'] as String?)?.trim() ?? '',
+        )
+        .where((String name) => name.isNotEmpty)
+        .toSet();
   }
 
   Future<void> _trimPersistedEntries() async {
