@@ -301,7 +301,8 @@ int tabIndexForUri(Uri? uri) {
       path.startsWith('/filter') ||
       path.startsWith('/search') ||
       path.startsWith('/recommend') ||
-      path.startsWith('/newest')) {
+      path.startsWith('/newest') ||
+      path.startsWith('/author')) {
     return 1;
   }
 
@@ -319,7 +320,8 @@ int resolveNavigationTabIndex(Uri? uri, {int? sourceTabIndex}) {
     final bool isReaderRoute = path.contains('/chapter/');
     final bool isDetailRoute =
         path.startsWith('/comic/') && !path.contains('/chapter/');
-    if (isReaderRoute || isDetailRoute) {
+    final bool isAuthorRoute = path.startsWith('/author/');
+    if (isReaderRoute || isDetailRoute || isAuthorRoute) {
       return sourceTabIndex;
     }
   }

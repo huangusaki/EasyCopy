@@ -497,7 +497,8 @@ const String _pageExtractionScriptTemplate = r"""
       path.startsWith('/search') ||
       path.startsWith('/topic') ||
       path.startsWith('/recommend') ||
-      path.startsWith('/newest')
+      path.startsWith('/newest') ||
+      path.startsWith('/author')
     ) {
       return 'discover';
     }
@@ -697,6 +698,15 @@ const String _pageExtractionScriptTemplate = r"""
         (rowByPrefix('作者') || document).querySelectorAll('a'),
       ).map((author) => text(author)),
     ).join(' / ');
+    const authorLinks = Array.from(
+      (rowByPrefix('作者') || document).querySelectorAll('a'),
+    )
+      .map((anchor) => ({
+        label: text(anchor),
+        href: linkUrl(anchor),
+        active: false,
+      }))
+      .filter((item) => item.label && item.href);
     const chapterGroups = parseDetailChapterGroups();
     const groupedChapters = uniqueBy(
       chapterGroups.flatMap((group) => group.chapters),
@@ -711,6 +721,7 @@ const String _pageExtractionScriptTemplate = r"""
       coverUrl: imageUrl(document.querySelector('.comicParticulars-left-img img')),
       aliases: infoValue('別名', rowByPrefix),
       authors,
+      authorLinks,
       heat: infoValue('熱度', rowByPrefix),
       updatedAt: infoValue('最後更新', rowByPrefix),
       status: infoValue('狀態', rowByPrefix),

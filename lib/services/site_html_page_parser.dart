@@ -95,6 +95,7 @@ class SiteHtmlPageParser {
         path.startsWith('/topic') ||
         path.startsWith('/recommend') ||
         path.startsWith('/newest') ||
+        path.startsWith('/author') ||
         path.startsWith('/search')) {
       return EasyCopyPageType.discover;
     }
@@ -459,6 +460,17 @@ class SiteHtmlPageParser {
       authors: _mapText(
         _querySelectorAll(authorRow ?? document, 'a').map(_text),
       ).join(' / '),
+      authorLinks: _querySelectorAll(authorRow ?? document, 'a')
+          .map((dom.Element anchor) {
+            final String label = _text(anchor);
+            final String href = _linkUrl(uri, anchor);
+            if (label.isEmpty || href.isEmpty) {
+              return null;
+            }
+            return LinkAction(label: label, href: href, active: false);
+          })
+          .whereType<LinkAction>()
+          .toList(growable: false),
       heat: _infoValue(infoRows, '熱度'),
       updatedAt: _infoValue(infoRows, '最後更新'),
       status: _infoValue(infoRows, '狀態'),

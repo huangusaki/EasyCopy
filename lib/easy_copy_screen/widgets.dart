@@ -1095,6 +1095,7 @@ class _DetailHeroCard extends StatelessWidget {
     required this.onToggleCollection,
     required this.isCollectionBusy,
     required this.onTagTap,
+    required this.onAuthorTap,
   });
 
   final DetailPageData page;
@@ -1103,6 +1104,7 @@ class _DetailHeroCard extends StatelessWidget {
   final VoidCallback? onToggleCollection;
   final bool isCollectionBusy;
   final ValueChanged<String> onTagTap;
+  final ValueChanged<String> onAuthorTap;
 
   List<String> _searchLabels(String value) {
     final List<String> labels = <String>[];
@@ -1149,20 +1151,30 @@ class _DetailHeroCard extends StatelessWidget {
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    if (authorLabels.isNotEmpty ||
+                    if (page.authorLinks.isNotEmpty ||
+                        authorLabels.isNotEmpty ||
                         page.tags.isNotEmpty) ...<Widget>[
                       const SizedBox(height: 14),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         children: <Widget>[
-                          ...authorLabels.map(
-                            (String author) => _LinkChip(
-                              label: author,
-                              active: true,
-                              onTap: () => onTagTap(author),
+                          if (page.authorLinks.isNotEmpty)
+                            ...page.authorLinks.map(
+                              (LinkAction author) => _LinkChip(
+                                label: author.label,
+                                active: true,
+                                onTap: () => onAuthorTap(author.href),
+                              ),
+                            )
+                          else
+                            ...authorLabels.map(
+                              (String author) => _LinkChip(
+                                label: author,
+                                active: true,
+                                onTap: () => onTagTap(author),
+                              ),
                             ),
-                          ),
                           ...page.tags
                               .take(6)
                               .map(
