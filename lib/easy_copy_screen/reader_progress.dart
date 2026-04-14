@@ -81,6 +81,13 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
       _disposeReaderPagedScrollControllers();
       _readerImageItemKeys.clear();
       _readerImageAspectRatios.clear();
+      // Eagerly reset the shared scroll controller so the next ListView starts
+      // at offset 0 rather than inheriting the previous chapter's position.
+      // This must happen synchronously BEFORE the async _restoreReaderPosition,
+      // whose await gap allows the new ListView to mount with a stale offset.
+      if (!_readerPreferences.isPaged && _readerScrollController.hasClients) {
+        _readerScrollController.jumpTo(0);
+      }
     }
     _prepareReaderComments(page, resetForNewChapter: changedPage);
     _scheduleReaderPresentationSync();
@@ -96,9 +103,49 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
   }
 
   Future<void> _markReaderChapterVisited(ReaderPageData page) {
+    _updateLocalContinueReading(page);
     return _readerProgressStore.markChapterOpened(
       key: _readerProgressKeyForPage(page),
       catalogHref: page.catalogHref,
+      chapterHref: page.uri,
+    );
+  }
+
+  void _updateLocalContinueReading(ReaderPageData page) {
+    // Attempt to resolve the cover URL from a detail page in the current
+    // tab's navigation stack.
+    String coverUrl = '';
+    final String catalogPath = Uri.tryParse(page.catalogHref)?.path ?? '';
+    if (catalogPath.isNotEmpty) {
+      for (final PrimaryTabRouteEntry entry
+          in _tabSessionStore.stackForTab(_selectedIndex)) {
+        final EasyCopyPage? entryPage = entry.page;
+        if (entryPage is DetailPageData &&
+            Uri.parse(entryPage.uri).path == catalogPath) {
+          coverUrl = entryPage.coverUrl;
+          break;
+        }
+      }
+    }
+    // Fall back to cached comics if no detail page is found.
+    if (coverUrl.isEmpty && catalogPath.isNotEmpty) {
+      final CachedComicLibraryEntry? cachedEntry = _cachedComics
+          .cast<CachedComicLibraryEntry?>()
+          .firstWhere(
+            (CachedComicLibraryEntry? item) =>
+                item != null &&
+                Uri.tryParse(item.comicHref)?.path == catalogPath,
+            orElse: () => null,
+          );
+      if (cachedEntry != null) {
+        coverUrl = cachedEntry.coverUrl;
+      }
+    }
+    _localContinueReading = ProfileHistoryItem(
+      title: page.comicTitle,
+      coverUrl: coverUrl,
+      comicHref: page.catalogHref,
+      chapterLabel: page.chapterTitle,
       chapterHref: page.uri,
     );
   }
@@ -191,9 +238,14 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
               : 0.5,
         );
       } else {
+        // When there is no saved position (never-read chapter), explicitly
+        // jump to offset 0 so the chapter starts at the top. Passing null
+        // would let _jumpReaderToOffset apply the openingPosition preference
+        // (e.g. center), which is only meaningful when reopening a chapter
+        // that already has a persisted scroll position.
         _jumpReaderToOffset(
           page.uri,
-          savedOffset,
+          savedOffset ?? 0,
           attempts: 10,
           ticket: ticket,
         );

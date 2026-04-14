@@ -216,7 +216,7 @@ void main() {
           );
 
           for (final _ProbeSnapshot probe in probes) {
-            print('LIVE_PROBE ${jsonEncode(probe.toJson())}');
+            stdout.writeln('LIVE_PROBE ${jsonEncode(probe.toJson())}');
           }
         } finally {
           client.close();

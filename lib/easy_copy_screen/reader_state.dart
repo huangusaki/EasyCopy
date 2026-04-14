@@ -7,8 +7,6 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
   bool get _readerNextChapterPullReady =>
       _readerNextChapterPullDistance >= _readerNextChapterTriggerDistance;
 
-  Axis get _readerNextChapterGestureAxis =>
-      _readerPreferences.isPaged ? Axis.horizontal : Axis.vertical;
 
   double get _readerNextChapterTriggerDistance => _readerPreferences.isPaged
       ? _readerNextChapterPagedTriggerDistance
@@ -57,18 +55,26 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
   }
 
   void _resetReaderZoomState() {
-    if (!_isReaderScaleGestureActive && _zoomedReaderImageKeys.isEmpty) {
+    if (!_isReaderScaleGestureActive &&
+        _zoomedReaderImageKeys.isEmpty &&
+        _readerZoomScale <= 1.01) {
       return;
     }
     final bool wasLocked = _isReaderZoomGestureLocked;
     if (!mounted) {
       _isReaderScaleGestureActive = false;
       _zoomedReaderImageKeys.clear();
+      _readerZoomScale = 1.0;
+      _readerPanOffsetX = 0;
+      _readerPanOffsetY = 0;
       return;
     }
     _setStateIfMounted(() {
       _isReaderScaleGestureActive = false;
       _zoomedReaderImageKeys.clear();
+      _readerZoomScale = 1.0;
+      _readerPanOffsetX = 0;
+      _readerPanOffsetY = 0;
     });
     _handleReaderZoomLockChanged(wasLocked);
   }
@@ -85,6 +91,77 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
       return;
     }
     _restartReaderAutoTurn();
+  }
+
+  void _handleReaderPinchZoomStart() {
+    _readerZoomBaseScale = _readerZoomScale;
+    _setReaderScaleGestureActive(true);
+  }
+
+  void _handleReaderPinchZoomUpdate(double relativeScale) {
+    final double newScale = (_readerZoomBaseScale * relativeScale).clamp(
+      1.0,
+      4.0,
+    );
+    if ((newScale - _readerZoomScale).abs() < 0.005) {
+      return;
+    }
+    _setStateIfMounted(() {
+      _readerZoomScale = newScale;
+    });
+  }
+
+  void _handleReaderPinchZoomEnd() {
+    _setReaderScaleGestureActive(false);
+    if (_readerZoomScale <= 1.02) {
+      // Zoom ended at roughly 1x — reset fully.
+      final bool wasLocked = _isReaderZoomGestureLocked;
+      _setStateIfMounted(() {
+        _readerZoomScale = 1.0;
+        _readerPanOffsetX = 0;
+        _readerPanOffsetY = 0;
+        _zoomedReaderImageKeys.remove('__viewport_zoom__');
+      });
+      _handleReaderZoomLockChanged(wasLocked);
+    } else {
+      // Zoomed in — lock scrolling and enable pan mode.
+      _setReaderImageZoomed('__viewport_zoom__', true);
+    }
+  }
+
+  /// Called from the zoomed pan handler when vertical drag overflows both
+  /// panY boundary and scroll boundary. Feeds the surplus into the chapter
+  /// pull distance system so the user can switch chapters while zoomed.
+  void _handleReaderZoomedOverscroll(ReaderPageData page, double overscrollDy) {
+    final bool hasPreviousChapter = page.prevHref.trim().isNotEmpty;
+    final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
+    // Dragging up (dy < 0) while at bottom → next chapter.
+    if (overscrollDy < -0.5 && hasNextChapter) {
+      _clearReaderPreviousChapterPullState();
+      _updateReaderNextChapterPullDistance(
+        _readerNextChapterPullDistance + overscrollDy.abs(),
+      );
+    }
+    // Dragging down (dy > 0) while at top → previous chapter.
+    else if (overscrollDy > 0.5 && hasPreviousChapter) {
+      _clearReaderNextChapterPullState();
+      _updateReaderPreviousChapterPullDistance(
+        _readerPreviousChapterPullDistance + overscrollDy.abs(),
+      );
+    }
+  }
+
+  /// Called from the zoomed pan handler on pan end. If pull distance meets
+  /// the trigger threshold, trigger chapter navigation; otherwise clear state.
+  void _handleReaderZoomedPanEnd(ReaderPageData page) {
+    if (_readerPreviousChapterPullReady) {
+      unawaited(_triggerReaderPreviousChapter(page));
+    } else if (_readerNextChapterPullReady) {
+      unawaited(_triggerReaderNextChapter(page));
+    } else {
+      _clearReaderPreviousChapterPullState();
+      _clearReaderNextChapterPullState();
+    }
   }
 
   void _handleReaderVolumeKeyAction(ReaderVolumeKeyAction action) {
@@ -553,7 +630,6 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
       _clearReaderPreviousChapterPullState();
       return;
     }
-    final String currentReaderUri = page.uri;
     if (!mounted) {
       _isReaderNextChapterLoading = true;
     } else {
@@ -561,8 +637,8 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
         _isReaderNextChapterLoading = true;
       });
     }
-    _persistCurrentReaderProgress();
     try {
+      await _flushReaderProgressPersistence();
       await _openHref(
         prevHref,
         nextHref: page.uri,
@@ -570,19 +646,7 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
         sourceTabIndex: _selectedIndex,
       );
     } finally {
-      if (!mounted) {
-        _isReaderNextChapterLoading = false;
-        _readerPreviousChapterPullDistance = 0;
-      } else {
-        final EasyCopyPage? currentPage = _page;
-        if (currentPage is ReaderPageData &&
-            currentPage.uri == currentReaderUri) {
-          _setStateIfMounted(() {
-            _isReaderNextChapterLoading = false;
-            _readerPreviousChapterPullDistance = 0;
-          });
-        }
-      }
+      _resetReaderChapterBoundaryState();
     }
   }
 
@@ -592,7 +656,6 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
       _clearReaderNextChapterPullState();
       return;
     }
-    final String currentReaderUri = page.uri;
     if (!mounted) {
       _isReaderNextChapterLoading = true;
     } else {
@@ -600,8 +663,8 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
         _isReaderNextChapterLoading = true;
       });
     }
-    _persistCurrentReaderProgress();
     try {
+      await _flushReaderProgressPersistence();
       await _openHref(
         nextHref,
         prevHref: page.uri,
@@ -609,19 +672,7 @@ extension _EasyCopyScreenReaderState on _EasyCopyScreenState {
         sourceTabIndex: _selectedIndex,
       );
     } finally {
-      if (!mounted) {
-        _isReaderNextChapterLoading = false;
-        _readerNextChapterPullDistance = 0;
-      } else {
-        final EasyCopyPage? currentPage = _page;
-        if (currentPage is ReaderPageData &&
-            currentPage.uri == currentReaderUri) {
-          _setStateIfMounted(() {
-            _isReaderNextChapterLoading = false;
-            _readerNextChapterPullDistance = 0;
-          });
-        }
-      }
+      _resetReaderChapterBoundaryState();
     }
   }
 

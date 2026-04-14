@@ -31,6 +31,7 @@ import 'package:easy_copy/services/page_repository.dart';
 import 'package:easy_copy/services/rank_filter_selection.dart';
 import 'package:easy_copy/services/primary_tab_session_store.dart';
 import 'package:easy_copy/services/reader_platform_bridge.dart';
+import 'package:easy_copy/services/reader_navigation_repairer.dart';
 import 'package:easy_copy/services/reader_progress_store.dart';
 import 'package:easy_copy/services/network_diagnostics.dart';
 import 'package:easy_copy/services/site_api_client.dart';
@@ -63,11 +64,11 @@ part 'easy_copy_screen/reader_mode.dart';
 part 'easy_copy_screen/webview_pipeline.dart';
 part 'easy_copy_screen/widgets.dart';
 
-const Duration _pageFadeTransitionDuration = Duration(milliseconds: 200);
+const Duration _pageFadeTransitionDuration = Duration(milliseconds: 320);
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
 const String _detailAllChapterTabKey = '__detail_all__';
-const double _readerNextChapterPullTriggerDistance = 280;
-const double _readerNextChapterPagedTriggerDistance = 160;
+const double _readerNextChapterPullTriggerDistance = 266;
+const double _readerNextChapterPagedTriggerDistance = 152;
 const double _readerNextChapterPullActivationExtent = 100;
 
 typedef ReaderPageMaybeLoader = Future<ReaderPageData?> Function(Uri uri);
@@ -261,7 +262,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       <int, ScrollController>{};
   final Map<int, GlobalKey> _readerImageItemKeys = <int, GlobalKey>{};
   final Map<String, GlobalKey> _detailChapterItemKeys = <String, GlobalKey>{};
+  final Set<String> _readerNavigationRepairRouteKeys = <String>{};
   List<ChapterComment> _readerChapterComments = const <ChapterComment>[];
+  ProfileHistoryItem? _localContinueReading;
   final DeferredViewportCoordinator _standardScrollRestoreCoordinator =
       DeferredViewportCoordinator();
   final DeferredViewportCoordinator _detailChapterAutoScrollCoordinator =
@@ -1707,8 +1710,20 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       }
       if (cachedHit != null) {
         if (!_shouldBypassUnknownCache(targetUri, cachedHit.page)) {
+          final EasyCopyPage cachedPage = cachedHit.page;
+          final _CachedChapterNavigationContext resolvedCachedContext =
+              isReaderChapterRoute
+              ? _resolvedCachedChapterContext(
+                  targetUri,
+                  context: cachedChapterContext,
+                )
+              : const _CachedChapterNavigationContext();
+          final EasyCopyPage displayPage =
+              isReaderChapterRoute && cachedPage is ReaderPageData
+              ? _mergeReaderPageNavigation(cachedPage, resolvedCachedContext)
+              : cachedPage;
           _applyLoadedPage(
-            cachedHit.page,
+            displayPage,
             requestContext: requestContext,
             switchToTab: _shouldActivateAsyncResultTab(
               requestContext.targetTabIndex,
@@ -1721,14 +1736,28 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
               'source': 'page_cache',
               'elapsedMs': readerLoadStopwatch?.elapsedMilliseconds,
             });
-            final EasyCopyPage cachedPage = cachedHit.page;
-            if (cachedPage is ReaderPageData &&
-                cachedPage.imageUrls.isNotEmpty) {
+            if (displayPage is ReaderPageData &&
+                displayPage.imageUrls.isNotEmpty) {
               NetworkDiagnostics.probeImageVariants(
-                cachedPage.imageUrls.first,
-                referer: cachedPage.uri,
+                displayPage.imageUrls.first,
+                referer: displayPage.uri,
                 label: 'reader.first_image_page_cache',
               );
+              if (cachedPage is ReaderPageData &&
+                  _didReaderNavigationChange(cachedPage, displayPage)) {
+                unawaited(_persistReaderPageCache(displayPage));
+              }
+              if (displayPage.hasMissingChapterNavigation) {
+                unawaited(
+                  _repairCachedReaderNavigation(
+                    displayPage,
+                    targetUri: targetUri,
+                    context: resolvedCachedContext,
+                    requestContext: requestContext,
+                    persistToPageCache: true,
+                  ),
+                );
+              }
             }
           }
           if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
@@ -1925,6 +1954,122 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       }
     }
     return const _CachedChapterNavigationContext();
+  }
+
+  ReaderPageData _mergeReaderPageNavigation(
+    ReaderPageData page,
+    _CachedChapterNavigationContext context,
+  ) {
+    return page.mergeMissingNavigation(
+      prevHref: context.prevHref,
+      nextHref: context.nextHref,
+      catalogHref: context.catalogHref,
+    );
+  }
+
+  bool _didReaderNavigationChange(ReaderPageData before, ReaderPageData after) {
+    return before.prevHref != after.prevHref ||
+        before.nextHref != after.nextHref ||
+        before.catalogHref != after.catalogHref;
+  }
+
+  Future<void> _persistReaderPageCache(ReaderPageData page) async {
+    try {
+      final String authScope = _pageQueryKeyForUri(
+        Uri.parse(page.uri),
+      ).authScope;
+      await _pageRepository.writeCachedPage(page, authScope: authScope);
+    } catch (_) {
+      // Best-effort cache repair only.
+    }
+  }
+
+  Future<ReaderPageData?> _loadFreshReaderPageForNavigationRepair(
+    Uri uri, {
+    required String authScope,
+  }) async {
+    final EasyCopyPage page = await _pageRepository.loadFresh(
+      uri,
+      authScope: authScope,
+    );
+    if (page is ReaderPageData && page.imageUrls.isNotEmpty) {
+      return page;
+    }
+    return null;
+  }
+
+  Future<DetailPageData?> _loadFreshDetailPageForNavigationRepair(
+    Uri uri, {
+    required String authScope,
+  }) async {
+    final EasyCopyPage page = await _pageRepository.loadFresh(
+      uri,
+      authScope: authScope,
+    );
+    return page is DetailPageData ? page : null;
+  }
+
+  Future<void> _repairCachedReaderNavigation(
+    ReaderPageData page, {
+    required Uri targetUri,
+    required _CachedChapterNavigationContext context,
+    required NavigationRequestContext requestContext,
+    required bool persistToPageCache,
+  }) async {
+    if (!page.hasMissingChapterNavigation) {
+      return;
+    }
+    final PageQueryKey key = _pageQueryKeyForUri(targetUri);
+    if (!_readerNavigationRepairRouteKeys.add(key.routeKey)) {
+      return;
+    }
+    try {
+      DebugTrace.log('reader.navigation_repair_start', <String, Object?>{
+        'bootId': _bootId,
+        'uri': targetUri.toString(),
+        'persistToPageCache': persistToPageCache,
+      });
+      final ReaderPageData repairedPage = await ReaderNavigationRepairer.repair(
+        page,
+        authScope: key.authScope,
+        preferredCatalogHref: context.catalogHref,
+        loadReaderPage: _loadFreshReaderPageForNavigationRepair,
+        loadDetailPage: _loadFreshDetailPageForNavigationRepair,
+      );
+      if (!_didReaderNavigationChange(page, repairedPage)) {
+        DebugTrace.log('reader.navigation_repair_noop', <String, Object?>{
+          'bootId': _bootId,
+          'uri': targetUri.toString(),
+        });
+        return;
+      }
+      if (persistToPageCache) {
+        await _persistReaderPageCache(repairedPage);
+      }
+      DebugTrace.log('reader.navigation_repair_complete', <String, Object?>{
+        'bootId': _bootId,
+        'uri': targetUri.toString(),
+        'prevHref': repairedPage.prevHref,
+        'nextHref': repairedPage.nextHref,
+        'catalogHref': repairedPage.catalogHref,
+      });
+      if (!_canCommitRequest(requestContext)) {
+        return;
+      }
+      _applyLoadedPage(
+        repairedPage,
+        requestContext: requestContext,
+        switchToTab: false,
+      );
+    } catch (error) {
+      DebugTrace.log('reader.navigation_repair_failed', <String, Object?>{
+        'bootId': _bootId,
+        'uri': targetUri.toString(),
+        'error': error.toString(),
+      });
+    } finally {
+      _readerNavigationRepairRouteKeys.remove(key.routeKey);
+    }
   }
 
   Future<void> _revalidateCachedPage(
@@ -2262,11 +2407,23 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     if (cachedPage == null) {
       return false;
     }
-    return _applyLoadedPage(
+    final bool applied = _applyLoadedPage(
       cachedPage,
       requestContext: requestContext,
       switchToTab: true,
     );
+    if (applied && cachedPage.hasMissingChapterNavigation) {
+      unawaited(
+        _repairCachedReaderNavigation(
+          cachedPage,
+          targetUri: targetUri,
+          context: resolvedContext,
+          requestContext: requestContext,
+          persistToPageCache: false,
+        ),
+      );
+    }
+    return applied;
   }
 
   void _openDetailChapter(DetailPageData page, String href) {
@@ -2941,10 +3098,15 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       );
       return true;
     }
+    // Pop the reader entry off the stack first so that the catalog page
+    // is pushed on top of the previous entry (e.g. profile root).  This
+    // way pressing back from the catalog page returns the user to where
+    // they came from instead of getting stuck in a replaced entry.
+    _tabSessionStore.pop(_selectedIndex);
     await _loadUri(
       catalogUri,
       sourceTabIndex: _selectedIndex,
-      historyMode: NavigationIntent.preserve,
+      historyMode: NavigationIntent.push,
     );
     return true;
   }
@@ -3746,8 +3908,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
               color: Theme.of(context).scaffoldBackgroundColor,
               child: AnimatedSwitcher(
                 duration: _pageFadeTransitionDuration,
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeOutCubic,
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
                 transitionBuilder: _buildFadeSwitchTransition,
                 child: page is ReaderPageData
                     ? KeyedSubtree(

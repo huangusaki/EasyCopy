@@ -750,6 +750,7 @@ class DetailPageData extends EasyCopyPage {
     required this.coverUrl,
     required this.aliases,
     required this.authors,
+    this.authorLinks = const <LinkAction>[],
     required this.heat,
     required this.updatedAt,
     required this.status,
@@ -769,6 +770,7 @@ class DetailPageData extends EasyCopyPage {
       coverUrl: _stringValue(json['coverUrl']),
       aliases: _stringValue(json['aliases']),
       authors: _stringValue(json['authors']),
+      authorLinks: _readList<LinkAction>(json, 'authorLinks', LinkAction.fromJson),
       heat: _stringValue(json['heat']),
       updatedAt: _stringValue(json['updatedAt']),
       status: _stringValue(json['status']),
@@ -789,6 +791,7 @@ class DetailPageData extends EasyCopyPage {
   final String coverUrl;
   final String aliases;
   final String authors;
+  final List<LinkAction> authorLinks;
   final String heat;
   final String updatedAt;
   final String status;
@@ -804,6 +807,7 @@ class DetailPageData extends EasyCopyPage {
     return CachedComicDetailSnapshot(
       aliases: aliases,
       authors: authors,
+      authorLinks: authorLinks,
       heat: heat,
       updatedAt: updatedAt,
       status: status,
@@ -819,6 +823,7 @@ class DetailPageData extends EasyCopyPage {
     String? coverUrl,
     String? aliases,
     String? authors,
+    List<LinkAction>? authorLinks,
     String? heat,
     String? updatedAt,
     String? status,
@@ -836,6 +841,7 @@ class DetailPageData extends EasyCopyPage {
       coverUrl: coverUrl ?? this.coverUrl,
       aliases: aliases ?? this.aliases,
       authors: authors ?? this.authors,
+      authorLinks: authorLinks ?? this.authorLinks,
       heat: heat ?? this.heat,
       updatedAt: updatedAt ?? this.updatedAt,
       status: status ?? this.status,
@@ -858,6 +864,7 @@ class DetailPageData extends EasyCopyPage {
       'coverUrl': coverUrl,
       'aliases': aliases,
       'authors': authors,
+      'authorLinks': authorLinks.map((LinkAction item) => item.toJson()).toList(),
       'heat': heat,
       'updatedAt': updatedAt,
       'status': status,
@@ -881,6 +888,7 @@ class CachedComicDetailSnapshot {
   const CachedComicDetailSnapshot({
     this.aliases = '',
     this.authors = '',
+    this.authorLinks = const <LinkAction>[],
     this.heat = '',
     this.updatedAt = '',
     this.status = '',
@@ -893,6 +901,7 @@ class CachedComicDetailSnapshot {
     return CachedComicDetailSnapshot(
       aliases: _stringValue(json['aliases']),
       authors: _stringValue(json['authors']),
+      authorLinks: _readList<LinkAction>(json, 'authorLinks', LinkAction.fromJson),
       heat: _stringValue(json['heat']),
       updatedAt: _stringValue(json['updatedAt']),
       status: _stringValue(json['status']),
@@ -904,6 +913,7 @@ class CachedComicDetailSnapshot {
 
   final String aliases;
   final String authors;
+  final List<LinkAction> authorLinks;
   final String heat;
   final String updatedAt;
   final String status;
@@ -925,6 +935,7 @@ class CachedComicDetailSnapshot {
   CachedComicDetailSnapshot copyWith({
     String? aliases,
     String? authors,
+    List<LinkAction>? authorLinks,
     String? heat,
     String? updatedAt,
     String? status,
@@ -935,6 +946,7 @@ class CachedComicDetailSnapshot {
     return CachedComicDetailSnapshot(
       aliases: aliases ?? this.aliases,
       authors: authors ?? this.authors,
+      authorLinks: authorLinks ?? this.authorLinks,
       heat: heat ?? this.heat,
       updatedAt: updatedAt ?? this.updatedAt,
       status: status ?? this.status,
@@ -948,6 +960,7 @@ class CachedComicDetailSnapshot {
     return <String, Object?>{
       'aliases': aliases,
       'authors': authors,
+      'authorLinks': authorLinks.map((LinkAction item) => item.toJson()).toList(),
       'heat': heat,
       'updatedAt': updatedAt,
       'status': status,
@@ -998,6 +1011,49 @@ class ReaderPageData extends EasyCopyPage {
   final String nextHref;
   final String catalogHref;
   final String contentKey;
+
+  bool get hasMissingChapterNavigation =>
+      prevHref.trim().isEmpty || nextHref.trim().isEmpty;
+
+  ReaderPageData copyWith({
+    String? title,
+    String? uri,
+    String? comicTitle,
+    String? chapterTitle,
+    String? progressLabel,
+    List<String>? imageUrls,
+    String? prevHref,
+    String? nextHref,
+    String? catalogHref,
+    String? contentKey,
+  }) {
+    return ReaderPageData(
+      title: title ?? this.title,
+      uri: uri ?? this.uri,
+      comicTitle: comicTitle ?? this.comicTitle,
+      chapterTitle: chapterTitle ?? this.chapterTitle,
+      progressLabel: progressLabel ?? this.progressLabel,
+      imageUrls: imageUrls ?? this.imageUrls,
+      prevHref: prevHref ?? this.prevHref,
+      nextHref: nextHref ?? this.nextHref,
+      catalogHref: catalogHref ?? this.catalogHref,
+      contentKey: contentKey ?? this.contentKey,
+    );
+  }
+
+  ReaderPageData mergeMissingNavigation({
+    String prevHref = '',
+    String nextHref = '',
+    String catalogHref = '',
+  }) {
+    return copyWith(
+      prevHref: this.prevHref.trim().isNotEmpty ? this.prevHref : prevHref,
+      nextHref: this.nextHref.trim().isNotEmpty ? this.nextHref : nextHref,
+      catalogHref: this.catalogHref.trim().isNotEmpty
+          ? this.catalogHref
+          : catalogHref,
+    );
+  }
 
   @override
   Map<String, Object?> toJson() {

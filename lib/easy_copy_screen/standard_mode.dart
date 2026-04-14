@@ -277,9 +277,14 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   }
 
   List<Widget> _buildProfileSections(ProfilePageData page) {
+    // Prefer locally tracked continue-reading over the server-sourced value
+    // so the section reflects the most recent reader session immediately.
+    final ProfilePageData effectivePage = _localContinueReading != null
+        ? page.copyWith(continueReading: _localContinueReading)
+        : page;
     return <Widget>[
       ProfilePageView(
-        page: page,
+        page: effectivePage,
         onAuthenticate: _openAuthFlow,
         onLogout: _logout,
         onOpenComic: _navigateToHref,
@@ -1527,6 +1532,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             : () => unawaited(_toggleDetailCollection(page)),
         isCollectionBusy: _isUpdatingCollection,
         onTagTap: _submitSearchFromCurrentStack,
+        onAuthorTap: _navigateToHref,
       ),
       const SizedBox(height: 18),
     ];
