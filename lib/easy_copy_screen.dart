@@ -25,6 +25,8 @@ import 'package:easy_copy/services/document_tree_relative_image_provider.dart';
 import 'package:easy_copy/services/download_queue_store.dart';
 import 'package:easy_copy/services/host_manager.dart';
 import 'package:easy_copy/services/image_cache.dart';
+import 'package:easy_copy/services/local_library_store.dart';
+import 'package:easy_copy/services/local_profile_page_loader.dart';
 import 'package:easy_copy/services/navigation_request_guard.dart';
 import 'package:easy_copy/services/page_cache_store.dart';
 import 'package:easy_copy/services/page_repository.dart';
@@ -34,6 +36,7 @@ import 'package:easy_copy/services/reader_platform_bridge.dart';
 import 'package:easy_copy/services/reader_navigation_repairer.dart';
 import 'package:easy_copy/services/reader_progress_store.dart';
 import 'package:easy_copy/services/network_diagnostics.dart';
+import 'package:easy_copy/services/search_history_store.dart';
 import 'package:easy_copy/services/site_api_client.dart';
 import 'package:easy_copy/services/site_html_page_loader.dart';
 import 'package:easy_copy/services/site_session.dart';
@@ -188,6 +191,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   final SiteSession _session = SiteSession.instance;
   final SiteApiClient _siteApiClient = SiteApiClient.instance;
   final ReaderProgressStore _readerProgressStore = ReaderProgressStore.instance;
+  final LocalLibraryStore _localLibraryStore = LocalLibraryStore.instance;
+  final LocalProfilePageLoader _localProfilePageLoader =
+      LocalProfilePageLoader.instance;
+  final SearchHistoryStore _searchHistoryStore = SearchHistoryStore.instance;
   final ComicDownloadService _downloadService = ComicDownloadService.instance;
   final DownloadStorageService _downloadStorageService =
       DownloadStorageService.instance;
@@ -218,6 +225,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   bool _isDownloadWebViewAttached = false;
   int _downloadActiveLoadId = 0;
   Completer<ReaderPageData>? _downloadExtractionCompleter;
+  List<String> _searchHistoryEntries = const <String>[];
   Timer? _readerProgressDebounce;
   Timer? _readerAutoTurnTimer;
   Timer? _readerClockTimer;
@@ -264,7 +272,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   final Map<String, GlobalKey> _detailChapterItemKeys = <String, GlobalKey>{};
   final Set<String> _readerNavigationRepairRouteKeys = <String>{};
   List<ChapterComment> _readerChapterComments = const <ChapterComment>[];
-  ProfileHistoryItem? _localContinueReading;
   final DeferredViewportCoordinator _standardScrollRestoreCoordinator =
       DeferredViewportCoordinator();
   final DeferredViewportCoordinator _detailChapterAutoScrollCoordinator =
@@ -308,6 +315,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _pageRepository = PageRepository(
       standardPageLoader: _loadStandardPageFresh,
       htmlPageLoader: SiteHtmlPageLoader.instance.loadPage,
+      profilePageLoader: _localProfilePageLoader.loadProfile,
     );
     _downloadQueueManager = DownloadQueueManager(
       preferencesController: _preferencesController,
@@ -320,6 +328,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       onNotice: _handleDownloadQueueNotice,
     );
     _preferencesController.addListener(_handlePreferencesChanged);
+    _searchController.addListener(_handleSearchTextChanged);
     _standardScrollController.addListener(_handleStandardScroll);
     _readerScrollController.addListener(_handleReaderScroll);
     _readerCommentScrollController.addListener(_handleReaderCommentScroll);
@@ -353,6 +362,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _batterySubscription?.cancel();
     _volumeKeySubscription?.cancel();
     _preferencesController.removeListener(_handlePreferencesChanged);
+    _searchController.removeListener(_handleSearchTextChanged);
     _standardScrollController.removeListener(_handleStandardScroll);
     _readerScrollController.removeListener(_handleReaderScroll);
     _readerCommentScrollController.removeListener(_handleReaderCommentScroll);
@@ -366,6 +376,13 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _downloadQueueManager.dispose();
     unawaited(_restoreDefaultReaderEnvironment());
     super.dispose();
+  }
+
+  void _handleSearchTextChanged() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {});
   }
 
   @override
@@ -696,8 +713,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       _session.ensureInitialized(),
       _preferencesController.ensureInitialized(),
       _readerProgressStore.ensureInitialized(),
+      _localLibraryStore.ensureInitialized(),
+      _searchHistoryStore.ensureInitialized(),
       PageCacheStore.instance.ensureInitialized(),
     ]);
+    _searchHistoryEntries = _searchHistoryStore.items;
     DebugTrace.log('bootstrap.initialized', <String, Object?>{
       'bootId': _bootId,
       'elapsedMs': stopwatch.elapsedMilliseconds,
@@ -1511,6 +1531,35 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     );
   }
 
+  Future<EasyCopyPage> _preparePageForApply(EasyCopyPage page) async {
+    if (page is! DetailPageData) {
+      return page;
+    }
+    try {
+      final bool isCollected = await _localLibraryStore.isCollected(
+        _session.authScope,
+        page.uri,
+      );
+      if (isCollected == page.isCollected) {
+        return page;
+      }
+      final DetailPageData updated = page.copyWith(isCollected: isCollected);
+      unawaited(_persistDetailPageCache(updated));
+      return updated;
+    } catch (_) {
+      return page;
+    }
+  }
+
+  Future<void> _persistDetailPageCache(DetailPageData page) async {
+    try {
+      final String authScope = _pageQueryKeyForUri(Uri.parse(page.uri)).authScope;
+      await _pageRepository.writeCachedPage(page, authScope: authScope);
+    } catch (_) {
+      // Best-effort cache repair only.
+    }
+  }
+
   bool _applyLoadedPage(
     EasyCopyPage page, {
     NavigationRequestContext? requestContext,
@@ -1556,6 +1605,14 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
 
     if (tabIndex != _selectedIndex) {
       return true;
+    }
+    if (resolvedPage is DetailPageData) {
+      unawaited(
+        _localLibraryStore.recordHistoryFromDetail(
+          _session.authScope,
+          resolvedPage,
+        ),
+      );
     }
     if (resolvedPage is ReaderPageData) {
       _handleReaderPageLoaded(resolvedPage, previousUri: previousReaderUri);
@@ -1722,8 +1779,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
               isReaderChapterRoute && cachedPage is ReaderPageData
               ? _mergeReaderPageNavigation(cachedPage, resolvedCachedContext)
               : cachedPage;
-          _applyLoadedPage(
+          final EasyCopyPage preparedPage = await _preparePageForApply(
             displayPage,
+          );
+          _applyLoadedPage(
+            preparedPage,
             requestContext: requestContext,
             switchToTab: _shouldActivateAsyncResultTab(
               requestContext.targetTabIndex,
@@ -1736,21 +1796,22 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
               'source': 'page_cache',
               'elapsedMs': readerLoadStopwatch?.elapsedMilliseconds,
             });
-            if (displayPage is ReaderPageData &&
-                displayPage.imageUrls.isNotEmpty) {
+            if (preparedPage is ReaderPageData &&
+                preparedPage.imageUrls.isNotEmpty) {
               NetworkDiagnostics.probeImageVariants(
-                displayPage.imageUrls.first,
-                referer: displayPage.uri,
+                preparedPage.imageUrls.first,
+                referer: preparedPage.uri,
                 label: 'reader.first_image_page_cache',
               );
               if (cachedPage is ReaderPageData &&
-                  _didReaderNavigationChange(cachedPage, displayPage)) {
-                unawaited(_persistReaderPageCache(displayPage));
+                  preparedPage is ReaderPageData &&
+                  _didReaderNavigationChange(cachedPage, preparedPage)) {
+                unawaited(_persistReaderPageCache(preparedPage));
               }
-              if (displayPage.hasMissingChapterNavigation) {
+              if (preparedPage.hasMissingChapterNavigation) {
                 unawaited(
                   _repairCachedReaderNavigation(
-                    displayPage,
+                    preparedPage,
                     targetUri: targetUri,
                     context: resolvedCachedContext,
                     requestContext: requestContext,
@@ -1817,8 +1878,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
           );
         }
       }
+      final EasyCopyPage preparedPage = await _preparePageForApply(freshPage);
       _applyLoadedPage(
-        freshPage,
+        preparedPage,
         requestContext: requestContext,
         switchToTab: _shouldActivateAsyncResultTab(
           requestContext.targetTabIndex,
@@ -2095,8 +2157,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       }
       final CachedPageHit? refreshedHit = await _pageRepository.readCached(key);
       if (refreshedHit != null) {
-        _applyLoadedPage(
+        final EasyCopyPage preparedPage = await _preparePageForApply(
           refreshedHit.page,
+        );
+        _applyLoadedPage(
+          preparedPage,
           requestContext: requestContext,
           switchToTab: _shouldActivateAsyncResultTab(
             requestContext.targetTabIndex,
@@ -2135,42 +2200,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       sourceKind: NavigationRequestSourceKind.profile,
     );
     final PageQueryKey key = _pageQueryKeyForUri(resolvedTargetUri);
-    if (!forceRefresh) {
-      final CachedPageHit? cachedHit = await _pageRepository.readCached(key);
-      if (!_canCommitRequest(requestContext)) {
-        _recordDiscardedNavigationMutation(
-          requestContext,
-          phase: 'profile-cached-read',
-        );
-        return;
-      }
-      if (cachedHit != null) {
-        _applyLoadedPage(
-          cachedHit.page,
-          requestContext: requestContext,
-          switchToTab: _shouldActivateAsyncResultTab(
-            requestContext.targetTabIndex,
-          ),
-          visibleUri: resolvedTargetUri,
-        );
-        if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
-          return;
-        }
-        _markTabEntryLoading(requestContext, preservePage: true);
-        unawaited(
-          _revalidateCachedPage(
-            resolvedTargetUri,
-            key: key,
-            cachedEntry: cachedHit.envelope,
-            requestContext: requestContext.copyWith(
-              sourceKind: NavigationRequestSourceKind.revalidate,
-            ),
-            visibleUri: resolvedTargetUri,
-          ),
-        );
-        return;
-      }
-    }
+    // Local profile pages should always reflect the latest local library state,
+    // so we bypass profile caching entirely.
 
     try {
       final EasyCopyPage profilePage = await _pageRepository.loadFresh(
@@ -2474,108 +2505,48 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     );
   }
 
-  Future<DetailPageData?> _refreshDetailPageForCollection(
-    DetailPageData page, {
-    required int sourceTabIndex,
-    required bool preserveVisiblePage,
-  }) async {
-    await _loadUri(
-      Uri.parse(page.uri),
-      bypassCache: true,
-      preserveVisiblePage: preserveVisiblePage,
-      sourceTabIndex: sourceTabIndex,
-      targetTabIndexOverride: sourceTabIndex,
-      historyMode: NavigationIntent.preserve,
-    );
-    final EasyCopyPage? refreshedPage = _page;
-    if (refreshedPage is! DetailPageData || refreshedPage.uri != page.uri) {
-      return null;
-    }
-    return refreshedPage;
-  }
-
-  Future<DetailPageData?> _ensureDetailPageReadyForCollection(
-    DetailPageData page, {
-    required int sourceTabIndex,
-  }) async {
-    DetailPageData workingPage = page;
-    if (!_session.isAuthenticated) {
-      await _openAuthFlow();
-      if (!_session.isAuthenticated || !mounted) {
-        return null;
-      }
-      final DetailPageData? refreshedPage =
-          await _refreshDetailPageForCollection(
-            page,
-            sourceTabIndex: sourceTabIndex,
-            preserveVisiblePage: false,
-          );
-      if (refreshedPage == null) {
-        return null;
-      }
-      workingPage = refreshedPage;
-    }
-
-    if (workingPage.comicId.trim().isNotEmpty) {
-      return workingPage;
-    }
-
-    final DetailPageData? refreshedPage = await _refreshDetailPageForCollection(
-      workingPage,
-      sourceTabIndex: sourceTabIndex,
-      preserveVisiblePage: true,
-    );
-    if (refreshedPage == null || refreshedPage.comicId.trim().isEmpty) {
-      return null;
-    }
-    return refreshedPage;
-  }
-
   Future<void> _toggleDetailCollection(DetailPageData page) async {
     if (_isUpdatingCollection) {
       return;
     }
 
     final int sourceTabIndex = _selectedIndex;
-    final DetailPageData? detailPage =
-        await _ensureDetailPageReadyForCollection(
-          page,
-          sourceTabIndex: sourceTabIndex,
-        );
-    if (detailPage == null) {
-      if (mounted && _session.isAuthenticated) {
-        _showSnackBar('收藏信息未准备好，请刷新详情页后重试。');
-      }
-      return;
-    }
-
-    final bool nextCollected = !detailPage.isCollected;
+    final bool nextCollected = !page.isCollected;
     _mutateSessionState(() {
       _isUpdatingCollection = true;
     }, syncSearch: false);
     try {
-      await _siteApiClient.setComicCollection(
-        comicId: detailPage.comicId,
-        isCollected: nextCollected,
-      );
-      final DetailPageData updatedPage = detailPage.copyWith(
+      final String scope = _session.authScope;
+      if (nextCollected) {
+        final String secondaryText = page.updatedAt.trim().isNotEmpty
+            ? page.updatedAt.trim()
+            : page.status.trim();
+        await _localLibraryStore.upsertCollection(
+          scope,
+          ProfileLibraryItem(
+            title: page.title.trim(),
+            coverUrl: page.coverUrl.trim(),
+            href: page.uri.trim(),
+            subtitle: page.authors.trim(),
+            secondaryText: secondaryText,
+          ),
+        );
+      } else {
+        await _localLibraryStore.removeCollection(scope, page.uri);
+      }
+      final DetailPageData updatedPage = page.copyWith(
         isCollected: nextCollected,
       );
       _mutateSessionState(() {
         _tabSessionStore.updatePage(sourceTabIndex, updatedPage);
       }, syncSearch: sourceTabIndex == _selectedIndex);
-      await _pageRepository.removeAuthScope(_session.authScope);
+      unawaited(_persistDetailPageCache(updatedPage));
       if (mounted) {
         _showSnackBar(nextCollected ? '已加入书架' : '已取消收藏');
       }
     } catch (error) {
       final String message = error.toString();
-      if (message.contains('登录已失效')) {
-        await _logout(showFeedback: false);
-        if (mounted) {
-          _showSnackBar('登录已失效，请重新登录。');
-        }
-      } else if (mounted) {
+      if (mounted) {
         _showSnackBar(message.isEmpty ? '收藏操作失败，请稍后重试。' : message);
       }
     } finally {
@@ -2632,11 +2603,16 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       }
       _selectedIndex = 3;
       _tabSessionStore.resetToRoot(3);
-      _tabSessionStore.updatePage(
+      _tabSessionStore.updateCurrent(
         3,
-        ProfilePageData.loggedOut(uri: AppConfig.profileUri.toString()),
+        (PrimaryTabRouteEntry entry) => entry.copyWith(clearPage: true),
       );
     });
+    await _loadProfilePage(
+      forceRefresh: true,
+      preserveVisiblePage: true,
+      historyMode: NavigationIntent.resetToRoot,
+    );
     if (showFeedback) {
       _showSnackBar('已退出登录');
     }
@@ -2915,6 +2891,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       return;
     }
     _primeSearchController(query);
+    _recordSearchHistory(query);
     unawaited(
       _loadUri(
         AppConfig.buildSearchUri(query),
@@ -2923,6 +2900,28 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         historyMode: historyMode,
       ),
     );
+  }
+
+  void _recordSearchHistory(String query) {
+    final String normalized = query.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    final List<String> next = <String>[
+      normalized,
+      ..._searchHistoryEntries.where((String item) => item != normalized),
+    ];
+    final List<String> limited = next.length <= 10
+        ? next
+        : next.take(10).toList(growable: false);
+    if (mounted) {
+      setState(() {
+        _searchHistoryEntries = limited;
+      });
+    } else {
+      _searchHistoryEntries = limited;
+    }
+    unawaited(_searchHistoryStore.record(normalized));
   }
 
   void _submitSearchFromCurrentStack(String value) {

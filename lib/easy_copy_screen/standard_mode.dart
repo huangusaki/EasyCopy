@@ -127,65 +127,98 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
   Widget _buildDiscoverSearchChrome(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return Row(
+    final List<String> history = _searchHistoryEntries;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        if (_shouldShowBackButton) ...<Widget>[
-          IconButton.filledTonal(
-            onPressed: _handleBackNavigation,
-            style: IconButton.styleFrom(
-              backgroundColor: colorScheme.surface,
-              foregroundColor: colorScheme.onSurface,
-            ),
-            icon: const Icon(Icons.arrow_back_rounded),
-          ),
-          const SizedBox(width: 10),
-        ],
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            decoration: BoxDecoration(
-              color: colorScheme.surface,
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: colorScheme.outlineVariant),
-            ),
-            child: Row(
-              children: <Widget>[
-                Icon(Icons.search_rounded, color: colorScheme.primary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    onSubmitted: _submitSearchFromVisibleDiscoverContext,
-                    textInputAction: TextInputAction.search,
-                    decoration: const InputDecoration(
-                      hintText: '搜索漫画、作者或题材',
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      disabledBorder: InputBorder.none,
-                      focusedErrorBorder: InputBorder.none,
-                      errorBorder: InputBorder.none,
-                      filled: false,
-                      isDense: true,
-                      contentPadding: EdgeInsets.zero,
+        Row(
+          children: <Widget>[
+            if (_shouldShowBackButton) ...<Widget>[
+              IconButton.filledTonal(
+                onPressed: _handleBackNavigation,
+                style: IconButton.styleFrom(
+                  backgroundColor: colorScheme.surface,
+                  foregroundColor: colorScheme.onSurface,
+                ),
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+              const SizedBox(width: 10),
+            ],
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: colorScheme.outlineVariant),
+                ),
+                child: Row(
+                  children: <Widget>[
+                    Icon(Icons.search_rounded, color: colorScheme.primary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        onSubmitted: _submitSearchFromVisibleDiscoverContext,
+                        textInputAction: TextInputAction.search,
+                        decoration: const InputDecoration(
+                          hintText: '搜索漫画、作者或题材',
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
+                          focusedErrorBorder: InputBorder.none,
+                          errorBorder: InputBorder.none,
+                          filled: false,
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
                     ),
-                  ),
+                    if (_searchController.text.trim().isNotEmpty)
+                      IconButton(
+                        onPressed: _clearVisibleDiscoverSearch,
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    IconButton(
+                      onPressed: () => _submitSearchFromVisibleDiscoverContext(
+                        _searchController.text,
+                      ),
+                      icon: const Icon(Icons.arrow_forward_rounded),
+                    ),
+                  ],
                 ),
-                if (_searchController.text.trim().isNotEmpty)
-                  IconButton(
-                    onPressed: _clearVisibleDiscoverSearch,
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                IconButton(
-                  onPressed: () => _submitSearchFromVisibleDiscoverContext(
-                    _searchController.text,
-                  ),
-                  icon: const Icon(Icons.arrow_forward_rounded),
-                ),
-              ],
+              ),
+            ),
+          ],
+        ),
+        if (history.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 10),
+          Text(
+            '历史搜索',
+            style: TextStyle(
+              color: colorScheme.onSurface.withValues(alpha: 0.64),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
             ),
           ),
-        ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: history
+                .map(
+                  (String term) => ActionChip(
+                    label: Text(term),
+                    onPressed: () {
+                      _primeSearchController(term);
+                      _submitSearchFromVisibleDiscoverContext(term);
+                    },
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ],
       ],
     );
   }
@@ -277,14 +310,9 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   }
 
   List<Widget> _buildProfileSections(ProfilePageData page) {
-    // Prefer locally tracked continue-reading over the server-sourced value
-    // so the section reflects the most recent reader session immediately.
-    final ProfilePageData effectivePage = _localContinueReading != null
-        ? page.copyWith(continueReading: _localContinueReading)
-        : page;
     return <Widget>[
       ProfilePageView(
-        page: effectivePage,
+        page: page,
         onAuthenticate: _openAuthFlow,
         onLogout: _logout,
         onOpenComic: _navigateToHref,
