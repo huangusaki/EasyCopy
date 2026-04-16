@@ -103,7 +103,7 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
   }
 
   Future<void> _markReaderChapterVisited(ReaderPageData page) {
-    _updateLocalContinueReading(page);
+    unawaited(_recordReaderHistory(page));
     return _readerProgressStore.markChapterOpened(
       key: _readerProgressKeyForPage(page),
       catalogHref: page.catalogHref,
@@ -111,43 +111,65 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
     );
   }
 
-  void _updateLocalContinueReading(ReaderPageData page) {
-    // Attempt to resolve the cover URL from a detail page in the current
-    // tab's navigation stack.
-    String coverUrl = '';
-    final String catalogPath = Uri.tryParse(page.catalogHref)?.path ?? '';
-    if (catalogPath.isNotEmpty) {
-      for (final PrimaryTabRouteEntry entry
-          in _tabSessionStore.stackForTab(_selectedIndex)) {
-        final EasyCopyPage? entryPage = entry.page;
-        if (entryPage is DetailPageData &&
-            Uri.parse(entryPage.uri).path == catalogPath) {
-          coverUrl = entryPage.coverUrl;
-          break;
+  Future<void> _recordReaderHistory(ReaderPageData page) async {
+    try {
+      // Attempt to resolve the cover URL from a detail page in the current
+      // tab's navigation stack.
+      String coverUrl = '';
+      final String catalogPath = Uri.tryParse(page.catalogHref)?.path ?? '';
+      if (catalogPath.isNotEmpty) {
+        for (final PrimaryTabRouteEntry entry
+            in _tabSessionStore.stackForTab(_selectedIndex)) {
+          final EasyCopyPage? entryPage = entry.page;
+          if (entryPage is DetailPageData &&
+              Uri.parse(entryPage.uri).path == catalogPath) {
+            coverUrl = entryPage.coverUrl;
+            break;
+          }
         }
       }
-    }
-    // Fall back to cached comics if no detail page is found.
-    if (coverUrl.isEmpty && catalogPath.isNotEmpty) {
-      final CachedComicLibraryEntry? cachedEntry = _cachedComics
-          .cast<CachedComicLibraryEntry?>()
-          .firstWhere(
-            (CachedComicLibraryEntry? item) =>
-                item != null &&
-                Uri.tryParse(item.comicHref)?.path == catalogPath,
-            orElse: () => null,
-          );
-      if (cachedEntry != null) {
-        coverUrl = cachedEntry.coverUrl;
+      // Fall back to cached comics if no detail page is found.
+      if (coverUrl.isEmpty && catalogPath.isNotEmpty) {
+        final CachedComicLibraryEntry? cachedEntry = _cachedComics
+            .cast<CachedComicLibraryEntry?>()
+            .firstWhere(
+              (CachedComicLibraryEntry? item) =>
+                  item != null &&
+                  Uri.tryParse(item.comicHref)?.path == catalogPath,
+              orElse: () => null,
+            );
+        if (cachedEntry != null) {
+          coverUrl = cachedEntry.coverUrl;
+        }
       }
+
+      // Continue reading is always local.
+      try {
+        await _localLibraryStore.recordHistoryFromReader(
+          LocalLibraryStore.continueReadingScope,
+          page,
+          coverUrl: coverUrl,
+        );
+      } catch (_) {
+        // Best-effort local persistence only.
+      }
+
+      // Guest browsing history is local; authenticated users rely on server-side
+      // history.
+      if (!_session.isAuthenticated) {
+        try {
+          await _localLibraryStore.recordHistoryFromReader(
+            LocalLibraryStore.guestScope,
+            page,
+            coverUrl: coverUrl,
+          );
+        } catch (_) {
+          // Best-effort local persistence only.
+        }
+      }
+    } catch (_) {
+      // Best-effort local persistence only.
     }
-    _localContinueReading = ProfileHistoryItem(
-      title: page.comicTitle,
-      coverUrl: coverUrl,
-      comicHref: page.catalogHref,
-      chapterLabel: page.chapterTitle,
-      chapterHref: page.uri,
-    );
   }
 
   Future<void> _restoreReaderPosition(

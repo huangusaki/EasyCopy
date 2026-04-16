@@ -53,6 +53,8 @@ class SiteApiClient {
   static const int _searchPageSize = 12;
   static const int _profilePageSize = 20;
 
+  int get profilePageSize => _profilePageSize;
+
   Future<SiteLoginResult> login({
     required String username,
     required String password,
@@ -144,6 +146,47 @@ class SiteApiClient {
       historyTotal: historyPayload.total,
       continueReading: history.isEmpty ? null : history.first,
     );
+  }
+
+  Future<ProfileUserData> loadUserInfo() async {
+    await _session.ensureInitialized();
+    if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
+      throw SiteApiException('请先登录后再操作。');
+    }
+    final Map<String, Object?> payload = await _getJson('/api/v2/web/user/info');
+    final ProfileUserData user = _parseUser(payload);
+    await _session.bindUserId(user.userId);
+    return user;
+  }
+
+  Future<(List<ProfileLibraryItem> items, int total)> loadCollectionsPage({
+    int page = 1,
+  }) async {
+    await _session.ensureInitialized();
+    if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
+      throw SiteApiException('请先登录后再操作。');
+    }
+    final _PagedProfileSection payload = await _getPagedListOrEmpty(
+      const <String>['/api/v3/member/collect/comics'],
+      view: ProfileSubview.collections,
+      page: page,
+    );
+    return (_parseCollections(payload.items), payload.total);
+  }
+
+  Future<(List<ProfileHistoryItem> items, int total)> loadHistoryPage({
+    int page = 1,
+  }) async {
+    await _session.ensureInitialized();
+    if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
+      throw SiteApiException('请先登录后再操作。');
+    }
+    final _PagedProfileSection payload = await _getPagedListOrEmpty(
+      const <String>['/api/kb/web/browses', '/api/v2/web/browses'],
+      view: ProfileSubview.history,
+      page: page,
+    );
+    return (_parseHistory(payload.items), payload.total);
   }
 
   Future<void> setComicCollection({

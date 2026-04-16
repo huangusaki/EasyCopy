@@ -1535,9 +1535,12 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     if (page is! DetailPageData) {
       return page;
     }
+    if (_session.isAuthenticated) {
+      return page;
+    }
     try {
       final bool isCollected = await _localLibraryStore.isCollected(
-        _session.authScope,
+        LocalLibraryStore.guestScope,
         page.uri,
       );
       if (isCollected == page.isCollected) {
@@ -1606,10 +1609,10 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     if (tabIndex != _selectedIndex) {
       return true;
     }
-    if (resolvedPage is DetailPageData) {
+    if (resolvedPage is DetailPageData && !_session.isAuthenticated) {
       unawaited(
         _localLibraryStore.recordHistoryFromDetail(
-          _session.authScope,
+          LocalLibraryStore.guestScope,
           resolvedPage,
         ),
       );
@@ -2516,23 +2519,32 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       _isUpdatingCollection = true;
     }, syncSearch: false);
     try {
-      final String scope = _session.authScope;
-      if (nextCollected) {
-        final String secondaryText = page.updatedAt.trim().isNotEmpty
-            ? page.updatedAt.trim()
-            : page.status.trim();
-        await _localLibraryStore.upsertCollection(
-          scope,
-          ProfileLibraryItem(
-            title: page.title.trim(),
-            coverUrl: page.coverUrl.trim(),
-            href: page.uri.trim(),
-            subtitle: page.authors.trim(),
-            secondaryText: secondaryText,
-          ),
+      if (_session.isAuthenticated && (_session.token ?? '').isNotEmpty) {
+        await _siteApiClient.setComicCollection(
+          comicId: page.comicId,
+          isCollected: nextCollected,
         );
       } else {
-        await _localLibraryStore.removeCollection(scope, page.uri);
+        if (nextCollected) {
+          final String secondaryText = page.updatedAt.trim().isNotEmpty
+              ? page.updatedAt.trim()
+              : page.status.trim();
+          await _localLibraryStore.upsertCollection(
+            LocalLibraryStore.guestScope,
+            ProfileLibraryItem(
+              title: page.title.trim(),
+              coverUrl: page.coverUrl.trim(),
+              href: page.uri.trim(),
+              subtitle: page.authors.trim(),
+              secondaryText: secondaryText,
+            ),
+          );
+        } else {
+          await _localLibraryStore.removeCollection(
+            LocalLibraryStore.guestScope,
+            page.uri,
+          );
+        }
       }
       final DetailPageData updatedPage = page.copyWith(
         isCollected: nextCollected,
@@ -2545,7 +2557,12 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         _showSnackBar(nextCollected ? '已加入书架' : '已取消收藏');
       }
     } catch (error) {
-      final String message = error.toString();
+      final String message = error is SiteApiException
+          ? error.message
+          : error.toString();
+      if (message.contains('登录已失效')) {
+        await _logout(showFeedback: false);
+      }
       if (mounted) {
         _showSnackBar(message.isEmpty ? '收藏操作失败，请稍后重试。' : message);
       }
@@ -2584,6 +2601,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     }
     await _session.updateFromCookieHeader(result.cookieHeader);
     await _session.saveToken(token!, cookies: result.cookies);
+    try {
+      await _siteApiClient.loadUserInfo();
+    } catch (_) {
+      // Best-effort user binding only.
+    }
     await _syncSessionCookiesToCurrentHost();
     await _loadProfilePage(
       forceRefresh: true,

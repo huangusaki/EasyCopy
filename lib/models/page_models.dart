@@ -1121,7 +1121,7 @@ class ProfilePageData extends EasyCopyPage {
   factory ProfilePageData.loggedOut({
     required String uri,
     String title = '我的',
-    String message = '登录后可查看收藏、历史和继续阅读。',
+    String message = '登录后可发表评论并查看账号信息。',
   }) {
     return ProfilePageData(
       title: title,

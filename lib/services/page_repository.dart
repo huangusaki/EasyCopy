@@ -16,6 +16,9 @@ typedef StandardPageFreshLoader =
       NavigationRequestContext? requestContext,
     });
 
+typedef ProfilePageFreshLoader =
+    Future<ProfilePageData> Function(Uri uri, {required String authScope});
+
 typedef HtmlPageFreshLoader =
     Future<EasyCopyPage> Function(Uri uri, {required String authScope});
 
@@ -78,11 +81,17 @@ class PageRepository {
   PageRepository({
     PageCacheStore? cacheStore,
     SiteApiClient? apiClient,
+    ProfilePageFreshLoader? profilePageLoader,
     required StandardPageFreshLoader standardPageLoader,
     HtmlPageFreshLoader? htmlPageLoader,
     this.memoryCapacity = 48,
   }) : _cacheStore = cacheStore ?? PageCacheStore.instance,
        _apiClient = apiClient ?? SiteApiClient.instance,
+       _profilePageLoader =
+           profilePageLoader ??
+           ((Uri uri, {required String authScope}) {
+             return (apiClient ?? SiteApiClient.instance).loadProfile(uri: uri);
+           }),
        _standardPageLoader = standardPageLoader,
        _htmlPageLoader =
            htmlPageLoader ??
@@ -92,6 +101,7 @@ class PageRepository {
 
   final PageCacheStore _cacheStore;
   final SiteApiClient _apiClient;
+  final ProfilePageFreshLoader _profilePageLoader;
   final StandardPageFreshLoader _standardPageLoader;
   final HtmlPageFreshLoader _htmlPageLoader;
   final int memoryCapacity;
@@ -222,7 +232,7 @@ class PageRepository {
     NavigationRequestContext? requestContext,
   }) async {
     final EasyCopyPage page = _isProfileUri(uri)
-        ? await _apiClient.loadProfile(uri: uri)
+        ? await _profilePageLoader(uri, authScope: requestedKey.authScope)
         : _isSearchUri(uri)
         ? await _apiClient.loadSearchResults(
             query: uri.queryParameters['q'] ?? '',

@@ -202,7 +202,7 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
                               ),
                               const SizedBox(height: 6),
                               Text(
-                                '登录后即可同步收藏、历史与个人信息。',
+                                '登录后可发表评论并查看账号信息。',
                                 style: theme.textTheme.bodyMedium?.copyWith(
                                   color: colorScheme.onSurface.withValues(
                                     alpha: 0.72,

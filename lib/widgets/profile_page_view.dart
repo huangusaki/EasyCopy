@@ -107,33 +107,31 @@ class ProfilePageView extends StatelessWidget {
       );
     }
 
-    if (page.isLoggedIn && page.user != null) {
-      switch (activeSubview) {
-        case ProfileSubview.collections:
-          return _buildComicCollectionSection(
-            items: collectionCards,
-            emptyMessage: '还没有收藏的漫画。',
-            onTap: onOpenComic,
-            pager: page.collectionsPager,
-            onOpenPage: onOpenCollectionsPage,
-          );
-        case ProfileSubview.history:
-          return _buildComicCollectionSection(
-            items: historyCards,
-            emptyMessage: '还没有浏览历史。',
-            onTap: onOpenComic,
-            pager: page.historyPager,
-            onOpenPage: onOpenHistoryPageNumber,
-          );
-        case ProfileSubview.root:
-        case ProfileSubview.cached:
-          break;
-      }
+    switch (activeSubview) {
+      case ProfileSubview.collections:
+        return _buildComicCollectionSection(
+          items: collectionCards,
+          emptyMessage: '还没有收藏的漫画。',
+          onTap: onOpenComic,
+          pager: page.collectionsPager,
+          onOpenPage: onOpenCollectionsPage,
+        );
+      case ProfileSubview.history:
+        return _buildComicCollectionSection(
+          items: historyCards,
+          emptyMessage: '还没有浏览历史。',
+          onTap: onOpenComic,
+          pager: page.historyPager,
+          onOpenPage: onOpenHistoryPageNumber,
+        );
+      case ProfileSubview.root:
+      case ProfileSubview.cached:
+        break;
     }
 
     final List<Widget> sections = <Widget>[
-      page.isLoggedIn && page.user != null
-          ? _buildUserCard(context, page.user!)
+      page.isLoggedIn
+          ? _buildUserCard(context, page.user)
           : _buildLoggedOutCard(),
     ];
     void addSection(Widget widget) {
@@ -141,7 +139,7 @@ class ProfilePageView extends StatelessWidget {
       sections.add(widget);
     }
 
-    if (page.isLoggedIn && page.user != null && page.collections.isNotEmpty) {
+    if (page.collections.isNotEmpty) {
       addSection(
         _SectionCard(
           title: '我的收藏',
@@ -217,7 +215,7 @@ class ProfilePageView extends StatelessWidget {
       );
     }
 
-    if (page.isLoggedIn && page.user != null && page.continueReading != null) {
+    if (page.continueReading != null) {
       addSection(
         _SectionCard(
           title: '继续阅读',
@@ -228,7 +226,7 @@ class ProfilePageView extends StatelessWidget {
         ),
       );
     }
-    if (page.isLoggedIn && page.user != null && page.history.isNotEmpty) {
+    if (page.history.isNotEmpty) {
       addSection(
         _SectionCard(
           title: '浏览历史',
@@ -300,7 +298,15 @@ class ProfilePageView extends StatelessWidget {
       ),
     );
 
-    return Column(children: sections);
+    final Widget content = Column(children: sections);
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        if (constraints.hasBoundedHeight) {
+          return SingleChildScrollView(child: content);
+        }
+        return content;
+      },
+    );
   }
 
   ComicCardData _collectionCardData(ProfileLibraryItem item) {
@@ -363,6 +369,7 @@ class ProfilePageView extends StatelessWidget {
         message.isNotEmpty &&
         message != '登录后可查看收藏与历史。' &&
         message != '登录后可查看收藏、历史和继续阅读。' &&
+        message != '登录后可发表评论并查看账号信息。' &&
         message != '個人中心還在重構中，這個版本先把首頁、發現、排行和閱讀體驗做好。';
 
     return _SectionCard(
@@ -394,7 +401,10 @@ class ProfilePageView extends StatelessWidget {
     );
   }
 
-  Widget _buildUserCard(BuildContext context, ProfileUserData user) {
+  Widget _buildUserCard(BuildContext context, ProfileUserData? user) {
+    final String displayName = (user?.displayName ?? '').trim().isNotEmpty
+        ? user!.displayName
+        : '已登录';
     return _SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -403,7 +413,7 @@ class ProfilePageView extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  user.displayName,
+                  displayName,
                   style: const TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w900,
