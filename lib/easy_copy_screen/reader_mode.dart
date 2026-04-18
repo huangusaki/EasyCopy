@@ -416,62 +416,166 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     ReaderPageData page,
   ) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final int imageCount = page.imageUrls.length;
+    final bool showSeekBar = _readerPreferences.showProgress && imageCount > 1;
+    final bool isCommentTailActive =
+        _readerPreferences.isPaged &&
+        _shouldShowReaderCommentTailPage(page) &&
+        _currentReaderPageIndex >= imageCount;
+    final bool showProgressLabel =
+        _readerPreferences.showProgress &&
+        (!showSeekBar || isCommentTailActive);
+    final int currentImageIndex = imageCount == 0
+        ? 0
+        : (_readerPreferences.isPaged
+                  ? _currentReaderPageIndex
+                  : _currentVisibleReaderImageIndex)
+              .clamp(0, imageCount - 1);
     return AppSurfaceCard(
       padding: const EdgeInsets.all(14),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Expanded(
-            child: FilledButton.tonal(
-              onPressed: page.prevHref.isEmpty
-                  ? null
-                  : () => _navigateToHref(page.prevHref),
-              child: const Text('上一话'),
-            ),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: FilledButton.tonal(
+                  onPressed: page.prevHref.isEmpty
+                      ? null
+                      : () => _navigateToHref(page.prevHref),
+                  child: const Text('上一话'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 88, maxWidth: 120),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (showProgressLabel)
+                      Text(
+                        _readerPageCountLabel(page),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    if (page.chapterTitle.isNotEmpty) ...<Widget>[
+                      SizedBox(height: showProgressLabel ? 2 : 0),
+                      Text(
+                        page.chapterTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: colorScheme.onSurface.withValues(alpha: 0.66),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: page.nextHref.isEmpty
+                      ? null
+                      : () => _navigateToHref(page.nextHref),
+                  child: const Text('下一话'),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 12),
-          ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 88, maxWidth: 120),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                if (_readerPreferences.showProgress)
-                  Text(
-                    _readerPageCountLabel(page),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                if (page.chapterTitle.isNotEmpty) ...<Widget>[
-                  SizedBox(height: _readerPreferences.showProgress ? 2 : 0),
-                  Text(
-                    page.chapterTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: colorScheme.onSurface.withValues(alpha: 0.66),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ],
+          if (showSeekBar) ...<Widget>[
+            const SizedBox(height: 10),
+            _ReaderProgressSeekBar(
+              currentIndex: currentImageIndex,
+              totalCount: imageCount,
+              onInteraction: () {
+                _readerRestoreCoordinator.noteUserInteraction();
+                _readerAutoTurnTimer?.cancel();
+                _readerAutoTurnTimer = null;
+              },
+              onSeek: (int index) =>
+                  _seekReaderToImageIndex(context, page, index),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: FilledButton(
-              onPressed: page.nextHref.isEmpty
-                  ? null
-                  : () => _navigateToHref(page.nextHref),
-              child: const Text('下一话'),
-            ),
-          ),
+          ],
         ],
       ),
     );
+  }
+
+  void _seekReaderToImageIndex(
+    BuildContext context,
+    ReaderPageData page,
+    int imageIndex,
+  ) {
+    if (_isReaderZoomGestureLocked || page.imageUrls.isEmpty) {
+      return;
+    }
+    final int clampedIndex = imageIndex.clamp(0, page.imageUrls.length - 1);
+    final DeferredViewportTicket ticket = _readerRestoreCoordinator
+        .beginRequest();
+
+    if (_readerPreferences.isPaged) {
+      _jumpReaderToPage(page.uri, clampedIndex, attempts: 8, ticket: ticket);
+      _jumpReaderPageOffset(
+        page.uri,
+        clampedIndex,
+        offset: 0,
+        attempts: 8,
+        ticket: ticket,
+      );
+      return;
+    }
+
+    final double estimatedOffset = _estimateReaderScrollOffsetForImageIndex(
+      context,
+      page,
+      clampedIndex,
+    );
+    _jumpReaderToOffset(page.uri, estimatedOffset, attempts: 8, ticket: ticket);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _jumpReaderToImageIndex(
+        page.uri,
+        clampedIndex,
+        attempts: 8,
+        ticket: ticket,
+        alignment: 0,
+      );
+    });
+  }
+
+  double _estimateReaderScrollOffsetForImageIndex(
+    BuildContext context,
+    ReaderPageData page,
+    int imageIndex,
+  ) {
+    final Size screenSize = MediaQuery.sizeOf(context);
+    final bool showGap = _readerPreferences.showPageGap;
+    final double topPadding = _readerPreferences.fullscreen && showGap ? 0 : 8;
+    final double itemSpacing = showGap ? 10 : 0;
+
+    if (_readerPreferences.pageFit == ReaderPageFit.fitScreen) {
+      final double viewportHeight = screenSize.height * 0.72;
+      return topPadding + (viewportHeight + itemSpacing) * imageIndex;
+    }
+
+    double offset = topPadding;
+    final double contentWidth = screenSize.width;
+    for (int index = 0; index < imageIndex; index += 1) {
+      final String imageUrl = page.imageUrls[index];
+      final double rawAspectRatio = _readerImageAspectRatios[imageUrl] ?? 0.72;
+      final double safeAspectRatio =
+          rawAspectRatio.isFinite && rawAspectRatio > 0.05
+          ? rawAspectRatio
+          : 0.72;
+      offset += (contentWidth / safeAspectRatio) + itemSpacing;
+    }
+    return offset;
   }
 
   Widget _buildReaderChapterControlsOverlay(
@@ -1605,6 +1709,129 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   }
 }
 
+class _ReaderProgressSeekBar extends StatefulWidget {
+  const _ReaderProgressSeekBar({
+    required this.currentIndex,
+    required this.totalCount,
+    required this.onSeek,
+    this.onInteraction,
+  });
+
+  final int currentIndex;
+  final int totalCount;
+  final VoidCallback? onInteraction;
+  final ValueChanged<int> onSeek;
+
+  @override
+  State<_ReaderProgressSeekBar> createState() => _ReaderProgressSeekBarState();
+}
+
+class _ReaderProgressSeekBarState extends State<_ReaderProgressSeekBar> {
+  late double _value;
+  bool _scrubbing = false;
+
+  int get _maxIndex => math.max(0, widget.totalCount - 1);
+
+  @override
+  void initState() {
+    super.initState();
+    _value = widget.currentIndex.clamp(0, _maxIndex).toDouble();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReaderProgressSeekBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_scrubbing) {
+      return;
+    }
+    final double nextValue = widget.currentIndex.clamp(0, _maxIndex).toDouble();
+    if ((nextValue - _value).abs() < 0.5) {
+      return;
+    }
+    _value = nextValue;
+  }
+
+  void _handleChangeStart(double _) {
+    widget.onInteraction?.call();
+    if (_scrubbing) {
+      return;
+    }
+    setState(() {
+      _scrubbing = true;
+    });
+  }
+
+  void _handleChanged(double rawValue) {
+    widget.onInteraction?.call();
+    final int nextIndex = rawValue.round().clamp(0, _maxIndex);
+    setState(() {
+      _value = nextIndex.toDouble();
+    });
+  }
+
+  void _handleChangeEnd(double rawValue) {
+    final int nextIndex = rawValue.round().clamp(0, _maxIndex);
+    setState(() {
+      _scrubbing = false;
+      _value = nextIndex.toDouble();
+    });
+    widget.onSeek(nextIndex);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.totalCount <= 0) {
+      return const SizedBox.shrink();
+    }
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final int current = _value.round().clamp(0, _maxIndex);
+    final TextStyle numberStyle = TextStyle(
+      color: colorScheme.onSurface.withValues(alpha: 0.76),
+      fontSize: 12,
+      fontWeight: FontWeight.w800,
+    );
+    return Row(
+      children: <Widget>[
+        SizedBox(
+          width: 34,
+          child: Text(
+            '${current + 1}',
+            textAlign: TextAlign.center,
+            style: numberStyle,
+          ),
+        ),
+        Expanded(
+          child: SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 2.2,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+              inactiveTrackColor: colorScheme.outlineVariant.withValues(
+                alpha: 0.65,
+              ),
+            ),
+            child: Slider(
+              value: _value.clamp(0, _maxIndex.toDouble()),
+              min: 0,
+              max: _maxIndex.toDouble(),
+              onChangeStart: widget.totalCount > 1 ? _handleChangeStart : null,
+              onChanged: widget.totalCount > 1 ? _handleChanged : null,
+              onChangeEnd: widget.totalCount > 1 ? _handleChangeEnd : null,
+            ),
+          ),
+        ),
+        SizedBox(
+          width: 34,
+          child: Text(
+            '${widget.totalCount}',
+            textAlign: TextAlign.center,
+            style: numberStyle,
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _ReaderPinchZoomDetector extends StatefulWidget {
   const _ReaderPinchZoomDetector({
