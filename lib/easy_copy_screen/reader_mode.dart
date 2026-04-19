@@ -356,6 +356,14 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     return IgnorePointer(
       child: Stack(
         children: <Widget>[
+          if (_readerPreferences.showProgress &&
+              !_isReaderChapterControlsVisible)
+            Positioned(
+              top: viewPadding.top + 12,
+              left: 0,
+              right: 0,
+              child: Center(child: _buildReaderProgressBadge(context, page)),
+            ),
           if (_readerPreferences.showClock)
             Positioned(
               left: 12,
@@ -397,18 +405,34 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     if (page.imageUrls.isEmpty) {
       return '-- / --';
     }
-    if (_readerPreferences.isPaged) {
-      if (_shouldShowReaderCommentTailPage(page) &&
-          _currentReaderPageIndex >= page.imageUrls.length) {
-        return '评论页';
-      }
-      return '${_currentReaderPageIndex + 1} / ${page.imageUrls.length}';
-    }
-    final int visibleIndex = _currentVisibleReaderImageIndex.clamp(
-      0,
-      page.imageUrls.length - 1,
-    );
+    final int visibleIndex =
+        (_readerPreferences.isPaged
+                ? _currentReaderPageIndex
+                : _currentVisibleReaderImageIndex)
+            .clamp(0, page.imageUrls.length - 1);
     return '${visibleIndex + 1} / ${page.imageUrls.length}';
+  }
+
+  Widget _buildReaderProgressBadge(BuildContext context, ReaderPageData page) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Text(
+          _readerPageCountLabel(page),
+          style: TextStyle(
+            color: colorScheme.onSurface,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            height: 1,
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildReaderChapterControls(
@@ -417,14 +441,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   ) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final int imageCount = page.imageUrls.length;
-    final bool showSeekBar = _readerPreferences.showProgress && imageCount > 1;
-    final bool isCommentTailActive =
-        _readerPreferences.isPaged &&
-        _shouldShowReaderCommentTailPage(page) &&
-        _currentReaderPageIndex >= imageCount;
-    final bool showProgressLabel =
-        _readerPreferences.showProgress &&
-        (!showSeekBar || isCommentTailActive);
+    final bool showSeekBar = imageCount > 1;
     final int currentImageIndex = imageCount == 0
         ? 0
         : (_readerPreferences.isPaged
@@ -436,6 +453,20 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
+          if (showSeekBar) ...<Widget>[
+            _ReaderProgressSeekBar(
+              currentIndex: currentImageIndex,
+              totalCount: imageCount,
+              onInteraction: () {
+                _readerRestoreCoordinator.noteUserInteraction();
+                _readerAutoTurnTimer?.cancel();
+                _readerAutoTurnTimer = null;
+              },
+              onSeek: (int index) =>
+                  _seekReaderToImageIndex(context, page, index),
+            ),
+            const SizedBox(height: 10),
+          ],
           Row(
             children: <Widget>[
               Expanded(
@@ -452,17 +483,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    if (showProgressLabel)
-                      Text(
-                        _readerPageCountLabel(page),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    if (page.chapterTitle.isNotEmpty) ...<Widget>[
-                      SizedBox(height: showProgressLabel ? 2 : 0),
+                    if (page.chapterTitle.isNotEmpty)
                       Text(
                         page.chapterTitle,
                         maxLines: 1,
@@ -474,7 +495,6 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                    ],
                   ],
                 ),
               ),
@@ -489,20 +509,6 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
               ),
             ],
           ),
-          if (showSeekBar) ...<Widget>[
-            const SizedBox(height: 10),
-            _ReaderProgressSeekBar(
-              currentIndex: currentImageIndex,
-              totalCount: imageCount,
-              onInteraction: () {
-                _readerRestoreCoordinator.noteUserInteraction();
-                _readerAutoTurnTimer?.cancel();
-                _readerAutoTurnTimer = null;
-              },
-              onSeek: (int index) =>
-                  _seekReaderToImageIndex(context, page, index),
-            ),
-          ],
         ],
       ),
     );
@@ -619,10 +625,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
     final ScrollPhysics scrollPhysics =
         (_isReaderScaleGestureActive || _readerZoomScale > 1.01)
-            ? const NeverScrollableScrollPhysics()
-            : const AlwaysScrollableScrollPhysics(
-                parent: BouncingScrollPhysics(),
-              );
+        ? const NeverScrollableScrollPhysics()
+        : const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics());
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
         if (!_isReaderZoomGestureLocked) {
@@ -1510,9 +1514,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         scale: isReady ? 1.0 : 0.88 + (progress * 0.12),
         child: Container(
           height: height,
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 14 : 18,
-          ),
+          padding: EdgeInsets.symmetric(horizontal: compact ? 14 : 18),
           decoration: BoxDecoration(
             color: colorScheme.surface.withValues(alpha: bgAlpha),
             borderRadius: BorderRadius.circular(height / 2),
@@ -1602,8 +1604,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
           final double dy = details.delta.dy;
           // Vertical: first absorb into panY, then scroll the remainder.
           final double proposedPanY = _readerPanOffsetY + dy;
-          final double clampedPanY =
-              proposedPanY.clamp(-maxPanY, maxPanY);
+          final double clampedPanY = proposedPanY.clamp(-maxPanY, maxPanY);
           final double consumedDy = clampedPanY - _readerPanOffsetY;
           final double remainingDy = dy - consumedDy;
           double overscrollDy = 0;
@@ -1633,8 +1634,10 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
             _handleReaderZoomedOverscroll(page, overscrollDy);
           }
           _setStateIfMounted(() {
-            _readerPanOffsetX = (_readerPanOffsetX + details.delta.dx)
-                .clamp(-maxPanX, maxPanX);
+            _readerPanOffsetX = (_readerPanOffsetX + details.delta.dx).clamp(
+              -maxPanX,
+              maxPanX,
+            );
             _readerPanOffsetY = clampedPanY;
           });
         },
@@ -1651,12 +1654,11 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
           if (vc.hasClients) {
             final double vy = details.velocity.pixelsPerSecond.dy;
             if (vy.abs() > 100) {
-              final double targetOffset = (
-                vc.offset - vy * 0.25 / _readerZoomScale
-              ).clamp(
-                vc.position.minScrollExtent,
-                vc.position.maxScrollExtent,
-              );
+              final double targetOffset =
+                  (vc.offset - vy * 0.25 / _readerZoomScale).clamp(
+                    vc.position.minScrollExtent,
+                    vc.position.maxScrollExtent,
+                  );
               unawaited(
                 vc.animateTo(
                   targetOffset,
