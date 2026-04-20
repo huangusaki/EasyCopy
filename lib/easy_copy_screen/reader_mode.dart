@@ -1,6 +1,9 @@
 part of '../easy_copy_screen.dart';
 
 extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
+  static const double _readerUiToggleHorizontalInsetRatio = 0.075;
+  static const double _readerSettingsSwipeDismissDistance = 72;
+
   Future<void> _showReaderSettingsSheet() async {
     if (_isReaderSettingsOpen) {
       return;
@@ -10,6 +13,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      isDismissible: true,
+      enableDrag: true,
       showDragHandle: true,
       builder: _buildReaderSettingsSheet,
     );
@@ -41,9 +46,18 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     final BuildContext? viewportContext = _readerViewportKey.currentContext;
     final RenderBox? renderBox =
         viewportContext?.findRenderObject() as RenderBox?;
+    final double viewportWidth = renderBox != null && renderBox.hasSize
+        ? renderBox.size.width
+        : MediaQuery.sizeOf(context).width;
     final double viewportHeight = renderBox != null && renderBox.hasSize
         ? renderBox.size.height
         : details.localPosition.dy * 2;
+    final double uiToggleInsetWidth =
+        viewportWidth * _readerUiToggleHorizontalInsetRatio;
+    final double dx = details.localPosition.dx;
+    if (dx <= uiToggleInsetWidth || dx >= viewportWidth - uiToggleInsetWidth) {
+      return;
+    }
     if (details.localPosition.dy <= viewportHeight * 0.5) {
       _hideReaderChapterControls();
       unawaited(_showReaderSettingsSheet());
@@ -58,282 +72,294 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       animation: _preferencesController,
       builder: (BuildContext context, Widget? _) {
         final ReaderPreferences preferences = _readerPreferences;
-        return SafeArea(
-          child: SizedBox(
-            key: const ValueKey<String>('reader-settings-sheet'),
-            height: maxHeight,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: Column(
-                children: <Widget>[
-                  Expanded(
-                    child: ListView(
-                      children: <Widget>[
-                        SettingsSection(
-                          children: <Widget>[
-                            SettingsSelectRow<ReaderScreenOrientation>(
-                              label: '屏幕方向',
-                              value: preferences.screenOrientation,
-                              items: ReaderScreenOrientation.values
-                                  .map((ReaderScreenOrientation value) {
-                                    return DropdownMenuItem<
-                                      ReaderScreenOrientation
-                                    >(
-                                      value: value,
-                                      child: Text(
-                                        value ==
-                                                ReaderScreenOrientation.portrait
-                                            ? '竖屏'
-                                            : '横屏',
-                                      ),
-                                    );
-                                  })
-                                  .toList(growable: false),
-                              onChanged: (ReaderScreenOrientation? value) {
-                                if (value == null) {
-                                  return;
-                                }
-                                unawaited(
-                                  _preferencesController
-                                      .updateReaderPreferences(
-                                        (ReaderPreferences current) => current
-                                            .copyWith(screenOrientation: value),
-                                      ),
-                                );
-                              },
-                            ),
-                            SettingsSelectRow<ReaderReadingDirection>(
-                              label: '阅读方向',
-                              value: preferences.readingDirection,
-                              items: ReaderReadingDirection.values
-                                  .map((ReaderReadingDirection value) {
-                                    return DropdownMenuItem<
-                                      ReaderReadingDirection
-                                    >(
-                                      value: value,
-                                      child: Text(switch (value) {
-                                        ReaderReadingDirection.topToBottom =>
-                                          '从上到下',
-                                        ReaderReadingDirection.leftToRight =>
-                                          '从左到右',
-                                        ReaderReadingDirection.rightToLeft =>
-                                          '从右到左',
-                                      }),
-                                    );
-                                  })
-                                  .toList(growable: false),
-                              onChanged: (ReaderReadingDirection? value) {
-                                if (value == null) {
-                                  return;
-                                }
-                                unawaited(
-                                  _preferencesController
-                                      .updateReaderPreferences(
-                                        (ReaderPreferences current) => current
-                                            .copyWith(readingDirection: value),
-                                      ),
-                                );
-                              },
-                            ),
-                            SettingsSelectRow<ReaderPageFit>(
-                              label: '页面缩放',
-                              value: preferences.pageFit,
-                              items: ReaderPageFit.values
-                                  .map((ReaderPageFit value) {
-                                    return DropdownMenuItem<ReaderPageFit>(
-                                      value: value,
-                                      child: Text(
-                                        value == ReaderPageFit.fitWidth
-                                            ? '匹配宽度'
-                                            : '适应屏幕',
-                                      ),
-                                    );
-                                  })
-                                  .toList(growable: false),
-                              onChanged: (ReaderPageFit? value) {
-                                if (value == null) {
-                                  return;
-                                }
-                                unawaited(
-                                  _preferencesController
-                                      .updateReaderPreferences(
-                                        (ReaderPreferences current) =>
-                                            current.copyWith(pageFit: value),
-                                      ),
-                                );
-                              },
-                            ),
-                            SettingsSelectRow<ReaderOpeningPosition>(
-                              label: '开页位置',
-                              value: preferences.openingPosition,
-                              items: ReaderOpeningPosition.values
-                                  .map((ReaderOpeningPosition value) {
-                                    return DropdownMenuItem<
-                                      ReaderOpeningPosition
-                                    >(
-                                      value: value,
-                                      child: Text(
-                                        value == ReaderOpeningPosition.top
-                                            ? '顶部'
-                                            : '中心',
-                                      ),
-                                    );
-                                  })
-                                  .toList(growable: false),
-                              onChanged: (ReaderOpeningPosition? value) {
-                                if (value == null) {
-                                  return;
-                                }
-                                unawaited(
-                                  _preferencesController
-                                      .updateReaderPreferences(
-                                        (ReaderPreferences current) => current
-                                            .copyWith(openingPosition: value),
-                                      ),
-                                );
-                              },
-                            ),
-                            SettingsSliderRow(
-                              label:
-                                  '自动翻页(${preferences.autoPageTurnSeconds}秒)',
-                              value: preferences.autoPageTurnSeconds.toDouble(),
-                              max: 10,
-                              divisions: 10,
-                              onChanged: (double value) {
-                                unawaited(
-                                  _preferencesController
-                                      .updateReaderPreferences(
-                                        (ReaderPreferences current) =>
-                                            current.copyWith(
-                                              autoPageTurnSeconds: value
-                                                  .round(),
-                                            ),
-                                      ),
-                                );
-                              },
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        SettingsSection(
-                          children: <Widget>[
-                            SettingsSwitchRow(
-                              label: '显示评论页',
-                              value: preferences.showChapterComments,
-                              onChanged: (bool value) {
-                                unawaited(
-                                  _preferencesController
-                                      .updateReaderPreferences(
-                                        (ReaderPreferences current) =>
-                                            current.copyWith(
-                                              showChapterComments: value,
-                                            ),
-                                      ),
-                                );
-                              },
-                            ),
-                            SettingsSwitchRow(
-                              label: '屏幕常亮',
-                              value: preferences.keepScreenOn,
-                              onChanged: (bool value) {
-                                unawaited(
-                                  _preferencesController
-                                      .updateReaderPreferences(
-                                        (ReaderPreferences current) => current
-                                            .copyWith(keepScreenOn: value),
-                                      ),
-                                );
-                              },
-                            ),
-                            SettingsSwitchRow(
-                              label: '显示时钟',
-                              value: preferences.showClock,
-                              onChanged: (bool value) {
-                                unawaited(
-                                  _preferencesController
-                                      .updateReaderPreferences(
-                                        (ReaderPreferences current) =>
-                                            current.copyWith(showClock: value),
-                                      ),
-                                );
-                              },
-                            ),
-                            SettingsSwitchRow(
-                              label: '显示进度',
-                              value: preferences.showProgress,
-                              onChanged: (bool value) {
-                                unawaited(
-                                  _preferencesController
-                                      .updateReaderPreferences(
-                                        (ReaderPreferences current) => current
-                                            .copyWith(showProgress: value),
-                                      ),
-                                );
-                              },
-                            ),
-                            if (_readerPlatformBridge.isAndroidSupported)
-                              SettingsSwitchRow(
-                                label: '显示电量',
-                                value: preferences.showBattery,
-                                onChanged: (bool value) {
+        return _ReaderSheetSwipeDismissRegion(
+          dismissDistance: _readerSettingsSwipeDismissDistance,
+          onDismiss: () => Navigator.of(context).maybePop(),
+          child: SafeArea(
+            child: SizedBox(
+              key: const ValueKey<String>('reader-settings-sheet'),
+              height: maxHeight,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: Column(
+                  children: <Widget>[
+                    Expanded(
+                      child: ListView(
+                        children: <Widget>[
+                          SettingsSection(
+                            children: <Widget>[
+                              SettingsSelectRow<ReaderScreenOrientation>(
+                                label: '屏幕方向',
+                                value: preferences.screenOrientation,
+                                items: ReaderScreenOrientation.values
+                                    .map((ReaderScreenOrientation value) {
+                                      return DropdownMenuItem<
+                                        ReaderScreenOrientation
+                                      >(
+                                        value: value,
+                                        child: Text(
+                                          value ==
+                                                  ReaderScreenOrientation
+                                                      .portrait
+                                              ? '竖屏'
+                                              : '横屏',
+                                        ),
+                                      );
+                                    })
+                                    .toList(growable: false),
+                                onChanged: (ReaderScreenOrientation? value) {
+                                  if (value == null) {
+                                    return;
+                                  }
                                   unawaited(
                                     _preferencesController
                                         .updateReaderPreferences(
-                                          (ReaderPreferences current) => current
-                                              .copyWith(showBattery: value),
+                                          (ReaderPreferences current) =>
+                                              current.copyWith(
+                                                screenOrientation: value,
+                                              ),
                                         ),
                                   );
                                 },
                               ),
-                            SettingsSwitchRow(
-                              label: '显示页面间隔',
-                              value: preferences.showPageGap,
-                              onChanged: (bool value) {
-                                unawaited(
-                                  _preferencesController
-                                      .updateReaderPreferences(
-                                        (ReaderPreferences current) => current
-                                            .copyWith(showPageGap: value),
-                                      ),
-                                );
-                              },
-                            ),
-                            if (_readerPlatformBridge.isAndroidSupported)
+                              SettingsSelectRow<ReaderReadingDirection>(
+                                label: '阅读方向',
+                                value: preferences.readingDirection,
+                                items: ReaderReadingDirection.values
+                                    .map((ReaderReadingDirection value) {
+                                      return DropdownMenuItem<
+                                        ReaderReadingDirection
+                                      >(
+                                        value: value,
+                                        child: Text(switch (value) {
+                                          ReaderReadingDirection.topToBottom =>
+                                            '从上到下',
+                                          ReaderReadingDirection.leftToRight =>
+                                            '从左到右',
+                                          ReaderReadingDirection.rightToLeft =>
+                                            '从右到左',
+                                        }),
+                                      );
+                                    })
+                                    .toList(growable: false),
+                                onChanged: (ReaderReadingDirection? value) {
+                                  if (value == null) {
+                                    return;
+                                  }
+                                  unawaited(
+                                    _preferencesController
+                                        .updateReaderPreferences(
+                                          (ReaderPreferences current) =>
+                                              current.copyWith(
+                                                readingDirection: value,
+                                              ),
+                                        ),
+                                  );
+                                },
+                              ),
+                              SettingsSelectRow<ReaderPageFit>(
+                                label: '页面缩放',
+                                value: preferences.pageFit,
+                                items: ReaderPageFit.values
+                                    .map((ReaderPageFit value) {
+                                      return DropdownMenuItem<ReaderPageFit>(
+                                        value: value,
+                                        child: Text(
+                                          value == ReaderPageFit.fitWidth
+                                              ? '匹配宽度'
+                                              : '适应屏幕',
+                                        ),
+                                      );
+                                    })
+                                    .toList(growable: false),
+                                onChanged: (ReaderPageFit? value) {
+                                  if (value == null) {
+                                    return;
+                                  }
+                                  unawaited(
+                                    _preferencesController
+                                        .updateReaderPreferences(
+                                          (ReaderPreferences current) =>
+                                              current.copyWith(pageFit: value),
+                                        ),
+                                  );
+                                },
+                              ),
+                              SettingsSelectRow<ReaderOpeningPosition>(
+                                label: '开页位置',
+                                value: preferences.openingPosition,
+                                items: ReaderOpeningPosition.values
+                                    .map((ReaderOpeningPosition value) {
+                                      return DropdownMenuItem<
+                                        ReaderOpeningPosition
+                                      >(
+                                        value: value,
+                                        child: Text(
+                                          value == ReaderOpeningPosition.top
+                                              ? '顶部'
+                                              : '中心',
+                                        ),
+                                      );
+                                    })
+                                    .toList(growable: false),
+                                onChanged: (ReaderOpeningPosition? value) {
+                                  if (value == null) {
+                                    return;
+                                  }
+                                  unawaited(
+                                    _preferencesController
+                                        .updateReaderPreferences(
+                                          (ReaderPreferences current) => current
+                                              .copyWith(openingPosition: value),
+                                        ),
+                                  );
+                                },
+                              ),
+                              SettingsSliderRow(
+                                label:
+                                    '自动翻页(${preferences.autoPageTurnSeconds}秒)',
+                                value: preferences.autoPageTurnSeconds
+                                    .toDouble(),
+                                max: 10,
+                                divisions: 10,
+                                onChanged: (double value) {
+                                  unawaited(
+                                    _preferencesController
+                                        .updateReaderPreferences(
+                                          (ReaderPreferences current) =>
+                                              current.copyWith(
+                                                autoPageTurnSeconds: value
+                                                    .round(),
+                                              ),
+                                        ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          SettingsSection(
+                            children: <Widget>[
                               SettingsSwitchRow(
-                                label: '使用音量键翻页',
-                                value: preferences.useVolumeKeysForPaging,
+                                label: '显示评论页',
+                                value: preferences.showChapterComments,
                                 onChanged: (bool value) {
                                   unawaited(
                                     _preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) =>
                                               current.copyWith(
-                                                useVolumeKeysForPaging: value,
+                                                showChapterComments: value,
                                               ),
                                         ),
                                   );
                                 },
                               ),
-                            SettingsSwitchRow(
-                              label: '全屏',
-                              value: preferences.fullscreen,
-                              onChanged: (bool value) {
-                                unawaited(
-                                  _preferencesController
-                                      .updateReaderPreferences(
-                                        (ReaderPreferences current) =>
-                                            current.copyWith(fullscreen: value),
-                                      ),
-                                );
-                              },
-                            ),
-                          ],
-                        ),
-                      ],
+                              SettingsSwitchRow(
+                                label: '屏幕常亮',
+                                value: preferences.keepScreenOn,
+                                onChanged: (bool value) {
+                                  unawaited(
+                                    _preferencesController
+                                        .updateReaderPreferences(
+                                          (ReaderPreferences current) => current
+                                              .copyWith(keepScreenOn: value),
+                                        ),
+                                  );
+                                },
+                              ),
+                              SettingsSwitchRow(
+                                label: '显示时钟',
+                                value: preferences.showClock,
+                                onChanged: (bool value) {
+                                  unawaited(
+                                    _preferencesController
+                                        .updateReaderPreferences(
+                                          (ReaderPreferences current) => current
+                                              .copyWith(showClock: value),
+                                        ),
+                                  );
+                                },
+                              ),
+                              SettingsSwitchRow(
+                                label: '显示进度',
+                                value: preferences.showProgress,
+                                onChanged: (bool value) {
+                                  unawaited(
+                                    _preferencesController
+                                        .updateReaderPreferences(
+                                          (ReaderPreferences current) => current
+                                              .copyWith(showProgress: value),
+                                        ),
+                                  );
+                                },
+                              ),
+                              if (_readerPlatformBridge.isAndroidSupported)
+                                SettingsSwitchRow(
+                                  label: '显示电量',
+                                  value: preferences.showBattery,
+                                  onChanged: (bool value) {
+                                    unawaited(
+                                      _preferencesController
+                                          .updateReaderPreferences(
+                                            (ReaderPreferences current) =>
+                                                current.copyWith(
+                                                  showBattery: value,
+                                                ),
+                                          ),
+                                    );
+                                  },
+                                ),
+                              SettingsSwitchRow(
+                                label: '显示页面间隔',
+                                value: preferences.showPageGap,
+                                onChanged: (bool value) {
+                                  unawaited(
+                                    _preferencesController
+                                        .updateReaderPreferences(
+                                          (ReaderPreferences current) => current
+                                              .copyWith(showPageGap: value),
+                                        ),
+                                  );
+                                },
+                              ),
+                              if (_readerPlatformBridge.isAndroidSupported)
+                                SettingsSwitchRow(
+                                  label: '使用音量键翻页',
+                                  value: preferences.useVolumeKeysForPaging,
+                                  onChanged: (bool value) {
+                                    unawaited(
+                                      _preferencesController
+                                          .updateReaderPreferences(
+                                            (ReaderPreferences current) =>
+                                                current.copyWith(
+                                                  useVolumeKeysForPaging: value,
+                                                ),
+                                          ),
+                                    );
+                                  },
+                                ),
+                              SettingsSwitchRow(
+                                label: '全屏',
+                                value: preferences.fullscreen,
+                                onChanged: (bool value) {
+                                  unawaited(
+                                    _preferencesController
+                                        .updateReaderPreferences(
+                                          (ReaderPreferences current) => current
+                                              .copyWith(fullscreen: value),
+                                        ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
+                    const SizedBox(height: 12),
+                  ],
+                ),
               ),
             ),
           ),
@@ -351,38 +377,43 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   }
 
   Widget _buildReaderOverlay(BuildContext context, ReaderPageData page) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
-    final List<_ReaderStatusItemData> statusItems = <_ReaderStatusItemData>[
-      if (_readerPreferences.showClock)
-        _ReaderStatusItemData(
-          label: _readerClockLabel(),
-          icon: Icons.schedule_rounded,
-        ),
-      if (_readerPlatformBridge.isAndroidSupported &&
-          _readerPreferences.showBattery)
-        _ReaderStatusItemData(
-          label: _batteryLevel == null ? '--%' : '${_batteryLevel!}%',
-          icon: Icons.battery_std_rounded,
-        ),
-      if (_readerPreferences.showProgress)
-        _ReaderStatusItemData(
-          label: _readerPageCountLabel(page),
-          icon: Icons.layers_rounded,
-        ),
-    ];
+    final double topOffset = _readerPreferences.fullscreen
+        ? 2
+        : viewPadding.top + 6;
     return IgnorePointer(
       child: Stack(
         children: <Widget>[
-          if (statusItems.isNotEmpty)
+          if (_readerPlatformBridge.isAndroidSupported &&
+              _readerPreferences.showBattery)
             Positioned(
-              right: 12,
-              top: viewPadding.top + 12,
-              child: _ReaderStatusButton(
-                items: statusItems,
-                backgroundColor: colorScheme.surface.withValues(alpha: 0.9),
-                borderColor: colorScheme.outlineVariant.withValues(alpha: 0.5),
-                foregroundColor: colorScheme.onSurface,
+              left: 8,
+              top: topOffset,
+              child: _ReaderStatusLabel(
+                label: _batteryLevel == null ? '--%' : '${_batteryLevel!}%',
+                icon: Icons.bolt_rounded,
+                fontSize: 14,
+              ),
+            ),
+          if (_readerPreferences.showClock)
+            Positioned(
+              right: 8,
+              top: topOffset,
+              child: _ReaderStatusLabel(
+                label: _readerClockLabel(),
+                fontSize: 14,
+              ),
+            ),
+          if (_readerPreferences.showProgress)
+            Positioned(
+              left: 0,
+              right: 0,
+              top: topOffset,
+              child: Center(
+                child: _ReaderStatusLabel(
+                  label: _readerPageCountLabel(page),
+                  fontSize: 15,
+                ),
               ),
             ),
           if (page.nextHref.trim().isNotEmpty)
@@ -401,14 +432,14 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
 
   String _readerPageCountLabel(ReaderPageData page) {
     if (page.imageUrls.isEmpty) {
-      return '-- / --';
+      return '--/--';
     }
     final int visibleIndex =
         (_readerPreferences.isPaged
                 ? _currentReaderPageIndex
                 : _currentVisibleReaderImageIndex)
             .clamp(0, page.imageUrls.length - 1);
-    return '${visibleIndex + 1} / ${page.imageUrls.length}';
+    return '${visibleIndex + 1}/${page.imageUrls.length}';
   }
 
   Widget _buildReaderChapterControls(

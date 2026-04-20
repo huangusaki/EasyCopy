@@ -1556,7 +1556,9 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
 
   Future<void> _persistDetailPageCache(DetailPageData page) async {
     try {
-      final String authScope = _pageQueryKeyForUri(Uri.parse(page.uri)).authScope;
+      final String authScope = _pageQueryKeyForUri(
+        Uri.parse(page.uri),
+      ).authScope;
       await _pageRepository.writeCachedPage(page, authScope: authScope);
     } catch (_) {
       // Best-effort cache repair only.
@@ -1807,7 +1809,6 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
                 label: 'reader.first_image_page_cache',
               );
               if (cachedPage is ReaderPageData &&
-                  preparedPage is ReaderPageData &&
                   _didReaderNavigationChange(cachedPage, preparedPage)) {
                 unawaited(_persistReaderPageCache(preparedPage));
               }

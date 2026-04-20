@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/icons/app_icon_rounded_1024.png" alt="EasyCopy" width="120" />
+  <img src="../assets/icons/app_icon_rounded_1024.png" alt="EasyCopy" width="120" />
   <h1>EasyCopy</h1>
   <p>用 Flutter 写的 Android 漫画阅读器</p>
 </div>
@@ -25,11 +25,11 @@
 
 | 首页 | 发现筛选 |
 | :---: | :---: |
-| <img src="docs/screenshots/home-dark.jpg" width="260" /> | <img src="docs/screenshots/discover-filters-dark.jpg" width="260" /> |
+| <img src="screenshots/home-dark.jpg" width="260" /> | <img src="screenshots/discover-filters-dark.jpg" width="260" /> |
 
 | 阅读页 | 阅读设置 |
 | :---: | :---: |
-| <img src="docs/screenshots/reader-page.jpg" width="260" /> | <img src="docs/screenshots/reader-settings.jpg" width="260" /> |
+| <img src="screenshots/reader-page.jpg" width="260" /> | <img src="screenshots/reader-settings.jpg" width="260" /> |
 
 ## 工作原理
 

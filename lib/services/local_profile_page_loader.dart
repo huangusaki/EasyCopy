@@ -42,16 +42,17 @@ class LocalProfilePageLoader {
         // Migration fallback: older builds stored continue-reading progress
         // inside guest/auth scopes. Keep displaying it and best-effort copy
         // into the global continue-reading scope.
-        continueReading ??=
-            isLoggedIn
-                ? await _libraryStore.latestContinueReading(authScope)
-                : null;
-        continueReading ??= await _libraryStore.latestContinueReading(guestScope);
+        continueReading ??= isLoggedIn
+            ? await _libraryStore.latestContinueReading(authScope)
+            : null;
+        continueReading ??= await _libraryStore.latestContinueReading(
+          guestScope,
+        );
         if (continueReading != null) {
           try {
             await _libraryStore.importHistory(
               continueScope,
-              <ProfileHistoryItem>[continueReading!],
+              <ProfileHistoryItem>[continueReading],
               maxEntries: 1,
             );
           } catch (_) {
@@ -70,18 +71,22 @@ class LocalProfilePageLoader {
       );
     }
 
-    final (List<ProfileLibraryItem> collectionsPreview, int collectionsTotal) =
-        await _libraryStore.readCollectionsPage(
-          guestScope,
-          page: view == ProfileSubview.collections ? activePage : 1,
-          pageSize: 20,
-        );
-    final (List<ProfileHistoryItem> historyPreview, int historyTotal) =
-        await _libraryStore.readHistoryPage(
-          guestScope,
-          page: view == ProfileSubview.history ? activePage : 1,
-          pageSize: 20,
-        );
+    final (
+      List<ProfileLibraryItem> collectionsPreview,
+      int collectionsTotal,
+    ) = await _libraryStore.readCollectionsPage(
+      guestScope,
+      page: view == ProfileSubview.collections ? activePage : 1,
+      pageSize: 20,
+    );
+    final (
+      List<ProfileHistoryItem> historyPreview,
+      int historyTotal,
+    ) = await _libraryStore.readHistoryPage(
+      guestScope,
+      page: view == ProfileSubview.history ? activePage : 1,
+      pageSize: 20,
+    );
 
     switch (view) {
       case ProfileSubview.collections:
@@ -157,14 +162,17 @@ class LocalProfilePageLoader {
       currentLabel: '$normalizedPage',
       totalLabel: '共$totalPages页 · $normalizedTotalItems$unit',
       prevHref: normalizedPage > 1
-          ? AppConfig.buildProfileUri(view: view, page: normalizedPage - 1)
-                .toString()
+          ? AppConfig.buildProfileUri(
+              view: view,
+              page: normalizedPage - 1,
+            ).toString()
           : '',
       nextHref: normalizedPage < totalPages
-          ? AppConfig.buildProfileUri(view: view, page: normalizedPage + 1)
-                .toString()
+          ? AppConfig.buildProfileUri(
+              view: view,
+              page: normalizedPage + 1,
+            ).toString()
           : '',
     );
   }
-
 }
