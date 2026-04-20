@@ -151,43 +151,76 @@ class _DetailChapterControlChip extends StatelessWidget {
   }
 }
 
-class _ReaderStatusPill extends StatelessWidget {
-  const _ReaderStatusPill({
-    required this.label,
-    required this.icon,
-    required this.backgroundColor,
-    required this.foregroundColor,
-  });
+class _ReaderStatusItemData {
+  const _ReaderStatusItemData({required this.label, required this.icon});
 
   final String label;
   final IconData icon;
+}
+
+class _ReaderStatusButton extends StatelessWidget {
+  const _ReaderStatusButton({
+    required this.items,
+    required this.backgroundColor,
+    required this.borderColor,
+    required this.foregroundColor,
+  });
+
+  final List<_ReaderStatusItemData> items;
   final Color backgroundColor;
+  final Color borderColor;
   final Color foregroundColor;
 
   @override
   Widget build(BuildContext context) {
+    if (items.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final List<Widget> children = <Widget>[];
+    for (int index = 0; index < items.length; index += 1) {
+      final _ReaderStatusItemData item = items[index];
+      if (index > 0) {
+        children.addAll(<Widget>[
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Container(
+              width: 1,
+              height: 12,
+              color: foregroundColor.withValues(alpha: 0.18),
+            ),
+          ),
+        ]);
+      }
+      children.addAll(<Widget>[
+        Icon(item.icon, size: 14, color: foregroundColor),
+        const SizedBox(width: 5),
+        Text(
+          item.label,
+          style: TextStyle(
+            color: foregroundColor,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w800,
+            height: 1,
+          ),
+        ),
+      ]);
+    }
     return DecoratedBox(
       decoration: BoxDecoration(
         color: backgroundColor,
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor),
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(icon, size: 14, color: foregroundColor),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                color: foregroundColor,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: children),
       ),
     );
   }

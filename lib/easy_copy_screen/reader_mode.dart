@@ -353,37 +353,35 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   Widget _buildReaderOverlay(BuildContext context, ReaderPageData page) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
+    final List<_ReaderStatusItemData> statusItems = <_ReaderStatusItemData>[
+      if (_readerPreferences.showClock)
+        _ReaderStatusItemData(
+          label: _readerClockLabel(),
+          icon: Icons.schedule_rounded,
+        ),
+      if (_readerPlatformBridge.isAndroidSupported &&
+          _readerPreferences.showBattery)
+        _ReaderStatusItemData(
+          label: _batteryLevel == null ? '--%' : '${_batteryLevel!}%',
+          icon: Icons.battery_std_rounded,
+        ),
+      if (_readerPreferences.showProgress)
+        _ReaderStatusItemData(
+          label: _readerPageCountLabel(page),
+          icon: Icons.layers_rounded,
+        ),
+    ];
     return IgnorePointer(
       child: Stack(
         children: <Widget>[
-          if (_readerPreferences.showProgress &&
-              !_isReaderChapterControlsVisible)
-            Positioned(
-              top: viewPadding.top + 12,
-              left: 0,
-              right: 0,
-              child: Center(child: _buildReaderProgressBadge(context, page)),
-            ),
-          if (_readerPreferences.showClock)
-            Positioned(
-              left: 12,
-              top: viewPadding.top + 12,
-              child: _ReaderStatusPill(
-                label: _readerClockLabel(),
-                icon: Icons.schedule_rounded,
-                backgroundColor: colorScheme.surface.withValues(alpha: 0.88),
-                foregroundColor: colorScheme.onSurface,
-              ),
-            ),
-          if (_readerPlatformBridge.isAndroidSupported &&
-              _readerPreferences.showBattery)
+          if (statusItems.isNotEmpty)
             Positioned(
               right: 12,
               top: viewPadding.top + 12,
-              child: _ReaderStatusPill(
-                label: _batteryLevel == null ? '--%' : '${_batteryLevel!}%',
-                icon: Icons.battery_std_rounded,
-                backgroundColor: colorScheme.surface.withValues(alpha: 0.88),
+              child: _ReaderStatusButton(
+                items: statusItems,
+                backgroundColor: colorScheme.surface.withValues(alpha: 0.9),
+                borderColor: colorScheme.outlineVariant.withValues(alpha: 0.5),
                 foregroundColor: colorScheme.onSurface,
               ),
             ),
@@ -411,28 +409,6 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                 : _currentVisibleReaderImageIndex)
             .clamp(0, page.imageUrls.length - 1);
     return '${visibleIndex + 1} / ${page.imageUrls.length}';
-  }
-
-  Widget _buildReaderProgressBadge(BuildContext context, ReaderPageData page) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.88),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Text(
-          _readerPageCountLabel(page),
-          style: TextStyle(
-            color: colorScheme.onSurface,
-            fontSize: 12,
-            fontWeight: FontWeight.w800,
-            height: 1,
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _buildReaderChapterControls(
