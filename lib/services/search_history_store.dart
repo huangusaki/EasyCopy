@@ -41,6 +41,31 @@ class SearchHistoryStore {
     await _persist();
   }
 
+  Future<void> remove(String query) async {
+    final String normalized = query.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    await ensureInitialized();
+    final List<String> next = _items
+        .where((String item) => item != normalized)
+        .toList(growable: false);
+    if (next.length == _items.length) {
+      return;
+    }
+    _items = next;
+    await _persist();
+  }
+
+  Future<void> clear() async {
+    await ensureInitialized();
+    if (_items.isEmpty) {
+      return;
+    }
+    _items = <String>[];
+    await _persist();
+  }
+
   Future<void> _initialize() async {
     try {
       final File file = await _historyFile();
@@ -78,7 +103,8 @@ class SearchHistoryStore {
 
   Future<File> _historyFile() async {
     final Directory directory = await _directoryProvider();
-    return File('${directory.path}${Platform.pathSeparator}search_history.json');
+    return File(
+      '${directory.path}${Platform.pathSeparator}search_history.json',
+    );
   }
 }
-

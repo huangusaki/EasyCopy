@@ -194,13 +194,22 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
         ),
         if (history.isNotEmpty) ...<Widget>[
           const SizedBox(height: 10),
-          Text(
-            '历史搜索',
-            style: TextStyle(
-              color: colorScheme.onSurface.withValues(alpha: 0.64),
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
+          Row(
+            children: <Widget>[
+              Text(
+                '历史搜索',
+                style: TextStyle(
+                  color: colorScheme.onSurface.withValues(alpha: 0.64),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: _confirmClearSearchHistory,
+                child: const Text('清空'),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Wrap(
@@ -208,12 +217,18 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             runSpacing: 8,
             children: history
                 .map(
-                  (String term) => ActionChip(
-                    label: Text(term),
-                    onPressed: () {
-                      _primeSearchController(term);
-                      _submitSearchFromVisibleDiscoverContext(term);
+                  (String term) => GestureDetector(
+                    onLongPress: () {
+                      unawaited(HapticFeedback.longPress());
+                      unawaited(_removeSearchHistoryEntry(term));
                     },
+                    child: ActionChip(
+                      label: Text(term),
+                      onPressed: () {
+                        _primeSearchController(term);
+                        _submitSearchFromVisibleDiscoverContext(term);
+                      },
+                    ),
                   ),
                 )
                 .toList(growable: false),

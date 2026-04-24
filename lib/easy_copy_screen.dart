@@ -2947,6 +2947,62 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     unawaited(_searchHistoryStore.record(normalized));
   }
 
+  Future<void> _removeSearchHistoryEntry(String query) async {
+    final String normalized = query.trim();
+    if (normalized.isEmpty || !_searchHistoryEntries.contains(normalized)) {
+      return;
+    }
+    final List<String> next = _searchHistoryEntries
+        .where((String item) => item != normalized)
+        .toList(growable: false);
+    if (mounted) {
+      setState(() {
+        _searchHistoryEntries = next;
+      });
+    } else {
+      _searchHistoryEntries = next;
+    }
+    await _searchHistoryStore.remove(normalized);
+    _showSnackBar('已删除搜索历史：$normalized');
+  }
+
+  Future<void> _confirmClearSearchHistory() async {
+    if (_searchHistoryEntries.isEmpty) {
+      return;
+    }
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('清空搜索历史'),
+          content: const Text('确认清空发现页的全部搜索历史吗？'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('清空'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) {
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _searchHistoryEntries = const <String>[];
+      });
+    } else {
+      _searchHistoryEntries = const <String>[];
+    }
+    await _searchHistoryStore.clear();
+    _showSnackBar('已清空搜索历史');
+  }
+
   void _submitSearchFromCurrentStack(String value) {
     _submitSearch(
       value,
