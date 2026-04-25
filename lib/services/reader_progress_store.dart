@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -196,6 +197,7 @@ class ReaderProgressStore {
   final sqflite.DatabaseFactory _databaseFactory;
 
   Future<void>? _initialization;
+  Future<void> _writeQueue = Future<void>.value();
   sqflite.Database? _database;
   List<ReaderProgressEntry> _entries = <ReaderProgressEntry>[];
 
@@ -213,10 +215,7 @@ class ReaderProgressStore {
     if (exactEntry != null) {
       return exactEntry.position;
     }
-    final ReaderProgressEntry? migratedEntry = await _migrateLegacyEntryForKey(
-      normalizedKey,
-    );
-    return migratedEntry?.position;
+    return null;
   }
 
   Future<double?> readOffset(String key) async {
@@ -264,25 +263,28 @@ class ReaderProgressStore {
     if (catalogPathKey.isEmpty || chapterPathKey.isEmpty) {
       return;
     }
-    final DateTime now = _now();
-    final ReaderProgressEntry? existingEntry =
-        _entryForKey(normalizedKey) ??
-        await _migrateLegacyEntryForKey(normalizedKey);
-    final ReaderProgressEntry nextEntry = existingEntry != null
-        ? existingEntry.copyWith(
-            updatedAt: now,
-            catalogPathKey: catalogPathKey,
-            chapterPathKey: chapterPathKey,
-          )
-        : ReaderProgressEntry(
-            key: normalizedKey,
-            position: ReaderPosition.scroll(offset: 0),
-            updatedAt: now,
-            catalogPathKey: catalogPathKey,
-            chapterPathKey: chapterPathKey,
-          );
-    await _persistCanonicalEntry(nextEntry);
-    await _trimPersistedEntries();
+    await _runWrite(() async {
+      final DateTime now = _now();
+      final ReaderProgressEntry? existingEntry =
+          _entryForKey(normalizedKey) ??
+          _latestEntryForChapterPathKey(chapterPathKey);
+      final ReaderProgressEntry nextEntry = existingEntry != null
+          ? existingEntry.copyWith(
+              key: normalizedKey,
+              updatedAt: now,
+              catalogPathKey: catalogPathKey,
+              chapterPathKey: chapterPathKey,
+            )
+          : ReaderProgressEntry(
+              key: normalizedKey,
+              position: ReaderPosition.scroll(offset: 0),
+              updatedAt: now,
+              catalogPathKey: catalogPathKey,
+              chapterPathKey: chapterPathKey,
+            );
+      await _persistCanonicalEntry(nextEntry);
+      await _trimPersistedEntries();
+    });
   }
 
   Future<void> writePosition(
@@ -302,30 +304,35 @@ class ReaderProgressStore {
     final ReaderPosition normalizedPosition = _normalizePosition(position);
     final String catalogPathKey = _pathKey(catalogHref);
     final String chapterPathKey = _pathKey(chapterHref);
-    final DateTime now = _now();
-    final ReaderProgressEntry? existingEntry =
-        _entryForKey(normalizedKey) ??
-        await _migrateLegacyEntryForKey(normalizedKey);
-    final ReaderProgressEntry nextEntry = existingEntry != null
-        ? existingEntry.copyWith(
-            position: normalizedPosition,
-            updatedAt: now,
-            catalogPathKey: catalogPathKey.isEmpty
-                ? existingEntry.catalogPathKey
-                : catalogPathKey,
-            chapterPathKey: chapterPathKey.isEmpty
-                ? existingEntry.chapterPathKey
-                : chapterPathKey,
-          )
-        : ReaderProgressEntry(
-            key: normalizedKey,
-            position: normalizedPosition,
-            updatedAt: now,
-            catalogPathKey: catalogPathKey,
-            chapterPathKey: chapterPathKey,
-          );
-    await _persistCanonicalEntry(nextEntry);
-    await _trimPersistedEntries();
+    await _runWrite(() async {
+      final DateTime now = _now();
+      final ReaderProgressEntry? existingEntry =
+          _entryForKey(normalizedKey) ??
+          (chapterPathKey.isEmpty
+              ? null
+              : _latestEntryForChapterPathKey(chapterPathKey));
+      final ReaderProgressEntry nextEntry = existingEntry != null
+          ? existingEntry.copyWith(
+              key: normalizedKey,
+              position: normalizedPosition,
+              updatedAt: now,
+              catalogPathKey: catalogPathKey.isEmpty
+                  ? existingEntry.catalogPathKey
+                  : catalogPathKey,
+              chapterPathKey: chapterPathKey.isEmpty
+                  ? existingEntry.chapterPathKey
+                  : chapterPathKey,
+            )
+          : ReaderProgressEntry(
+              key: normalizedKey,
+              position: normalizedPosition,
+              updatedAt: now,
+              catalogPathKey: catalogPathKey,
+              chapterPathKey: chapterPathKey,
+            );
+      await _persistCanonicalEntry(nextEntry);
+      await _trimPersistedEntries();
+    });
   }
 
   Future<void> writeOffset(String key, double offset) {
@@ -338,17 +345,24 @@ class ReaderProgressStore {
     if (normalizedKey.isEmpty) {
       return;
     }
-    _entries.removeWhere(
-      (ReaderProgressEntry entry) => entry.key == normalizedKey,
-    );
-    await _database!.delete(
-      _tableName,
-      where: 'key = ?',
-      whereArgs: <Object>[normalizedKey],
-    );
+    await _runWrite(() async {
+      _entries.removeWhere(
+        (ReaderProgressEntry entry) => entry.key == normalizedKey,
+      );
+      await _database!.delete(
+        _tableName,
+        where: 'key = ?',
+        whereArgs: <Object>[normalizedKey],
+      );
+    });
   }
 
   Future<void> close() async {
+    try {
+      await _writeQueue;
+    } catch (_) {
+      // Best-effort cleanup only.
+    }
     final sqflite.Database? database = _database;
     _database = null;
     _initialization = null;
@@ -384,26 +398,6 @@ class ReaderProgressStore {
           entry?.chapterPathKey == normalizedChapterPathKey,
       orElse: () => null,
     );
-  }
-
-  Future<ReaderProgressEntry?> _migrateLegacyEntryForKey(String key) async {
-    final String canonicalChapterPathKey = progressKeyForChapterHref(key);
-    if (canonicalChapterPathKey.isEmpty) {
-      return null;
-    }
-    final ReaderProgressEntry? legacyEntry = _latestEntryForChapterPathKey(
-      canonicalChapterPathKey,
-    );
-    if (legacyEntry == null) {
-      return null;
-    }
-    final ReaderProgressEntry canonicalEntry = legacyEntry.copyWith(
-      key: canonicalChapterPathKey,
-      chapterPathKey: canonicalChapterPathKey,
-    );
-    await _persistCanonicalEntry(canonicalEntry);
-    await _trimPersistedEntries();
-    return canonicalEntry;
   }
 
   Future<void> _initialize() async {
@@ -489,6 +483,24 @@ class ReaderProgressStore {
       entry.toRow(),
       conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
     );
+  }
+
+  Future<T> _runWrite<T>(Future<T> Function() action) async {
+    final Future<void> previousWrite = _writeQueue;
+    final Completer<void> nextWrite = Completer<void>();
+    _writeQueue = nextWrite.future;
+    try {
+      try {
+        await previousWrite;
+      } catch (_) {
+        // Keep later writes moving even if an earlier best-effort write failed.
+      }
+      return await action();
+    } finally {
+      if (!nextWrite.isCompleted) {
+        nextWrite.complete();
+      }
+    }
   }
 
   Future<void> _persistCanonicalEntry(ReaderProgressEntry entry) async {

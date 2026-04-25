@@ -341,15 +341,25 @@ class LocalLibraryStore {
       return;
     }
     final String id = _entryId(normalizedScope, comicPathKey);
+    final Map<String, Object?> existing = await _historyRowForId(id);
+    final String resolvedCoverUrl = coverUrl.trim().isNotEmpty
+        ? coverUrl.trim()
+        : (existing['cover_url'] as String?)?.trim() ?? '';
+    final String title = page.comicTitle.trim().isNotEmpty
+        ? page.comicTitle.trim()
+        : (existing['title'] as String?)?.trim() ?? '';
+    final String comicHref = catalogHref.isNotEmpty
+        ? catalogHref
+        : (existing['comic_href'] as String?)?.trim() ?? '';
     await _database!.insert(
       _historyTable,
       <String, Object?>{
         'id': id,
         'scope': normalizedScope,
         'comic_path_key': comicPathKey,
-        'title': page.comicTitle.trim(),
-        'cover_url': coverUrl.trim(),
-        'comic_href': catalogHref,
+        'title': title,
+        'cover_url': resolvedCoverUrl,
+        'comic_href': comicHref,
         'chapter_label': page.chapterTitle.trim(),
         'chapter_href': page.uri.trim(),
         'visited_at_ms': _now().millisecondsSinceEpoch,
