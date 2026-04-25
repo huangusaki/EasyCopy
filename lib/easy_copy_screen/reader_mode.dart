@@ -794,6 +794,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       imageProvider = CachedNetworkImageProvider(
         imageUrl,
         cacheManager: EasyCopyImageCaches.readerCache,
+        headers: EasyCopyImageCaches.readerImageHeaders(page.uri),
       );
     }
     return ColoredBox(

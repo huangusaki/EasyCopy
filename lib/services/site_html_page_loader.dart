@@ -4,6 +4,7 @@ import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/page_models.dart';
 import 'package:easy_copy/services/debug_trace.dart';
 import 'package:easy_copy/services/host_manager.dart';
+import 'package:easy_copy/services/network_client.dart';
 import 'package:easy_copy/services/site_html_page_parser.dart';
 import 'package:easy_copy/services/site_session.dart';
 import 'package:http/http.dart' as http;
@@ -99,22 +100,24 @@ class SiteHtmlPageLoader {
       redirectCount += 1
     ) {
       final Stopwatch stopwatch = Stopwatch()..start();
-      final http.Request request = http.Request('GET', currentUri)
-        ..followRedirects = false
-        ..maxRedirects = 1
-        ..headers.addAll(headers);
-      final http.StreamedResponse response = await _client
-          .send(request)
-          .timeout(_requestTimeout);
-      final List<int> bytes = await response.stream.toBytes().timeout(
-        _requestTimeout,
-      );
+      final NetworkResponseBytes response =
+          await EasyCopyNetworkClient.sendForBytes(
+            _client,
+            () => http.Request('GET', currentUri)
+              ..followRedirects = false
+              ..maxRedirects = 1
+              ..headers.addAll(headers),
+            uri: currentUri,
+            timeout: _requestTimeout,
+            maxRetries: 1,
+            label: 'html.get',
+          );
       if (currentUri.path.toLowerCase().contains('/chapter/')) {
         DebugTrace.log('reader.html_request_complete', <String, Object?>{
           'uri': currentUri.toString(),
           'statusCode': response.statusCode,
           'elapsedMs': stopwatch.elapsedMilliseconds,
-          'byteCount': bytes.length,
+          'byteCount': response.bytes.length,
         });
       }
 
@@ -137,7 +140,7 @@ class SiteHtmlPageLoader {
 
       return _LoadedTextResponse(
         uri: currentUri,
-        body: utf8.decode(bytes, allowMalformed: true),
+        body: utf8.decode(response.bytes, allowMalformed: true),
       );
     }
 

@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/chapter_comment.dart';
 import 'package:easy_copy/models/page_models.dart';
+import 'package:easy_copy/services/network_client.dart';
 import 'package:easy_copy/services/site_session.dart';
 import 'package:http/http.dart' as http;
 
@@ -153,7 +154,9 @@ class SiteApiClient {
     if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
       throw SiteApiException('请先登录后再操作。');
     }
-    final Map<String, Object?> payload = await _getJson('/api/v2/web/user/info');
+    final Map<String, Object?> payload = await _getJson(
+      '/api/v2/web/user/info',
+    );
     final ProfileUserData user = _parseUser(payload);
     await _session.bindUserId(user.userId);
     return user;
@@ -203,7 +206,8 @@ class SiteApiClient {
       throw SiteApiException('漫画收藏信息缺失，请刷新详情页后重试。');
     }
 
-    final http.Response response = await _client.post(
+    final http.Response response = await EasyCopyNetworkClient.post(
+      _client,
       AppConfig.resolvePath('/api/v2/web/collect'),
       headers: <String, String>{
         'Authorization': 'Token ${_session.token}',
@@ -217,6 +221,7 @@ class SiteApiClient {
         'comic_id': normalizedComicId,
         'is_collect': isCollected ? '1' : '0',
       },
+      label: 'api.collect',
     );
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw SiteApiException('登录已失效，请重新登录。');
@@ -248,15 +253,18 @@ class SiteApiClient {
     await _session.ensureInitialized();
     final int normalizedLimit = limit.clamp(1, 120);
     final int normalizedOffset = offset < 0 ? 0 : offset;
-    final Uri uri = Uri.https(_chapterCommentApiHost, '/api/v3/roasts', <String, String>{
-      'chapter_id': normalizedChapterId,
-      'limit': '$normalizedLimit',
-      'offset': '$normalizedOffset',
-      '_update': 'true',
-    });
-    final http.Response response = await _client.get(
+    final Uri uri =
+        Uri.https(_chapterCommentApiHost, '/api/v3/roasts', <String, String>{
+          'chapter_id': normalizedChapterId,
+          'limit': '$normalizedLimit',
+          'offset': '$normalizedOffset',
+          '_update': 'true',
+        });
+    final http.Response response = await EasyCopyNetworkClient.get(
+      _client,
       uri,
       headers: _buildRequestHeaders(),
+      label: 'api.comments',
     );
     final Map<String, Object?> payload = _decodeJsonMap(
       response,
@@ -273,11 +281,11 @@ class SiteApiClient {
         .where((ChapterComment comment) => comment.message.isNotEmpty)
         .toList(growable: false);
     return ChapterCommentFeed(
-      total: _pickInt(
-        results,
-        const <String>['total', 'count', 'total_count'],
-        fallback: comments.length,
-      ),
+      total: _pickInt(results, const <String>[
+        'total',
+        'count',
+        'total_count',
+      ], fallback: comments.length),
       comments: comments,
     );
   }
@@ -300,7 +308,8 @@ class SiteApiClient {
       throw SiteApiException('请输入评论内容。');
     }
 
-    final http.Response response = await _client.post(
+    final http.Response response = await EasyCopyNetworkClient.post(
+      _client,
       Uri.https(_chapterCommentApiHost, '/api/v3/member/roast'),
       headers: _buildRequestHeaders(
         includeAuth: true,
@@ -311,6 +320,7 @@ class SiteApiClient {
         'roast': normalizedContent,
         '_update': 'true',
       },
+      label: 'api.comment.submit',
     );
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw SiteApiException('登录已失效，请重新登录。');
@@ -409,7 +419,8 @@ class SiteApiClient {
               ...queryParameters,
             },
           );
-    final http.Response response = await _client.get(
+    final http.Response response = await EasyCopyNetworkClient.get(
+      _client,
       uri,
       headers: <String, String>{
         'Authorization': 'Token ${_session.token}',
@@ -419,6 +430,7 @@ class SiteApiClient {
         'platform': '2',
         if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
       },
+      label: 'api.json',
     );
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw SiteApiException('登录已失效，请重新登录。');
@@ -459,14 +471,17 @@ class SiteApiClient {
             'q_type': qType,
           },
         );
-        final http.Response response = await _client.get(
+        final http.Response response = await EasyCopyNetworkClient.get(
+          _client,
           uri,
           headers: <String, String>{
             'Accept': 'application/json',
             'User-Agent': AppConfig.desktopUserAgent,
             'platform': '2',
-            if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
+            if (_session.cookieHeader.isNotEmpty)
+              'Cookie': _session.cookieHeader,
           },
+          label: 'api.search',
         );
         final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
         if (decoded is! Map) {
@@ -501,7 +516,8 @@ class SiteApiClient {
   }) async {
     final int salt = 100000 + Random().nextInt(900000);
     final Uri uri = AppConfig.resolvePath(path);
-    final http.Response response = await _client.post(
+    final http.Response response = await EasyCopyNetworkClient.post(
+      _client,
       uri,
       headers: <String, String>{
         'Accept': 'application/json, text/plain, */*',
@@ -517,6 +533,7 @@ class SiteApiClient {
         'version': '2025.12.10',
         'source': 'freeSite',
       },
+      label: 'api.login',
     );
 
     final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
@@ -867,42 +884,46 @@ class SiteApiClient {
   }
 
   ChapterComment _parseChapterComment(Map<String, Object?> item) {
-    final Map<String, Object?> user = _firstNonEmptyMap(
-      item,
-      const <String>['user', 'member', 'author'],
-    );
+    final Map<String, Object?> user = _firstNonEmptyMap(item, const <String>[
+      'user',
+      'member',
+      'author',
+    ]);
     final int commentId = _pickInt(item, const <String>['id'], fallback: 0);
     return ChapterComment(
       id: commentId > 0
           ? '$commentId'
           : _pickString(item, const <String>['uuid', 'comment_id', 'roast_id']),
-      message: _pickString(
-        item,
-        const <String>['comment', 'roast', 'content', 'text'],
-      ),
-      avatarUrl: _pickString(
-        item,
-        const <String>['user_avatar', 'avatar', 'avatar_url'],
-      ).isNotEmpty
-          ? _pickString(
-              item,
-              const <String>['user_avatar', 'avatar', 'avatar_url'],
-            )
-          : _pickString(
-              user,
-              const <String>['avatar', 'avatar_url', 'user_avatar'],
-            ),
-      likeCount: _pickNullableInt(
-        item,
-        const <String>[
-          'like_count',
-          'likes',
-          'thumbs_count',
-          'praise_count',
-          'up_count',
-          'up',
-        ],
-      ),
+      message: _pickString(item, const <String>[
+        'comment',
+        'roast',
+        'content',
+        'text',
+      ]),
+      avatarUrl:
+          _pickString(item, const <String>[
+            'user_avatar',
+            'avatar',
+            'avatar_url',
+          ]).isNotEmpty
+          ? _pickString(item, const <String>[
+              'user_avatar',
+              'avatar',
+              'avatar_url',
+            ])
+          : _pickString(user, const <String>[
+              'avatar',
+              'avatar_url',
+              'user_avatar',
+            ]),
+      likeCount: _pickNullableInt(item, const <String>[
+        'like_count',
+        'likes',
+        'thumbs_count',
+        'praise_count',
+        'up_count',
+        'up',
+      ]),
     );
   }
 

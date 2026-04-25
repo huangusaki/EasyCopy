@@ -67,7 +67,9 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
           return uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
         })
         .toList(growable: false);
-    unawaited(EasyCopyImageCaches.prefetchReaderImages(remoteImages));
+    unawaited(
+      EasyCopyImageCaches.prefetchReaderImages(remoteImages, referer: page.uri),
+    );
     unawaited(_markReaderChapterVisited(page));
     final bool changedPage = previousUri != page.uri;
     if (changedPage || forceRestore) {
@@ -118,8 +120,9 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
       String coverUrl = '';
       final String catalogPath = Uri.tryParse(page.catalogHref)?.path ?? '';
       if (catalogPath.isNotEmpty) {
-        for (final PrimaryTabRouteEntry entry
-            in _tabSessionStore.stackForTab(_selectedIndex)) {
+        for (final PrimaryTabRouteEntry entry in _tabSessionStore.stackForTab(
+          _selectedIndex,
+        )) {
           final EasyCopyPage? entryPage = entry.page;
           if (entryPage is DetailPageData &&
               Uri.parse(entryPage.uri).path == catalogPath) {

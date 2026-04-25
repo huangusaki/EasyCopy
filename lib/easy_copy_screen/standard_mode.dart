@@ -1383,7 +1383,6 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
     sections.add(
       _SurfaceBlock(
-        title: '內容列表',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[

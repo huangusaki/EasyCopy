@@ -15,6 +15,7 @@ import 'package:easy_copy/services/migration_delta_journal_store.dart';
 import 'package:easy_copy/services/document_tree_relative_image_provider.dart';
 import 'package:easy_copy/services/download_storage_service.dart';
 import 'package:easy_copy/services/download_queue_store.dart';
+import 'package:easy_copy/services/network_client.dart';
 import 'package:http/http.dart' as http;
 
 const String _comicOwnershipMarkerName = '.easycopy_comic';
@@ -273,6 +274,8 @@ class ComicDownloadService {
 
   static final ComicDownloadService instance = ComicDownloadService();
 
+  static const int _chapterImageDownloadConcurrency = 3;
+
   final http.Client _client;
   final AndroidDocumentTreeBridge _documentTreeBridge;
   final CachedLibraryIndexStore _cachedLibraryIndexStore;
@@ -430,31 +433,47 @@ class ComicDownloadService {
       if (cookieHeader.trim().isNotEmpty) 'Cookie': cookieHeader.trim(),
     };
 
-    for (int index = 0; index < page.imageUrls.length; index += 1) {
+    int completedCount = savedFiles
+        .where((String fileName) => fileName.isNotEmpty)
+        .length;
+
+    Future<void> emitProgress(String label) async {
+      if (onProgress == null) {
+        return;
+      }
+      await onProgress(
+        ChapterDownloadProgress(
+          completedCount: completedCount,
+          totalCount: page.imageUrls.length,
+          currentLabel: label,
+        ),
+      );
+    }
+
+    Future<void> downloadImageAt(int index) async {
       _throwIfCancelled(shouldCancel);
       _throwIfPaused(shouldPause);
 
       final String existingFileName = savedFiles[index];
       if (existingFileName.isNotEmpty) {
-        if (onProgress != null) {
-          await onProgress(
-            ChapterDownloadProgress(
-              completedCount: index + 1,
-              totalCount: page.imageUrls.length,
-              currentLabel: '已恢复 ${index + 1}/${page.imageUrls.length}',
-            ),
-          );
-        }
-        continue;
+        await emitProgress('Restored $completedCount/${page.imageUrls.length}');
+        return;
       }
 
       final Uri imageUri = Uri.parse(page.imageUrls[index]);
-      final http.Response response = await _client.get(
+      final http.Response response = await EasyCopyNetworkClient.get(
+        _client,
         imageUri,
         headers: headers,
+        timeout: EasyCopyNetworkClient.imageTimeout,
+        maxRetries: 2,
+        label: 'download.image',
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('下载图片失败（${response.statusCode}）', uri: imageUri);
+        throw HttpException(
+          'Image download failed: ${response.statusCode}',
+          uri: imageUri,
+        );
       }
 
       final String extension = _detectExtension(
@@ -468,16 +487,37 @@ class ComicDownloadService {
         response.bodyBytes,
       );
       savedFiles[index] = fileName;
+      completedCount += 1;
 
-      if (onProgress != null) {
-        await onProgress(
-          ChapterDownloadProgress(
-            completedCount: index + 1,
-            totalCount: page.imageUrls.length,
-            currentLabel: '正在下载 ${index + 1}/${page.imageUrls.length}',
-          ),
-        );
+      await emitProgress(
+        'Downloading $completedCount/${page.imageUrls.length}',
+      );
+    }
+
+    int nextImageIndex = 0;
+
+    Future<void> runDownloadWorker() async {
+      while (true) {
+        _throwIfCancelled(shouldCancel);
+        _throwIfPaused(shouldPause);
+        final int index = nextImageIndex;
+        nextImageIndex += 1;
+        if (index >= page.imageUrls.length) {
+          return;
+        }
+        await downloadImageAt(index);
       }
+    }
+
+    final int workerCount =
+        page.imageUrls.length < _chapterImageDownloadConcurrency
+        ? page.imageUrls.length
+        : _chapterImageDownloadConcurrency;
+    if (workerCount > 0) {
+      await Future.wait(<Future<void>>[
+        for (int worker = 0; worker < workerCount; worker += 1)
+          runDownloadWorker(),
+      ]);
     }
 
     final List<String> orderedSavedFiles = savedFiles
