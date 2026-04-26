@@ -83,16 +83,16 @@ class ReaderPosition {
 @immutable
 class ReaderProgressEntry {
   const ReaderProgressEntry({
-    required this.key,
+    required this.comicPathKey,
     required this.position,
     required this.updatedAt,
-    this.catalogPathKey = '',
     this.chapterPathKey = '',
   });
 
   factory ReaderProgressEntry.fromRow(Map<String, Object?> row) {
     return ReaderProgressEntry(
-      key: (row['key'] as String?)?.trim() ?? '',
+      comicPathKey: (row['comic_path_key'] as String?)?.trim() ?? '',
+      chapterPathKey: (row['chapter_path_key'] as String?)?.trim() ?? '',
       position: ReaderPosition(
         mode: ((row['mode'] as String?)?.trim() ?? 'scroll') == 'paged'
             ? ReaderProgressMode.paged
@@ -101,39 +101,35 @@ class ReaderProgressEntry {
         pageIndex: ((row['page_index'] as num?) ?? 0).round().clamp(0, 999999),
         pageOffset: ((row['page_offset'] as num?) ?? 0).toDouble(),
       ),
-      catalogPathKey: (row['catalog_path_key'] as String?)?.trim() ?? '',
-      chapterPathKey: (row['chapter_path_key'] as String?)?.trim() ?? '',
       updatedAt:
           DateTime.tryParse((row['updated_at'] as String?) ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
     );
   }
 
-  final String key;
+  final String comicPathKey;
+  final String chapterPathKey;
   final ReaderPosition position;
   final DateTime updatedAt;
-  final String catalogPathKey;
-  final String chapterPathKey;
 
   ReaderProgressEntry copyWith({
-    String? key,
+    String? comicPathKey,
+    String? chapterPathKey,
     ReaderPosition? position,
     DateTime? updatedAt,
-    String? catalogPathKey,
-    String? chapterPathKey,
   }) {
     return ReaderProgressEntry(
-      key: key ?? this.key,
+      comicPathKey: comicPathKey ?? this.comicPathKey,
+      chapterPathKey: chapterPathKey ?? this.chapterPathKey,
       position: position ?? this.position,
       updatedAt: updatedAt ?? this.updatedAt,
-      catalogPathKey: catalogPathKey ?? this.catalogPathKey,
-      chapterPathKey: chapterPathKey ?? this.chapterPathKey,
     );
   }
 
   Map<String, Object?> toRow() {
     return <String, Object?>{
-      'key': key,
+      'comic_path_key': comicPathKey,
+      'chapter_path_key': chapterPathKey,
       'mode': switch (position.mode) {
         ReaderProgressMode.scroll => 'scroll',
         ReaderProgressMode.paged => 'paged',
@@ -141,8 +137,6 @@ class ReaderProgressEntry {
       'offset': position.offset,
       'page_index': position.pageIndex,
       'page_offset': position.pageOffset,
-      'catalog_path_key': catalogPathKey,
-      'chapter_path_key': chapterPathKey,
       'updated_at': updatedAt.toIso8601String(),
     };
   }
@@ -159,34 +153,34 @@ class ReaderProgressStore {
 
   static final ReaderProgressStore instance = ReaderProgressStore();
 
-  static const int maxEntries = 60;
   static const String _tableName = 'reader_progress';
   static const String _databaseName = 'reader_state.db';
-  static const String _catalogUpdatedAtIndexName =
-      'idx_reader_progress_catalog_updated_at';
-  static const Map<String, String> _requiredColumnDefinitions =
-      <String, String>{
-        'mode': "TEXT NOT NULL DEFAULT 'scroll'",
-        'offset': 'REAL NOT NULL DEFAULT 0',
-        'page_index': 'INTEGER NOT NULL DEFAULT 0',
-        'page_offset': 'REAL NOT NULL DEFAULT 0',
-        'catalog_path_key': "TEXT NOT NULL DEFAULT ''",
-        'chapter_path_key': "TEXT NOT NULL DEFAULT ''",
-        'updated_at': "TEXT NOT NULL DEFAULT ''",
-      };
+  static const String _updatedAtIndexName = 'idx_reader_progress_updated_at';
+  static const Set<String> _expectedColumnNames = <String>{
+    'comic_path_key',
+    'chapter_path_key',
+    'mode',
+    'offset',
+    'page_index',
+    'page_offset',
+    'updated_at',
+  };
   static const String _createTableStatement =
       '''
     CREATE TABLE IF NOT EXISTS $_tableName (
-      key TEXT PRIMARY KEY,
+      comic_path_key TEXT PRIMARY KEY,
+      chapter_path_key TEXT NOT NULL DEFAULT '',
       mode TEXT NOT NULL DEFAULT 'scroll',
       offset REAL NOT NULL DEFAULT 0,
       page_index INTEGER NOT NULL DEFAULT 0,
       page_offset REAL NOT NULL DEFAULT 0,
-      catalog_path_key TEXT NOT NULL DEFAULT '',
-      chapter_path_key TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ''
     )
   ''';
+
+  static String progressKeyForComicHref(String catalogHref) {
+    return _pathKeyFromValue(catalogHref);
+  }
 
   static String progressKeyForChapterHref(String chapterHref) {
     return _pathKeyFromValue(chapterHref);
@@ -205,21 +199,34 @@ class ReaderProgressStore {
     return _initialization ??= _initialize();
   }
 
-  Future<ReaderPosition?> readPosition(String key) async {
+  Future<ReaderPosition?> readPosition({
+    required String catalogHref,
+    required String chapterHref,
+  }) async {
     await ensureInitialized();
-    final String normalizedKey = key.trim();
-    if (normalizedKey.isEmpty) {
+    final String comicPathKey = _comicPathKey(
+      catalogHref: catalogHref,
+      chapterHref: chapterHref,
+    );
+    final String chapterPathKey = _pathKey(chapterHref);
+    if (comicPathKey.isEmpty || chapterPathKey.isEmpty) {
       return null;
     }
-    final ReaderProgressEntry? exactEntry = _entryForKey(normalizedKey);
-    if (exactEntry != null) {
-      return exactEntry.position;
+    final ReaderProgressEntry? entry = _entryForComicPathKey(comicPathKey);
+    if (entry == null || entry.chapterPathKey != chapterPathKey) {
+      return null;
     }
-    return null;
+    return entry.position;
   }
 
-  Future<double?> readOffset(String key) async {
-    final ReaderPosition? position = await readPosition(key);
+  Future<double?> readOffset({
+    required String catalogHref,
+    required String chapterHref,
+  }) async {
+    final ReaderPosition? position = await readPosition(
+      catalogHref: catalogHref,
+      chapterHref: chapterHref,
+    );
     if (position == null || !position.isScroll) {
       return null;
     }
@@ -232,127 +239,120 @@ class ReaderProgressStore {
       _entries.isEmpty ? null : _entries.first;
 
   String? latestChapterPathKeyForCatalog(String catalogHref) {
-    final String targetCatalogPathKey = _pathKey(catalogHref);
-    if (targetCatalogPathKey.isEmpty) {
+    final String targetComicPathKey = _pathKey(catalogHref);
+    if (targetComicPathKey.isEmpty) {
       return null;
     }
-    for (final ReaderProgressEntry entry in _entries) {
-      if (entry.catalogPathKey == targetCatalogPathKey &&
-          entry.chapterPathKey.isNotEmpty) {
-        return entry.chapterPathKey;
-      }
+    final ReaderProgressEntry? entry = _entryForComicPathKey(
+      targetComicPathKey,
+    );
+    if (entry == null || entry.chapterPathKey.isEmpty) {
+      return null;
     }
-    return null;
+    return entry.chapterPathKey;
   }
 
   Future<void> markChapterOpened({
-    required String key,
     required String catalogHref,
     required String chapterHref,
   }) async {
     await ensureInitialized();
-    final String normalizedKey = _normalizedEntryKey(
-      key,
+    final String comicPathKey = _comicPathKey(
+      catalogHref: catalogHref,
       chapterHref: chapterHref,
     );
-    if (normalizedKey.isEmpty) {
-      return;
-    }
-    final String catalogPathKey = _pathKey(catalogHref);
     final String chapterPathKey = _pathKey(chapterHref);
-    if (catalogPathKey.isEmpty || chapterPathKey.isEmpty) {
+    if (comicPathKey.isEmpty || chapterPathKey.isEmpty) {
       return;
     }
     await _runWrite(() async {
       final DateTime now = _now();
-      final ReaderProgressEntry? existingEntry =
-          _entryForKey(normalizedKey) ??
-          _latestEntryForChapterPathKey(chapterPathKey);
+      final ReaderProgressEntry? existingEntry = _entryForComicPathKey(
+        comicPathKey,
+      );
+      final bool isSameChapter =
+          existingEntry != null &&
+          existingEntry.chapterPathKey == chapterPathKey;
       final ReaderProgressEntry nextEntry = existingEntry != null
           ? existingEntry.copyWith(
-              key: normalizedKey,
-              updatedAt: now,
-              catalogPathKey: catalogPathKey,
               chapterPathKey: chapterPathKey,
+              position: isSameChapter
+                  ? existingEntry.position
+                  : ReaderPosition.scroll(offset: 0),
+              updatedAt: now,
             )
           : ReaderProgressEntry(
-              key: normalizedKey,
+              comicPathKey: comicPathKey,
+              chapterPathKey: chapterPathKey,
               position: ReaderPosition.scroll(offset: 0),
               updatedAt: now,
-              catalogPathKey: catalogPathKey,
-              chapterPathKey: chapterPathKey,
             );
-      await _persistCanonicalEntry(nextEntry);
-      await _trimPersistedEntries();
+      await _persistEntry(nextEntry);
     });
   }
 
   Future<void> writePosition(
-    String key,
     ReaderPosition position, {
-    String catalogHref = '',
-    String chapterHref = '',
+    required String catalogHref,
+    required String chapterHref,
   }) async {
     await ensureInitialized();
-    final String normalizedKey = _normalizedEntryKey(
-      key,
+    final String comicPathKey = _comicPathKey(
+      catalogHref: catalogHref,
       chapterHref: chapterHref,
     );
-    if (normalizedKey.isEmpty) {
+    final String chapterPathKey = _pathKey(chapterHref);
+    if (comicPathKey.isEmpty || chapterPathKey.isEmpty) {
       return;
     }
     final ReaderPosition normalizedPosition = _normalizePosition(position);
-    final String catalogPathKey = _pathKey(catalogHref);
-    final String chapterPathKey = _pathKey(chapterHref);
     await _runWrite(() async {
       final DateTime now = _now();
-      final ReaderProgressEntry? existingEntry =
-          _entryForKey(normalizedKey) ??
-          (chapterPathKey.isEmpty
-              ? null
-              : _latestEntryForChapterPathKey(chapterPathKey));
+      final ReaderProgressEntry? existingEntry = _entryForComicPathKey(
+        comicPathKey,
+      );
       final ReaderProgressEntry nextEntry = existingEntry != null
           ? existingEntry.copyWith(
-              key: normalizedKey,
+              chapterPathKey: chapterPathKey,
               position: normalizedPosition,
               updatedAt: now,
-              catalogPathKey: catalogPathKey.isEmpty
-                  ? existingEntry.catalogPathKey
-                  : catalogPathKey,
-              chapterPathKey: chapterPathKey.isEmpty
-                  ? existingEntry.chapterPathKey
-                  : chapterPathKey,
             )
           : ReaderProgressEntry(
-              key: normalizedKey,
+              comicPathKey: comicPathKey,
+              chapterPathKey: chapterPathKey,
               position: normalizedPosition,
               updatedAt: now,
-              catalogPathKey: catalogPathKey,
-              chapterPathKey: chapterPathKey,
             );
-      await _persistCanonicalEntry(nextEntry);
-      await _trimPersistedEntries();
+      await _persistEntry(nextEntry);
     });
   }
 
-  Future<void> writeOffset(String key, double offset) {
-    return writePosition(key, ReaderPosition.scroll(offset: offset));
+  Future<void> writeOffset({
+    required String catalogHref,
+    required String chapterHref,
+    required double offset,
+  }) {
+    return writePosition(
+      ReaderPosition.scroll(offset: offset),
+      catalogHref: catalogHref,
+      chapterHref: chapterHref,
+    );
   }
 
-  Future<void> remove(String key) async {
+  Future<void> remove(String catalogHref) async {
     await ensureInitialized();
-    final String normalizedKey = key.trim();
-    if (normalizedKey.isEmpty) {
+    final String comicPathKey = _pathKey(catalogHref);
+    if (comicPathKey.isEmpty) {
       return;
     }
     await _runWrite(() async {
       _entries.removeWhere(
-        (ReaderProgressEntry entry) => entry.key == normalizedKey,
+        (ReaderProgressEntry entry) => entry.comicPathKey == comicPathKey,
       );
       await _database!.delete(
         _tableName,
-        where: 'key = ?',
-        whereArgs: <Object>[normalizedKey],
+        where: 'comic_path_key = ?',
+        whereArgs: <Object>[comicPathKey],
       );
     });
   }
@@ -377,25 +377,14 @@ class ReaderProgressStore {
     }
   }
 
-  ReaderProgressEntry? _entryForKey(String key) {
-    final String normalizedKey = key.trim();
-    if (normalizedKey.isEmpty) {
-      return null;
-    }
-    return _entries.cast<ReaderProgressEntry?>().firstWhere(
-      (ReaderProgressEntry? entry) => entry?.key == normalizedKey,
-      orElse: () => null,
-    );
-  }
-
-  ReaderProgressEntry? _latestEntryForChapterPathKey(String chapterPathKey) {
-    final String normalizedChapterPathKey = chapterPathKey.trim();
-    if (normalizedChapterPathKey.isEmpty) {
+  ReaderProgressEntry? _entryForComicPathKey(String comicPathKey) {
+    final String normalizedComicPathKey = comicPathKey.trim();
+    if (normalizedComicPathKey.isEmpty) {
       return null;
     }
     return _entries.cast<ReaderProgressEntry?>().firstWhere(
       (ReaderProgressEntry? entry) =>
-          entry?.chapterPathKey == normalizedChapterPathKey,
+          entry?.comicPathKey == normalizedComicPathKey,
       orElse: () => null,
     );
   }
@@ -405,9 +394,12 @@ class ReaderProgressStore {
     _database = await _databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
-        version: 1,
+        version: 2,
         onCreate: (sqflite.Database db, int version) async {
           await _ensureDatabaseSchema(db);
+        },
+        onUpgrade: (sqflite.Database db, int oldVersion, int newVersion) async {
+          await _recreateDatabaseSchema(db);
         },
         onOpen: (sqflite.Database db) async {
           await _ensureDatabaseSchema(db);
@@ -421,7 +413,6 @@ class ReaderProgressStore {
     );
     _entries = rows.map(ReaderProgressEntry.fromRow).toList(growable: true);
     _sortEntries();
-    await _trimPersistedEntries();
   }
 
   Future<String> _databasePath() async {
@@ -450,17 +441,21 @@ class ReaderProgressStore {
     return _pathKeyFromValue(href);
   }
 
-  String _normalizedEntryKey(String key, {String chapterHref = ''}) {
-    final String chapterPathKey = _pathKey(chapterHref);
-    if (chapterPathKey.isNotEmpty) {
-      return chapterPathKey;
+  String _comicPathKey({
+    required String catalogHref,
+    required String chapterHref,
+  }) {
+    final String catalogPathKey = _pathKey(catalogHref);
+    if (catalogPathKey.isNotEmpty) {
+      return catalogPathKey;
     }
-    return key.trim();
+    return _pathKey(chapterHref);
   }
 
   void _replaceEntry(ReaderProgressEntry nextEntry) {
     final int existingIndex = _entries.indexWhere(
-      (ReaderProgressEntry entry) => entry.key == nextEntry.key,
+      (ReaderProgressEntry entry) =>
+          entry.comicPathKey == nextEntry.comicPathKey,
     );
     if (existingIndex >= 0) {
       _entries[existingIndex] = nextEntry;
@@ -478,6 +473,7 @@ class ReaderProgressStore {
   }
 
   Future<void> _persistEntry(ReaderProgressEntry entry) {
+    _replaceEntry(entry);
     return _database!.insert(
       _tableName,
       entry.toRow(),
@@ -503,58 +499,26 @@ class ReaderProgressStore {
     }
   }
 
-  Future<void> _persistCanonicalEntry(ReaderProgressEntry entry) async {
-    final String normalizedChapterPathKey = entry.chapterPathKey.trim();
-    final List<ReaderProgressEntry> duplicateEntries =
-        normalizedChapterPathKey.isEmpty
-        ? const <ReaderProgressEntry>[]
-        : _entries
-              .where(
-                (ReaderProgressEntry candidate) =>
-                    candidate.chapterPathKey == normalizedChapterPathKey &&
-                    candidate.key != entry.key,
-              )
-              .toList(growable: false);
-    if (duplicateEntries.isNotEmpty) {
-      final Set<String> duplicateKeys = duplicateEntries
-          .map((ReaderProgressEntry candidate) => candidate.key)
-          .where((String candidate) => candidate.trim().isNotEmpty)
-          .toSet();
-      _entries.removeWhere(
-        (ReaderProgressEntry candidate) =>
-            duplicateKeys.contains(candidate.key),
-      );
-      if (duplicateKeys.isNotEmpty) {
-        final sqflite.Batch batch = _database!.batch();
-        for (final String duplicateKey in duplicateKeys) {
-          batch.delete(
-            _tableName,
-            where: 'key = ?',
-            whereArgs: <Object>[duplicateKey],
-          );
-        }
-        await batch.commit(noResult: true);
-      }
+  Future<void> _ensureDatabaseSchema(sqflite.Database db) async {
+    final Set<String> existingColumns = await _tableColumns(db);
+    if (existingColumns.isNotEmpty &&
+        !setEquals(existingColumns, _expectedColumnNames)) {
+      await _recreateDatabaseSchema(db);
+      return;
     }
-    _replaceEntry(entry);
-    await _persistEntry(entry);
+    await db.execute(_createTableStatement);
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS $_updatedAtIndexName
+      ON $_tableName (updated_at DESC)
+    ''');
   }
 
-  Future<void> _ensureDatabaseSchema(sqflite.Database db) async {
+  Future<void> _recreateDatabaseSchema(sqflite.Database db) async {
+    await db.execute('DROP TABLE IF EXISTS $_tableName');
     await db.execute(_createTableStatement);
-    final Set<String> existingColumns = await _tableColumns(db);
-    for (final MapEntry<String, String> entry
-        in _requiredColumnDefinitions.entries) {
-      if (existingColumns.contains(entry.key)) {
-        continue;
-      }
-      await db.execute(
-        'ALTER TABLE $_tableName ADD COLUMN ${entry.key} ${entry.value}',
-      );
-    }
     await db.execute('''
-      CREATE INDEX IF NOT EXISTS $_catalogUpdatedAtIndexName
-      ON $_tableName (catalog_path_key, updated_at DESC)
+      CREATE INDEX IF NOT EXISTS $_updatedAtIndexName
+      ON $_tableName (updated_at DESC)
     ''');
   }
 
@@ -568,25 +532,6 @@ class ReaderProgressStore {
         )
         .where((String name) => name.isNotEmpty)
         .toSet();
-  }
-
-  Future<void> _trimPersistedEntries() async {
-    if (_entries.length <= maxEntries) {
-      return;
-    }
-    final List<ReaderProgressEntry> removedEntries = _entries
-        .skip(maxEntries)
-        .toList(growable: false);
-    _entries = _entries.take(maxEntries).toList(growable: true);
-    final sqflite.Batch batch = _database!.batch();
-    for (final ReaderProgressEntry entry in removedEntries) {
-      batch.delete(
-        _tableName,
-        where: 'key = ?',
-        whereArgs: <Object>[entry.key],
-      );
-    }
-    await batch.commit(noResult: true);
   }
 }
 

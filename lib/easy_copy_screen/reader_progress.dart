@@ -107,7 +107,6 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
   Future<void> _markReaderChapterVisited(ReaderPageData page) {
     unawaited(_recordReaderHistory(page));
     return _readerProgressStore.markChapterOpened(
-      key: _readerProgressKeyForPage(page),
       catalogHref: page.catalogHref,
       chapterHref: page.uri,
     );
@@ -182,9 +181,8 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
   }) async {
     final DeferredViewportTicket ticket = _readerRestoreCoordinator
         .beginRequest();
-    final String progressKey = _readerProgressKeyForPage(page);
     final ReaderPosition? savedPosition = await _readerProgressStore
-        .readPosition(progressKey);
+        .readPosition(catalogHref: page.catalogHref, chapterHref: page.uri);
     if (!mounted ||
         _page is! ReaderPageData ||
         (_page as ReaderPageData).uri != page.uri) {
@@ -493,10 +491,6 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
     );
   }
 
-  String _readerProgressKeyForPage(ReaderPageData page) {
-    return ReaderProgressStore.progressKeyForChapterHref(page.uri);
-  }
-
   Future<void> _flushReaderProgressPersistence() async {
     _readerProgressDebounce?.cancel();
     _readerProgressDebounce = null;
@@ -508,7 +502,6 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
     if (page is! ReaderPageData) {
       return;
     }
-    final String progressKey = _readerProgressKeyForPage(page);
     if (_readerPreferences.isPaged) {
       final ScrollController? pageController =
           _readerPageScrollControllers[_currentReaderPageIndex];
@@ -520,7 +513,6 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
       );
       _lastPersistedReaderPosition = position;
       await _readerProgressStore.writePosition(
-        progressKey,
         position,
         catalogHref: page.catalogHref,
         chapterHref: page.uri,
@@ -535,7 +527,6 @@ extension _EasyCopyScreenReaderProgress on _EasyCopyScreenState {
     );
     _lastPersistedReaderPosition = position;
     await _readerProgressStore.writePosition(
-      progressKey,
       position,
       catalogHref: page.catalogHref,
       chapterHref: page.uri,
