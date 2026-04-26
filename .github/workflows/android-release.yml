@@ -25,6 +25,7 @@ jobs:
     env:
       FLUTTER_VERSION: "3.41.4"
       JAVA_VERSION: "17"
+      PUB_HOSTED_URL: "https://pub.dev"
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
 
     steps:

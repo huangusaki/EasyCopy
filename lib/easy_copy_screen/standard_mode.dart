@@ -219,7 +219,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                 .map(
                   (String term) => GestureDetector(
                     onLongPress: () {
-                      unawaited(HapticFeedback.longPress());
+                      unawaited(HapticFeedback.vibrate());
                       unawaited(_removeSearchHistoryEntry(term));
                     },
                     child: ActionChip(
