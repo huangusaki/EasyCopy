@@ -6,13 +6,11 @@ class ChapterComment {
     required this.id,
     required this.message,
     this.avatarUrl = '',
-    this.likeCount,
   });
 
   final String id;
   final String message;
   final String avatarUrl;
-  final int? likeCount;
 }
 
 @immutable

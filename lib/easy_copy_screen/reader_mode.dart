@@ -1094,11 +1094,27 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         ),
       );
     }
+    final List<ReaderCommentCluster> clusters = buildReaderCommentClusters(
+      comments,
+    );
+    if (clusters.isEmpty) {
+      return Center(
+        child: Text(
+          '暂无评论',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: colorScheme.onSurface.withValues(alpha: 0.72),
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final _ReaderCommentCloudLayout layout = _buildReaderCommentCloudLayout(
           context,
-          comments,
+          clusters,
           maxWidth: constraints.maxWidth,
         );
         final double contentHeight = layout.height + 8;
@@ -1124,7 +1140,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                       top: placement.top,
                       child: _buildReaderCommentBubble(
                         context,
-                        comments[placement.index],
+                        clusters[placement.index],
                         index: placement.index,
                         width: placement.width,
                       ),
@@ -1158,7 +1174,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
 
   _ReaderCommentCloudLayout _buildReaderCommentCloudLayout(
     BuildContext context,
-    List<ChapterComment> comments, {
+    List<ReaderCommentCluster> clusters, {
     required double maxWidth,
   }) {
     final double availableWidth = maxWidth
@@ -1177,10 +1193,10 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     final List<double> skyline = List<double>.filled(slotCount, 0);
     final List<_ReaderCommentBubblePlacement> placements =
         <_ReaderCommentBubblePlacement>[];
-    for (int index = 0; index < comments.length; index++) {
+    for (int index = 0; index < clusters.length; index++) {
       final _ReaderCommentBubbleMetrics metrics = _measureReaderCommentBubble(
         context,
-        comments[index],
+        clusters[index],
         minBubbleWidth: minBubbleWidth,
         maxBubbleWidth: maxBubbleWidth,
       );
@@ -1226,14 +1242,14 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
 
   _ReaderCommentBubbleMetrics _measureReaderCommentBubble(
     BuildContext context,
-    ChapterComment comment, {
+    ReaderCommentCluster cluster, {
     required double minBubbleWidth,
     required double maxBubbleWidth,
   }) {
     const double horizontalPadding = 12;
     const double verticalPadding = 10;
-    const double avatarSize = 22;
     const double avatarGap = 5;
+    final double avatarWidth = _readerCommentAvatarStackWidth(cluster.count);
     final TextScaler textScaler = MediaQuery.textScalerOf(context);
     final InlineSpan textSpan = TextSpan(
       style: const TextStyle(
@@ -1241,18 +1257,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         fontWeight: FontWeight.w700,
         height: 1.25,
       ),
-      children: <InlineSpan>[
-        TextSpan(text: comment.message),
-        if (comment.likeCount != null)
-          TextSpan(
-            text: ' ${comment.likeCount}',
-            style: const TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              height: 1.25,
-            ),
-          ),
-      ],
+      text: cluster.message,
     );
     final TextPainter naturalPainter = TextPainter(
       text: textSpan,
@@ -1260,7 +1265,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       textScaler: textScaler,
     )..layout();
     final double bubbleWidth =
-        (naturalPainter.width + horizontalPadding + avatarSize + avatarGap)
+        (naturalPainter.width + horizontalPadding + avatarWidth + avatarGap)
             .clamp(minBubbleWidth, maxBubbleWidth)
             .toDouble();
     final TextPainter painter =
@@ -1271,10 +1276,10 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         )..layout(
           maxWidth: math.max(
             18,
-            bubbleWidth - horizontalPadding - avatarSize - avatarGap,
+            bubbleWidth - horizontalPadding - avatarWidth - avatarGap,
           ),
         );
-    final double contentHeight = math.max(avatarSize, painter.height);
+    final double contentHeight = math.max(22, painter.height);
     return _ReaderCommentBubbleMetrics(
       width: bubbleWidth,
       height: contentHeight + verticalPadding,
@@ -1283,7 +1288,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
 
   Widget _buildReaderCommentBubble(
     BuildContext context,
-    ChapterComment comment, {
+    ReaderCommentCluster cluster, {
     required int index,
     required double width,
   }) {
@@ -1305,12 +1310,6 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       fontWeight: FontWeight.w700,
       height: 1.25,
     );
-    final TextStyle likeStyle = TextStyle(
-      color: foregroundColor.withValues(alpha: 0.74),
-      fontSize: 10,
-      fontWeight: FontWeight.w800,
-      height: 1.25,
-    );
     return SizedBox(
       width: width,
       child: DecoratedBox(
@@ -1325,27 +1324,88 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              _buildReaderCommentAvatar(comment.avatarUrl),
+              _buildReaderCommentAvatarStack(cluster, foregroundColor),
               const SizedBox(width: 5),
               Flexible(
                 child: RichText(
                   textScaler: MediaQuery.textScalerOf(context),
-                  text: TextSpan(
-                    style: messageStyle,
-                    children: <InlineSpan>[
-                      TextSpan(text: comment.message),
-                      if (comment.likeCount != null)
-                        TextSpan(
-                          text: ' ${comment.likeCount}',
-                          style: likeStyle,
-                        ),
-                    ],
-                  ),
+                  text: TextSpan(style: messageStyle, text: cluster.message),
                 ),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  double _readerCommentAvatarStackWidth(int count) {
+    const double avatarSize = 22;
+    const double overlap = 8;
+    final int visibleCount = math.max(1, math.min(3, count));
+    return avatarSize + (visibleCount - 1) * (avatarSize - overlap);
+  }
+
+  Widget _buildReaderCommentAvatarStack(
+    ReaderCommentCluster cluster,
+    Color foregroundColor,
+  ) {
+    const double avatarSize = 22;
+    const double overlap = 8;
+    final int visibleCount = math.max(1, math.min(3, cluster.count));
+    final double step = avatarSize - overlap;
+    return SizedBox(
+      width: _readerCommentAvatarStackWidth(cluster.count),
+      height: avatarSize,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: List<Widget>.generate(visibleCount, (int index) {
+          final bool isOverflowAvatar =
+              cluster.hasOverflowAvatars && index == visibleCount - 1;
+          final String avatarUrl = index < cluster.avatarUrls.length
+              ? cluster.avatarUrls[index]
+              : '';
+          return Positioned(
+            left: index * step,
+            top: 0,
+            child: SizedBox(
+              width: avatarSize,
+              height: avatarSize,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: foregroundColor.withValues(alpha: 0.18),
+                    width: 1,
+                  ),
+                ),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    _buildReaderCommentAvatar(avatarUrl),
+                    if (isOverflowAvatar)
+                      ClipOval(
+                        child: ColoredBox(
+                          color: Colors.black.withValues(alpha: 0.54),
+                          child: Center(
+                            child: Text(
+                              '...',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w900,
+                                height: 1,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }),
       ),
     );
   }

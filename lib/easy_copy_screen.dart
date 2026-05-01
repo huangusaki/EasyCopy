@@ -35,6 +35,7 @@ import 'package:easy_copy/services/primary_tab_session_store.dart';
 import 'package:easy_copy/services/reader_platform_bridge.dart';
 import 'package:easy_copy/services/reader_navigation_repairer.dart';
 import 'package:easy_copy/services/reader_progress_store.dart';
+import 'package:easy_copy/services/reader_comment_utils.dart';
 import 'package:easy_copy/services/network_diagnostics.dart';
 import 'package:easy_copy/services/search_history_store.dart';
 import 'package:easy_copy/services/site_api_client.dart';
@@ -253,6 +254,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   String _readerCommentsChapterId = '';
   String _readerCommentsError = '';
   int _readerCommentsTotal = 0;
+  int _readerCommentsLoadedStartOffset = 0;
   int _currentReaderPageIndex = 0;
   int _currentVisibleReaderImageIndex = 0;
   double _readerPreviousChapterPullDistance = 0;
@@ -3398,6 +3400,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
           _readerCommentsError = '';
           _readerChapterComments = const <ChapterComment>[];
           _readerCommentsTotal = 0;
+          _readerCommentsLoadedStartOffset = 0;
           _isReaderCommentsLoading = false;
           _isReaderCommentsLoadingMore = false;
           if (resetForNewChapter) {
@@ -3409,6 +3412,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         _readerCommentsError = '';
         _readerChapterComments = const <ChapterComment>[];
         _readerCommentsTotal = 0;
+        _readerCommentsLoadedStartOffset = 0;
         _isReaderCommentsLoading = false;
         _isReaderCommentsLoadingMore = false;
         if (resetForNewChapter) {
@@ -3455,12 +3459,15 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         append && _readerCommentsChapterId == chapterId
         ? _readerChapterComments
         : const <ChapterComment>[];
-    final int offset = append ? existingComments.length : 0;
+    ReaderCommentPageWindow? appendWindow;
     if (append) {
       if (_isReaderCommentsLoading || _isReaderCommentsLoadingMore) {
         return;
       }
-      if (_readerCommentsTotal > 0 && offset >= _readerCommentsTotal) {
+      appendWindow = nextReaderCommentAscendingWindow(
+        loadedStartOffset: _readerCommentsLoadedStartOffset,
+      );
+      if (appendWindow.isEmpty) {
         return;
       }
     }
@@ -3471,6 +3478,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         _readerCommentsError = '';
         _readerChapterComments = const <ChapterComment>[];
         _readerCommentsTotal = 0;
+        _readerCommentsLoadedStartOffset = 0;
         _isReaderCommentsLoading = true;
         _isReaderCommentsLoadingMore = false;
       });
@@ -3479,6 +3487,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
       _readerCommentsError = '';
       _readerChapterComments = const <ChapterComment>[];
       _readerCommentsTotal = 0;
+      _readerCommentsLoadedStartOffset = 0;
       _isReaderCommentsLoading = true;
       _isReaderCommentsLoadingMore = false;
     } else if (mounted) {
@@ -3490,11 +3499,17 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     }
 
     try {
-      final ChapterCommentFeed feed = await _siteApiClient.loadChapterComments(
-        chapterId: chapterId,
-        limit: 40,
-        offset: offset,
-      );
+      final (
+        ChapterCommentFeed feed,
+        int loadedStartOffset,
+        int resolvedTotal,
+      ) = append
+          ? await _loadReaderCommentsAscendingPage(
+              chapterId: chapterId,
+              window: appendWindow!,
+              fallbackTotal: _readerCommentsTotal,
+            )
+          : await _loadInitialReaderCommentsAscendingPage(chapterId);
       if (!mounted) {
         return;
       }
@@ -3513,10 +3528,11 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         _readerCommentsChapterId = chapterId;
         _readerChapterComments = append
             ? _mergeReaderComments(existingComments, feed.comments)
-            : feed.comments;
-        _readerCommentsTotal = feed.total > 0
-            ? feed.total
+            : _mergeReaderComments(const <ChapterComment>[], feed.comments);
+        _readerCommentsTotal = resolvedTotal > 0
+            ? resolvedTotal
             : _readerChapterComments.length;
+        _readerCommentsLoadedStartOffset = loadedStartOffset;
         _readerCommentsError = '';
         _isReaderCommentsLoading = false;
         _isReaderCommentsLoadingMore = false;
@@ -3551,31 +3567,74 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
         _readerCommentsError = message;
         _readerChapterComments = const <ChapterComment>[];
         _readerCommentsTotal = 0;
+        _readerCommentsLoadedStartOffset = 0;
         _isReaderCommentsLoading = false;
         _isReaderCommentsLoadingMore = false;
       });
     }
   }
 
+  Future<(ChapterCommentFeed, int, int)>
+  _loadInitialReaderCommentsAscendingPage(String chapterId) async {
+    final ChapterCommentFeed probe = await _siteApiClient.loadChapterComments(
+      chapterId: chapterId,
+      limit: 1,
+      offset: 0,
+    );
+    final int probeTotal = probe.total > 0
+        ? probe.total
+        : probe.comments.length;
+    if (probeTotal <= 0) {
+      return (probe, 0, 0);
+    }
+
+    final ReaderCommentPageWindow window = probeTotal <= 1
+        ? const ReaderCommentPageWindow(offset: 0, limit: readerCommentPageSize)
+        : initialReaderCommentAscendingWindow(total: probeTotal);
+    final ChapterCommentFeed rawFeed = await _siteApiClient.loadChapterComments(
+      chapterId: chapterId,
+      limit: window.limit,
+      offset: window.offset,
+    );
+    final int resolvedTotal = rawFeed.total > 0
+        ? rawFeed.total
+        : math.max(probeTotal, rawFeed.comments.length);
+    return (
+      ChapterCommentFeed(
+        total: resolvedTotal,
+        comments: normalizeReaderCommentAscendingPage(rawFeed.comments),
+      ),
+      window.offset,
+      resolvedTotal,
+    );
+  }
+
+  Future<(ChapterCommentFeed, int, int)> _loadReaderCommentsAscendingPage({
+    required String chapterId,
+    required ReaderCommentPageWindow window,
+    required int fallbackTotal,
+  }) async {
+    final ChapterCommentFeed rawFeed = await _siteApiClient.loadChapterComments(
+      chapterId: chapterId,
+      limit: window.limit,
+      offset: window.offset,
+    );
+    final int resolvedTotal = rawFeed.total > 0 ? rawFeed.total : fallbackTotal;
+    return (
+      ChapterCommentFeed(
+        total: resolvedTotal,
+        comments: normalizeReaderCommentAscendingPage(rawFeed.comments),
+      ),
+      window.offset,
+      resolvedTotal,
+    );
+  }
+
   List<ChapterComment> _mergeReaderComments(
     List<ChapterComment> existing,
     List<ChapterComment> incoming,
   ) {
-    final Set<String> seen = <String>{};
-    final List<ChapterComment> merged = <ChapterComment>[];
-    for (final ChapterComment comment in <ChapterComment>[
-      ...existing,
-      ...incoming,
-    ]) {
-      final String identity = comment.id.isNotEmpty
-          ? comment.id
-          : '${comment.avatarUrl}\n${comment.message}';
-      if (!seen.add(identity)) {
-        continue;
-      }
-      merged.add(comment);
-    }
-    return List<ChapterComment>.unmodifiable(merged);
+    return mergeReaderCommentsByIdentity(existing, incoming);
   }
 
   Future<void> _submitReaderComment(ReaderPageData page) async {

@@ -916,14 +916,6 @@ class SiteApiClient {
               'avatar_url',
               'user_avatar',
             ]),
-      likeCount: _pickNullableInt(item, const <String>[
-        'like_count',
-        'likes',
-        'thumbs_count',
-        'praise_count',
-        'up_count',
-        'up',
-      ]),
     );
   }
 
@@ -1069,22 +1061,6 @@ class SiteApiClient {
       return value == '1' || value.toLowerCase() == 'true';
     }
     return false;
-  }
-
-  int? _pickNullableInt(Map<String, Object?> source, List<String> keys) {
-    for (final String key in keys) {
-      final Object? value = source[key];
-      if (value is num) {
-        return value.toInt();
-      }
-      if (value is String) {
-        final int? parsed = int.tryParse(value.trim());
-        if (parsed != null) {
-          return parsed;
-        }
-      }
-    }
-    return null;
   }
 
   Map<String, String> _buildRequestHeaders({
