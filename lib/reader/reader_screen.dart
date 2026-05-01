@@ -1,49 +1,116 @@
-part of '../easy_copy_screen.dart';
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
 
-extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
-  static const double _readerUiToggleHorizontalInsetRatio = 0.075;
-  static const double _readerSettingsSwipeDismissDistance = 72;
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:easy_copy/models/app_preferences.dart';
+import 'package:easy_copy/models/chapter_comment.dart';
+import 'package:easy_copy/models/page_models.dart';
+import 'package:easy_copy/reader/internal/reader_comment_layout.dart';
+import 'package:easy_copy/reader/internal/reader_paged_scroll_physics.dart';
+import 'package:easy_copy/reader/reader_controller.dart';
+import 'package:easy_copy/reader/reader_image.dart';
+import 'package:easy_copy/reader/reader_pinch_zoom.dart';
+import 'package:easy_copy/reader/reader_progress_seek_bar.dart';
+import 'package:easy_copy/reader/reader_sheet_swipe_dismiss.dart';
+import 'package:easy_copy/reader/reader_status_label.dart';
+import 'package:easy_copy/services/app_preferences_controller.dart';
+import 'package:easy_copy/services/document_tree_image_provider.dart';
+import 'package:easy_copy/services/document_tree_relative_image_provider.dart';
+import 'package:easy_copy/services/image_cache.dart';
+import 'package:easy_copy/services/local_library_store.dart';
+import 'package:easy_copy/services/reader_comment_utils.dart';
+import 'package:easy_copy/services/reader_history_recorder.dart';
+import 'package:easy_copy/services/reader_platform_bridge.dart';
+import 'package:easy_copy/services/reader_progress_store.dart';
+import 'package:easy_copy/services/site_api_client.dart';
+import 'package:easy_copy/services/site_session.dart';
+import 'package:easy_copy/widgets/settings_ui.dart';
+import 'package:flutter/gestures.dart' show DragStartBehavior;
+import 'package:flutter/material.dart';
 
-  Future<void> _showReaderSettingsSheet() async {
-    if (_isReaderSettingsOpen) {
-      return;
-    }
-    _isReaderSettingsOpen = true;
-    _scheduleReaderPresentationSync();
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      isDismissible: true,
-      enableDrag: true,
-      showDragHandle: true,
-      builder: _buildReaderSettingsSheet,
+const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
+const double _readerUiToggleHorizontalInsetRatio = 0.075;
+const double _readerSettingsSwipeDismissDistance = 72;
+
+class ReaderScreen extends StatefulWidget {
+  const ReaderScreen({
+    required this.page,
+    required this.isExitTransitionActive,
+    required this.onRequestChapterNavigation,
+    required this.onRequestAuth,
+    required this.onLogoutForExpiredSession,
+    required this.onResolveHistoryCover,
+    super.key,
+  });
+
+  final ReaderPageData page;
+  final bool isExitTransitionActive;
+  final ReaderChapterNavigationCallback onRequestChapterNavigation;
+  final Future<void> Function() onRequestAuth;
+  final Future<void> Function() onLogoutForExpiredSession;
+  final ResolveReaderHistoryCover onResolveHistoryCover;
+
+  @override
+  State<ReaderScreen> createState() => ReaderScreenState();
+}
+
+class ReaderScreenState extends State<ReaderScreen> {
+  late final ReaderController _controller;
+
+  ReaderController get controller => _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = ReaderController(
+      preferencesController: AppPreferencesController.instance,
+      progressStore: ReaderProgressStore.instance,
+      platformBridge: ReaderPlatformBridge.instance,
+      apiClient: SiteApiClient.instance,
+      session: SiteSession.instance,
+      localLibraryStore: LocalLibraryStore.instance,
+      historyRecorder: ReaderHistoryRecorder(
+        resolveCoverUrl: widget.onResolveHistoryCover,
+      ),
+      onRequestChapterNavigation: widget.onRequestChapterNavigation,
+      onRequestAuth: widget.onRequestAuth,
+      onLogoutForExpiredSession: widget.onLogoutForExpiredSession,
+      onShowMessage: _showSnackBar,
     );
-    _isReaderSettingsOpen = false;
-    if (mounted) {
-      _scheduleReaderPresentationSync();
-    }
-  }
-
-  void _toggleReaderChapterControls() {
-    if (!mounted) {
-      return;
-    }
-    _setStateIfMounted(() {
-      _isReaderChapterControlsVisible = !_isReaderChapterControlsVisible;
+    _controller.attachPlatformSubscriptions();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _controller.setPage(widget.page);
     });
   }
 
-  void _hideReaderChapterControls() {
-    if (!mounted || !_isReaderChapterControlsVisible) {
-      return;
+  @override
+  void didUpdateWidget(covariant ReaderScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.page.uri != widget.page.uri ||
+        !identical(oldWidget.page, widget.page)) {
+      _controller.setPage(widget.page, previousUri: oldWidget.page.uri);
     }
-    _setStateIfMounted(() {
-      _isReaderChapterControlsVisible = false;
-    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    unawaited(_controller.restoreDefaultEnvironment());
+    super.dispose();
+  }
+
+  void _showSnackBar(String message) {
+    if (!mounted) return;
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _handleReaderTapUp(TapUpDetails details) {
-    final BuildContext? viewportContext = _readerViewportKey.currentContext;
+    final BuildContext? viewportContext =
+        _controller.viewportKey.currentContext;
     final RenderBox? renderBox =
         viewportContext?.findRenderObject() as RenderBox?;
     final double viewportWidth = renderBox != null && renderBox.hasSize
@@ -59,20 +126,36 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       return;
     }
     if (details.localPosition.dy <= viewportHeight * 0.5) {
-      _hideReaderChapterControls();
+      _controller.hideChapterControls();
       unawaited(_showReaderSettingsSheet());
       return;
     }
-    _toggleReaderChapterControls();
+    _controller.toggleChapterControls();
+  }
+
+  Future<void> _showReaderSettingsSheet() async {
+    if (_controller.isSettingsOpen) return;
+    _controller.setSettingsSheetOpen(true);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: true,
+      enableDrag: true,
+      showDragHandle: true,
+      builder: _buildReaderSettingsSheet,
+    );
+    _controller.setSettingsSheetOpen(false);
   }
 
   Widget _buildReaderSettingsSheet(BuildContext context) {
     final double maxHeight = MediaQuery.sizeOf(context).height * 0.78;
+    final AppPreferencesController preferencesController =
+        _controller.preferencesController;
     return AnimatedBuilder(
-      animation: _preferencesController,
+      animation: preferencesController,
       builder: (BuildContext context, Widget? _) {
-        final ReaderPreferences preferences = _readerPreferences;
-        return _ReaderSheetSwipeDismissRegion(
+        final ReaderPreferences preferences = _controller.preferences;
+        return ReaderSheetSwipeDismissRegion(
           dismissDistance: _readerSettingsSwipeDismissDistance,
           onDismiss: () => Navigator.of(context).maybePop(),
           child: SafeArea(
@@ -108,11 +191,9 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                     })
                                     .toList(growable: false),
                                 onChanged: (ReaderScreenOrientation? value) {
-                                  if (value == null) {
-                                    return;
-                                  }
+                                  if (value == null) return;
                                   unawaited(
-                                    _preferencesController
+                                    preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) =>
                                               current.copyWith(
@@ -143,11 +224,9 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                     })
                                     .toList(growable: false),
                                 onChanged: (ReaderReadingDirection? value) {
-                                  if (value == null) {
-                                    return;
-                                  }
+                                  if (value == null) return;
                                   unawaited(
-                                    _preferencesController
+                                    preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) =>
                                               current.copyWith(
@@ -173,11 +252,9 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                     })
                                     .toList(growable: false),
                                 onChanged: (ReaderPageFit? value) {
-                                  if (value == null) {
-                                    return;
-                                  }
+                                  if (value == null) return;
                                   unawaited(
-                                    _preferencesController
+                                    preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) =>
                                               current.copyWith(pageFit: value),
@@ -203,11 +280,9 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                     })
                                     .toList(growable: false),
                                 onChanged: (ReaderOpeningPosition? value) {
-                                  if (value == null) {
-                                    return;
-                                  }
+                                  if (value == null) return;
                                   unawaited(
-                                    _preferencesController
+                                    preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) => current
                                               .copyWith(openingPosition: value),
@@ -224,7 +299,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                 divisions: 10,
                                 onChanged: (double value) {
                                   unawaited(
-                                    _preferencesController
+                                    preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) =>
                                               current.copyWith(
@@ -245,7 +320,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                 value: preferences.showChapterComments,
                                 onChanged: (bool value) {
                                   unawaited(
-                                    _preferencesController
+                                    preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) =>
                                               current.copyWith(
@@ -260,7 +335,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                 value: preferences.keepScreenOn,
                                 onChanged: (bool value) {
                                   unawaited(
-                                    _preferencesController
+                                    preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) => current
                                               .copyWith(keepScreenOn: value),
@@ -273,7 +348,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                 value: preferences.showClock,
                                 onChanged: (bool value) {
                                   unawaited(
-                                    _preferencesController
+                                    preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) => current
                                               .copyWith(showClock: value),
@@ -286,7 +361,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                 value: preferences.showProgress,
                                 onChanged: (bool value) {
                                   unawaited(
-                                    _preferencesController
+                                    preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) => current
                                               .copyWith(showProgress: value),
@@ -294,13 +369,13 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                   );
                                 },
                               ),
-                              if (_readerPlatformBridge.isAndroidSupported)
+                              if (_controller.platformBridge.isAndroidSupported)
                                 SettingsSwitchRow(
                                   label: '显示电量',
                                   value: preferences.showBattery,
                                   onChanged: (bool value) {
                                     unawaited(
-                                      _preferencesController
+                                      preferencesController
                                           .updateReaderPreferences(
                                             (ReaderPreferences current) =>
                                                 current.copyWith(
@@ -315,7 +390,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                 value: preferences.showPageGap,
                                 onChanged: (bool value) {
                                   unawaited(
-                                    _preferencesController
+                                    preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) => current
                                               .copyWith(showPageGap: value),
@@ -323,13 +398,13 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                   );
                                 },
                               ),
-                              if (_readerPlatformBridge.isAndroidSupported)
+                              if (_controller.platformBridge.isAndroidSupported)
                                 SettingsSwitchRow(
                                   label: '使用音量键翻页',
                                   value: preferences.useVolumeKeysForPaging,
                                   onChanged: (bool value) {
                                     unawaited(
-                                      _preferencesController
+                                      preferencesController
                                           .updateReaderPreferences(
                                             (ReaderPreferences current) =>
                                                 current.copyWith(
@@ -344,7 +419,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                                 value: preferences.fullscreen,
                                 onChanged: (bool value) {
                                   unawaited(
-                                    _preferencesController
+                                    preferencesController
                                         .updateReaderPreferences(
                                           (ReaderPreferences current) => current
                                               .copyWith(fullscreen: value),
@@ -368,49 +443,41 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     );
   }
 
-  ScrollController _readerPageScrollControllerFor(int pageIndex) {
-    return _readerPageScrollControllers.putIfAbsent(pageIndex, () {
-      final ScrollController controller = ScrollController();
-      controller.addListener(() => _handleReaderPagedInnerScroll(pageIndex));
-      return controller;
-    });
-  }
-
   Widget _buildReaderOverlay(BuildContext context, ReaderPageData page) {
     final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
-    final double topOffset = _readerPreferences.fullscreen
-        ? 2
-        : viewPadding.top + 6;
+    final ReaderPreferences preferences = _controller.preferences;
+    final double topOffset = preferences.fullscreen ? 2 : viewPadding.top + 6;
+    final int? batteryLevel = _controller.batteryLevel;
     return IgnorePointer(
       child: Stack(
         children: <Widget>[
-          if (_readerPlatformBridge.isAndroidSupported &&
-              _readerPreferences.showBattery)
+          if (_controller.platformBridge.isAndroidSupported &&
+              preferences.showBattery)
             Positioned(
               left: 8,
               top: topOffset,
-              child: _ReaderStatusLabel(
-                label: _batteryLevel == null ? '--%' : '${_batteryLevel!}%',
+              child: ReaderStatusLabel(
+                label: batteryLevel == null ? '--%' : '$batteryLevel%',
                 icon: Icons.bolt_rounded,
                 fontSize: 14,
               ),
             ),
-          if (_readerPreferences.showClock)
+          if (preferences.showClock)
             Positioned(
               right: 8,
               top: topOffset,
-              child: _ReaderStatusLabel(
+              child: ReaderStatusLabel(
                 label: _readerClockLabel(),
                 fontSize: 14,
               ),
             ),
-          if (_readerPreferences.showProgress)
+          if (preferences.showProgress)
             Positioned(
               left: 0,
               right: 0,
               top: topOffset,
               child: Center(
-                child: _ReaderStatusLabel(
+                child: ReaderStatusLabel(
                   label: _readerPageCountLabel(page),
                   fontSize: 15,
                 ),
@@ -431,13 +498,12 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   }
 
   String _readerPageCountLabel(ReaderPageData page) {
-    if (page.imageUrls.isEmpty) {
-      return '--/--';
-    }
+    if (page.imageUrls.isEmpty) return '--/--';
+    final ReaderPreferences preferences = _controller.preferences;
     final int visibleIndex =
-        (_readerPreferences.isPaged
-                ? _currentReaderPageIndex
-                : _currentVisibleReaderImageIndex)
+        (preferences.isPaged
+                ? _controller.currentPageIndex
+                : _controller.visibleImageIndex)
             .clamp(0, page.imageUrls.length - 1);
     return '${visibleIndex + 1}/${page.imageUrls.length}';
   }
@@ -447,13 +513,14 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     ReaderPageData page,
   ) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final ReaderPreferences preferences = _controller.preferences;
     final int imageCount = page.imageUrls.length;
     final bool showSeekBar = imageCount > 1;
     final int currentImageIndex = imageCount == 0
         ? 0
-        : (_readerPreferences.isPaged
-                  ? _currentReaderPageIndex
-                  : _currentVisibleReaderImageIndex)
+        : (preferences.isPaged
+                  ? _controller.currentPageIndex
+                  : _controller.visibleImageIndex)
               .clamp(0, imageCount - 1);
     return AppSurfaceCard(
       padding: const EdgeInsets.all(14),
@@ -461,13 +528,12 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           if (showSeekBar) ...<Widget>[
-            _ReaderProgressSeekBar(
+            ReaderProgressSeekBar(
               currentIndex: currentImageIndex,
               totalCount: imageCount,
               onInteraction: () {
-                _readerRestoreCoordinator.noteUserInteraction();
-                _readerAutoTurnTimer?.cancel();
-                _readerAutoTurnTimer = null;
+                _controller.noteUserInteraction();
+                _controller.cancelAutoTurn();
               },
               onSeek: (int index) =>
                   _seekReaderToImageIndex(context, page, index),
@@ -480,7 +546,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                 child: FilledButton.tonal(
                   onPressed: page.prevHref.isEmpty
                       ? null
-                      : () => _navigateToHref(page.prevHref),
+                      : () => unawaited(_navigateToHref(page.prevHref, page)),
                   child: const Text('上一话'),
                 ),
               ),
@@ -510,7 +576,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                 child: FilledButton(
                   onPressed: page.nextHref.isEmpty
                       ? null
-                      : () => _navigateToHref(page.nextHref),
+                      : () => unawaited(_navigateToHref(page.nextHref, page)),
                   child: const Text('下一话'),
                 ),
               ),
@@ -521,45 +587,33 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     );
   }
 
+  Future<void> _navigateToHref(String href, ReaderPageData currentPage) {
+    final bool isPrev = currentPage.prevHref == href;
+    return widget.onRequestChapterNavigation(
+      href,
+      prevHref: isPrev ? '' : currentPage.uri,
+      nextHref: isPrev ? currentPage.uri : '',
+      catalogHref: currentPage.catalogHref,
+    );
+  }
+
   void _seekReaderToImageIndex(
     BuildContext context,
     ReaderPageData page,
     int imageIndex,
   ) {
-    if (_isReaderZoomGestureLocked || page.imageUrls.isEmpty) {
-      return;
-    }
+    if (_controller.isZoomGestureLocked || page.imageUrls.isEmpty) return;
     final int clampedIndex = imageIndex.clamp(0, page.imageUrls.length - 1);
-    final DeferredViewportTicket ticket = _readerRestoreCoordinator
-        .beginRequest();
-
-    if (_readerPreferences.isPaged) {
-      _jumpReaderToPage(page.uri, clampedIndex, attempts: 8, ticket: ticket);
-      _jumpReaderPageOffset(
-        page.uri,
-        clampedIndex,
-        offset: 0,
-        attempts: 8,
-        ticket: ticket,
-      );
-      return;
-    }
-
     final double estimatedOffset = _estimateReaderScrollOffsetForImageIndex(
       context,
       page,
       clampedIndex,
     );
-    _jumpReaderToOffset(page.uri, estimatedOffset, attempts: 8, ticket: ticket);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _jumpReaderToImageIndex(
-        page.uri,
-        clampedIndex,
-        attempts: 8,
-        ticket: ticket,
-        alignment: 0,
-      );
-    });
+    _controller.seekToImageIndex(
+      page: page,
+      imageIndex: clampedIndex,
+      estimatedScrollOffset: estimatedOffset,
+    );
   }
 
   double _estimateReaderScrollOffsetForImageIndex(
@@ -568,20 +622,22 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     int imageIndex,
   ) {
     final Size screenSize = MediaQuery.sizeOf(context);
-    final bool showGap = _readerPreferences.showPageGap;
-    final double topPadding = _readerPreferences.fullscreen && showGap ? 0 : 8;
+    final ReaderPreferences preferences = _controller.preferences;
+    final bool showGap = preferences.showPageGap;
+    final double topPadding = preferences.fullscreen && showGap ? 0 : 8;
     final double itemSpacing = showGap ? 10 : 0;
 
-    if (_readerPreferences.pageFit == ReaderPageFit.fitScreen) {
+    if (preferences.pageFit == ReaderPageFit.fitScreen) {
       final double viewportHeight = screenSize.height * 0.72;
       return topPadding + (viewportHeight + itemSpacing) * imageIndex;
     }
 
     double offset = topPadding;
     final double contentWidth = screenSize.width;
+    final Map<String, double> aspectRatios = _controller.imageAspectRatios;
     for (int index = 0; index < imageIndex; index += 1) {
       final String imageUrl = page.imageUrls[index];
-      final double rawAspectRatio = _readerImageAspectRatios[imageUrl] ?? 0.72;
+      final double rawAspectRatio = aspectRatios[imageUrl] ?? 0.72;
       final double safeAspectRatio =
           rawAspectRatio.isFinite && rawAspectRatio > 0.05
           ? rawAspectRatio
@@ -596,7 +652,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     ReaderPageData page,
   ) {
     final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
-    final double horizontalPadding = _readerPreferences.showPageGap ? 12 : 0;
+    final ReaderPreferences preferences = _controller.preferences;
+    final double horizontalPadding = preferences.showPageGap ? 12 : 0;
     final double bottomPadding =
         (viewPadding.bottom > 0 ? viewPadding.bottom : 0) + 12;
     return Positioned(
@@ -604,17 +661,17 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       right: horizontalPadding,
       bottom: bottomPadding,
       child: IgnorePointer(
-        ignoring: !_isReaderChapterControlsVisible,
+        ignoring: !_controller.isChapterControlsVisible,
         child: AnimatedSlide(
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutCubic,
-          offset: _isReaderChapterControlsVisible
+          offset: _controller.isChapterControlsVisible
               ? Offset.zero
               : const Offset(0, 1.08),
           child: AnimatedOpacity(
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOutCubic,
-            opacity: _isReaderChapterControlsVisible ? 1 : 0,
+            opacity: _controller.isChapterControlsVisible ? 1 : 0,
             child: _buildReaderChapterControls(context, page),
           ),
         ),
@@ -626,30 +683,34 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     BuildContext context,
     ReaderPageData page,
   ) {
-    final bool showGap = _readerPreferences.showPageGap;
-    final double topPadding = _readerPreferences.fullscreen && showGap ? 0 : 8;
-    final bool showCommentTail = _shouldShowReaderCommentTailPage(page);
+    final ReaderPreferences preferences = _controller.preferences;
+    final bool showGap = preferences.showPageGap;
+    final double topPadding = preferences.fullscreen && showGap ? 0 : 8;
+    final bool showCommentTail = _controller.shouldShowCommentTailPage(page);
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
     final ScrollPhysics scrollPhysics =
-        (_isReaderScaleGestureActive || _readerZoomScale > 1.01)
+        (_controller.isScaleGestureActive || _controller.zoomScale > 1.01)
         ? const NeverScrollableScrollPhysics()
         : const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics());
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
-        if (!_isReaderZoomGestureLocked) {
-          _handleReaderNextChapterPullNotification(
+        if (!_controller.isZoomGestureLocked) {
+          _controller.handleChapterPullScrollNotification(
             notification,
             page: page,
-            controller: _readerScrollController,
+            controller: _controller.scrollController,
           );
         }
-        return _handleReaderScrollNotification(notification);
+        if (_isUserDrivenScrollNotification(notification)) {
+          _controller.noteUserInteraction();
+        }
+        return false;
       },
       child: ListView.builder(
         key: ValueKey<String>(
-          'reader-scroll-${page.uri}-${_readerPreferences.pageFit.name}-$showGap-$showCommentTail',
+          'reader-scroll-${page.uri}-${preferences.pageFit.name}-$showGap-$showCommentTail',
         ),
-        controller: _readerScrollController,
+        controller: _controller.scrollController,
         physics: scrollPhysics,
         padding: EdgeInsets.only(top: topPadding, bottom: 16),
         itemCount:
@@ -661,15 +722,14 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                 : _buildReaderNextChapterFooter(context, page);
           }
           return Padding(
-            key: _readerImageItemKeyFor(index),
+            key: _controller.imageItemKeyFor(index),
             padding: EdgeInsets.only(bottom: showGap ? 10 : 0),
             child: _buildReaderImageFrame(
               context,
               page: page,
               imageIndex: index,
               imageUrl: page.imageUrls[index],
-              viewportHeight:
-                  _readerPreferences.pageFit == ReaderPageFit.fitScreen
+              viewportHeight: preferences.pageFit == ReaderPageFit.fitScreen
                   ? MediaQuery.sizeOf(context).height * 0.72
                   : null,
             ),
@@ -680,45 +740,52 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   }
 
   Widget _buildReaderPagedContent(BuildContext context, ReaderPageData page) {
+    final ReaderPreferences preferences = _controller.preferences;
     final bool reverse =
-        _readerPreferences.readingDirection ==
-        ReaderReadingDirection.rightToLeft;
-    final double topPadding =
-        _readerPreferences.fullscreen && _readerPreferences.showPageGap ? 0 : 8;
-    final bool showCommentTail = _shouldShowReaderCommentTailPage(page);
+        preferences.readingDirection == ReaderReadingDirection.rightToLeft;
+    final double topPadding = preferences.fullscreen && preferences.showPageGap
+        ? 0
+        : 8;
+    final bool showCommentTail = _controller.shouldShowCommentTailPage(page);
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
-    final ScrollPhysics pagePhysics = _isReaderZoomGestureLocked
+    final ScrollPhysics pagePhysics = _controller.isZoomGestureLocked
         ? const NeverScrollableScrollPhysics()
-        : const _ReaderPagedScrollPhysics(
+        : const ReaderPagedScrollPhysics(
             triggerPageRatio: 0.65,
             parent: BouncingScrollPhysics(),
           );
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
         final bool isLastReaderPage =
-            _currentReaderPageIndex >= _readerPagedPageCount(page) - 1;
-        if (!_isReaderZoomGestureLocked && isLastReaderPage && hasNextChapter) {
-          _handleReaderNextChapterPullNotification(
+            _controller.currentPageIndex >=
+            _controller.readerPagedPageCount(page) - 1;
+        if (!_controller.isZoomGestureLocked &&
+            isLastReaderPage &&
+            hasNextChapter) {
+          _controller.handleChapterPullScrollNotification(
             notification,
             page: page,
-            controller: _readerPageController,
+            controller: _controller.pageController,
             axis: Axis.horizontal,
           );
         }
-        return _handleReaderScrollNotification(notification);
+        if (_isUserDrivenScrollNotification(notification)) {
+          _controller.noteUserInteraction();
+        }
+        return false;
       },
       child: PageView.builder(
         key: ValueKey<String>(
-          'reader-paged-${page.uri}-${_readerPreferences.readingDirection.name}-${_readerPreferences.pageFit.name}-${_readerPreferences.showPageGap}-$showCommentTail',
+          'reader-paged-${page.uri}-${preferences.readingDirection.name}-${preferences.pageFit.name}-${preferences.showPageGap}-$showCommentTail',
         ),
-        controller: _readerPageController,
+        controller: _controller.pageController,
         physics: pagePhysics,
         reverse: reverse,
-        itemCount: _readerPagedPageCount(page),
-        onPageChanged: _handleReaderPageChanged,
+        itemCount: _controller.readerPagedPageCount(page),
+        onPageChanged: _controller.handlePageChanged,
         itemBuilder: (BuildContext context, int index) {
-          final ScrollController scrollController =
-              _readerPageScrollControllerFor(index);
+          final ScrollController scrollController = _controller
+              .pagedScrollControllerFor(index);
           final bool isCommentPage = index >= page.imageUrls.length;
           return LayoutBuilder(
             builder: (BuildContext context, BoxConstraints constraints) {
@@ -742,17 +809,22 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
               final Widget wrappedBody = isCommentPage
                   ? pageBody
                   : NotificationListener<ScrollNotification>(
-                      onNotification: _handleReaderScrollNotification,
+                      onNotification: (ScrollNotification notification) {
+                        if (_isUserDrivenScrollNotification(notification)) {
+                          _controller.noteUserInteraction();
+                        }
+                        return false;
+                      },
                       child: SingleChildScrollView(
                         controller: scrollController,
-                        physics: _isReaderZoomGestureLocked
+                        physics: _controller.isZoomGestureLocked
                             ? const NeverScrollableScrollPhysics()
                             : const BouncingScrollPhysics(),
                         child: pageBody,
                       ),
                     );
               return Padding(
-                padding: _readerPreferences.showPageGap
+                padding: preferences.showPageGap
                     ? EdgeInsets.only(top: topPadding, bottom: 8)
                     : EdgeInsets.zero,
                 child: wrappedBody,
@@ -772,8 +844,9 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     double? viewportHeight,
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final bool showGap = _readerPreferences.showPageGap;
-    final BoxFit fit = _readerPreferences.pageFit == ReaderPageFit.fitWidth
+    final ReaderPreferences preferences = _controller.preferences;
+    final bool showGap = preferences.showPageGap;
+    final BoxFit fit = preferences.pageFit == ReaderPageFit.fitWidth
         ? BoxFit.fitWidth
         : BoxFit.contain;
     final Uri? parsedUri = Uri.tryParse(imageUrl);
@@ -799,26 +872,16 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     }
     return ColoredBox(
       color: showGap ? colorScheme.surface : colorScheme.surfaceContainerLowest,
-      child: _ReaderChapterImage(
+      child: ReaderChapterImage(
         key: ValueKey<String>('reader-image-$imageUrl-$viewportHeight'),
         imageProvider: imageProvider,
         debugUrl: imageUrl,
         fit: fit,
         viewportHeight: viewportHeight,
-        aspectRatio: _readerImageAspectRatios[imageUrl],
+        aspectRatio: _controller.imageAspectRatios[imageUrl],
         onResolvedAspectRatio: (double aspectRatio) {
-          if (!aspectRatio.isFinite || aspectRatio <= 0) {
-            return;
-          }
-          final double? previousAspectRatio =
-              _readerImageAspectRatios[imageUrl];
-          if (previousAspectRatio != null &&
-              (previousAspectRatio - aspectRatio).abs() < 0.01) {
-            return;
-          }
-          _setStateIfMounted(() {
-            _readerImageAspectRatios[imageUrl] = aspectRatio;
-          });
+          if (!aspectRatio.isFinite || aspectRatio <= 0) return;
+          _controller.recordImageAspectRatio(imageUrl, aspectRatio);
         },
       ),
     );
@@ -832,6 +895,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     required BoxConstraints constraints,
     required bool showNextChapterFooter,
   }) {
+    final ReaderPreferences preferences = _controller.preferences;
     return ConstrainedBox(
       constraints: BoxConstraints(minHeight: constraints.maxHeight),
       child: Center(
@@ -846,8 +910,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                 page: page,
                 imageIndex: imageIndex,
                 imageUrl: imageUrl,
-                viewportHeight:
-                    _readerPreferences.pageFit == ReaderPageFit.fitScreen
+                viewportHeight: preferences.pageFit == ReaderPageFit.fitScreen
                     ? constraints.maxHeight
                     : null,
               ),
@@ -866,8 +929,8 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     double minHeight = 0,
   }) {
     final List<ChapterComment> comments =
-        _readerCommentsChapterId == _readerChapterIdForPage(page)
-        ? _readerChapterComments
+        _controller.commentsChapterId == readerChapterIdForPage(page)
+        ? _controller.chapterComments
         : const <ChapterComment>[];
     final Size screenSize = MediaQuery.sizeOf(context);
     final bool isPagedCommentPage = minHeight > 0;
@@ -927,22 +990,23 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     ReaderPageData page,
   ) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final SiteSession session = _controller.session;
     final bool isAuthenticated =
-        _session.isAuthenticated && (_session.token ?? '').isNotEmpty;
+        session.isAuthenticated && (session.token ?? '').isNotEmpty;
     final Widget actionButton = isAuthenticated
         ? FilledButton(
-            onPressed: _isReaderCommentSubmitting
+            onPressed: _controller.isCommentSubmitting
                 ? null
-                : () => unawaited(_submitReaderComment(page)),
+                : () => unawaited(_controller.submitComment(page)),
             style: FilledButton.styleFrom(
               minimumSize: const Size(0, 32),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: Text(_isReaderCommentSubmitting ? '发送中' : '发送'),
+            child: Text(_controller.isCommentSubmitting ? '发送中' : '发送'),
           )
         : TextButton(
-            onPressed: () => unawaited(_openAuthFlow()),
+            onPressed: () => unawaited(widget.onRequestAuth()),
             style: TextButton.styleFrom(
               minimumSize: const Size(0, 32),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
@@ -954,10 +1018,12 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       alignment: Alignment.bottomRight,
       children: <Widget>[
         TextField(
-          controller: _readerCommentController,
-          enabled: !_isReaderCommentSubmitting,
+          controller: _controller.commentController,
+          enabled: !_controller.isCommentSubmitting,
           readOnly: !isAuthenticated,
-          onTap: !isAuthenticated ? () => unawaited(_openAuthFlow()) : null,
+          onTap: !isAuthenticated
+              ? () => unawaited(widget.onRequestAuth())
+              : null,
           maxLines: 3,
           minLines: 2,
           textInputAction: TextInputAction.newline,
@@ -990,39 +1056,32 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
 
   void _handleReaderCommentCloudDragUpdate(DragUpdateDetails details) {
     final double? primaryDelta = details.primaryDelta;
-    if (primaryDelta == null || !_readerCommentScrollController.hasClients) {
+    if (primaryDelta == null ||
+        !_controller.commentScrollController.hasClients) {
       return;
     }
-    final ScrollPosition position = _readerCommentScrollController.position;
+    final ScrollPosition position =
+        _controller.commentScrollController.position;
     final double nextOffset = (position.pixels - primaryDelta)
         .clamp(0.0, position.maxScrollExtent)
         .toDouble();
-    if ((nextOffset - position.pixels).abs() < 0.5) {
-      return;
-    }
-    _readerCommentScrollController.jumpTo(nextOffset);
+    if ((nextOffset - position.pixels).abs() < 0.5) return;
+    _controller.commentScrollController.jumpTo(nextOffset);
   }
 
   void _handleReaderCommentCloudDragEnd(DragEndDetails details) {
-    if (!_readerCommentScrollController.hasClients) {
-      return;
-    }
+    if (!_controller.commentScrollController.hasClients) return;
     final double velocity = -(details.primaryVelocity ?? 0);
-    if (velocity.abs() < 90) {
-      return;
-    }
-    final ScrollPosition position = _readerCommentScrollController.position;
-    if (position.maxScrollExtent <= 0) {
-      return;
-    }
+    if (velocity.abs() < 90) return;
+    final ScrollPosition position =
+        _controller.commentScrollController.position;
+    if (position.maxScrollExtent <= 0) return;
     final double targetOffset = (position.pixels + (velocity * 0.18))
         .clamp(0.0, position.maxScrollExtent)
         .toDouble();
-    if ((targetOffset - position.pixels).abs() < 1) {
-      return;
-    }
+    if ((targetOffset - position.pixels).abs() < 1) return;
     unawaited(
-      _readerCommentScrollController.animateTo(
+      _controller.commentScrollController.animateTo(
         targetOffset,
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
@@ -1031,9 +1090,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   }
 
   Widget _buildReaderCommentScrollStrip({required bool enabled}) {
-    if (!enabled) {
-      return const SizedBox.shrink();
-    }
+    if (!enabled) return const SizedBox.shrink();
     return Align(
       alignment: Alignment.center,
       child: FractionallySizedBox(
@@ -1055,16 +1112,16 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     required List<ChapterComment> comments,
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    if (_isReaderCommentsLoading) {
+    if (_controller.isCommentsLoading) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_readerCommentsError.isNotEmpty) {
+    if (_controller.commentsError.isNotEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             Text(
-              _readerCommentsError,
+              _controller.commentsError,
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: colorScheme.onSurface.withValues(alpha: 0.78),
@@ -1074,7 +1131,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
             ),
             const SizedBox(height: 8),
             TextButton(
-              onPressed: () => unawaited(_loadReaderComments(page)),
+              onPressed: () => unawaited(_controller.loadComments(page)),
               child: const Text('重试'),
             ),
           ],
@@ -1112,7 +1169,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     }
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final _ReaderCommentCloudLayout layout = _buildReaderCommentCloudLayout(
+        final ReaderCommentCloudLayout layout = _buildReaderCommentCloudLayout(
           context,
           clusters,
           maxWidth: constraints.maxWidth,
@@ -1135,7 +1192,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
               clipBehavior: Clip.none,
               children: layout.placements
                   .map(
-                    (_ReaderCommentBubblePlacement placement) => Positioned(
+                    (ReaderCommentBubblePlacement placement) => Positioned(
                       left: placement.left,
                       top: placement.top,
                       child: _buildReaderCommentBubble(
@@ -1158,7 +1215,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                 IgnorePointer(
                   ignoring: true,
                   child: SingleChildScrollView(
-                    controller: _readerCommentScrollController,
+                    controller: _controller.commentScrollController,
                     physics: const NeverScrollableScrollPhysics(),
                     child: cloud,
                   ),
@@ -1172,7 +1229,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     );
   }
 
-  _ReaderCommentCloudLayout _buildReaderCommentCloudLayout(
+  ReaderCommentCloudLayout _buildReaderCommentCloudLayout(
     BuildContext context,
     List<ReaderCommentCluster> clusters, {
     required double maxWidth,
@@ -1191,10 +1248,10 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     );
     final int slotCount = math.max(1, (availableWidth / slotWidth).floor());
     final List<double> skyline = List<double>.filled(slotCount, 0);
-    final List<_ReaderCommentBubblePlacement> placements =
-        <_ReaderCommentBubblePlacement>[];
+    final List<ReaderCommentBubblePlacement> placements =
+        <ReaderCommentBubblePlacement>[];
     for (int index = 0; index < clusters.length; index++) {
-      final _ReaderCommentBubbleMetrics metrics = _measureReaderCommentBubble(
+      final ReaderCommentBubbleMetrics metrics = _measureReaderCommentBubble(
         context,
         clusters[index],
         minBubbleWidth: minBubbleWidth,
@@ -1219,7 +1276,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
       }
       final double left = bestStart * slotWidth;
       placements.add(
-        _ReaderCommentBubblePlacement(
+        ReaderCommentBubblePlacement(
           index: index,
           left: left,
           top: bestTop,
@@ -1234,13 +1291,13 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     final double contentHeight = placements.isEmpty
         ? 0
         : math.max(0, skyline.reduce(math.max) - runSpacing).toDouble();
-    return _ReaderCommentCloudLayout(
+    return ReaderCommentCloudLayout(
       height: contentHeight,
       placements: placements,
     );
   }
 
-  _ReaderCommentBubbleMetrics _measureReaderCommentBubble(
+  ReaderCommentBubbleMetrics _measureReaderCommentBubble(
     BuildContext context,
     ReaderCommentCluster cluster, {
     required double minBubbleWidth,
@@ -1280,7 +1337,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
           ),
         );
     final double contentHeight = math.max(22, painter.height);
-    return _ReaderCommentBubbleMetrics(
+    return ReaderCommentBubbleMetrics(
       width: bubbleWidth,
       height: contentHeight + verticalPadding,
     );
@@ -1387,7 +1444,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
                       ClipOval(
                         child: ColoredBox(
                           color: Colors.black.withValues(alpha: 0.54),
-                          child: Center(
+                          child: const Center(
                             child: Text(
                               '...',
                               style: TextStyle(
@@ -1439,7 +1496,7 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     ReaderPageData page,
   ) {
     return SizedBox(
-      height: _readerPreferences.isPaged ? 72 : 80,
+      height: _controller.preferences.isPaged ? 72 : 80,
       child: Center(
         child: _buildReaderChapterBoundaryCue(
           context,
@@ -1457,11 +1514,13 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
   ) {
     final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
     final bool showPreviousCue =
-        _readerPreviousChapterPullDistance > 0 ||
-        (_isReaderNextChapterLoading && _readerPreviousChapterPullDistance > 0);
+        _controller.previousChapterPullDistance > 0 ||
+        (_controller.isNextChapterLoading &&
+            _controller.previousChapterPullDistance > 0);
     final bool showNextCue =
-        _readerNextChapterPullDistance > 0 ||
-        (_isReaderNextChapterLoading && _readerNextChapterPullDistance > 0);
+        _controller.nextChapterPullDistance > 0 ||
+        (_controller.isNextChapterLoading &&
+            _controller.nextChapterPullDistance > 0);
     return Positioned.fill(
       child: Stack(
         children: <Widget>[
@@ -1490,12 +1549,12 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     required bool forceVisible,
     required EdgeInsets viewPadding,
   }) {
+    final ReaderPreferences preferences = _controller.preferences;
     final Alignment alignment;
     final EdgeInsets padding;
-    if (_readerPreferences.isPaged) {
+    if (preferences.isPaged) {
       final bool nextOnRight =
-          _readerPreferences.readingDirection ==
-          ReaderReadingDirection.rightToLeft;
+          preferences.readingDirection == ReaderReadingDirection.rightToLeft;
       final bool placeOnRight = isPrevious ? !nextOnRight : nextOnRight;
       alignment = placeOnRight ? Alignment.centerRight : Alignment.centerLeft;
       padding = EdgeInsets.only(
@@ -1532,23 +1591,25 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     required bool forceVisible,
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final bool isLoading = _isReaderNextChapterLoading;
+    final ReaderPreferences preferences = _controller.preferences;
+    final bool isLoading = _controller.isNextChapterLoading;
     final double pullDistance = isPrevious
-        ? _readerPreviousChapterPullDistance
-        : _readerNextChapterPullDistance;
+        ? _controller.previousChapterPullDistance
+        : _controller.nextChapterPullDistance;
     final bool isReady =
         (isPrevious
-            ? _readerPreviousChapterPullReady
-            : _readerNextChapterPullReady) &&
+            ? _controller.previousChapterPullReady
+            : _controller.nextChapterPullReady) &&
         !isLoading;
-    final double progress = (pullDistance / _readerNextChapterTriggerDistance)
+    final double triggerDistance = preferences.isPaged ? 152 : 266;
+    final double progress = (pullDistance / triggerDistance)
         .clamp(0, 1)
         .toDouble();
     final bool isVisible = forceVisible || isLoading || progress > 0;
     final IconData directionIcon = switch ((
       isPrevious,
-      _readerPreferences.isPaged,
-      _readerPreferences.readingDirection,
+      preferences.isPaged,
+      preferences.readingDirection,
     )) {
       (false, true, ReaderReadingDirection.leftToRight) =>
         Icons.chevron_left_rounded,
@@ -1635,646 +1696,164 @@ extension _EasyCopyScreenReaderMode on _EasyCopyScreenState {
     );
   }
 
-  Widget _buildReaderMode(BuildContext context, ReaderPageData page) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final bool isZoomed = _readerZoomScale > 1.01;
+  bool _isUserDrivenScrollNotification(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    return switch (notification) {
+      ScrollStartNotification(:final DragStartDetails? dragDetails) =>
+        dragDetails != null,
+      ScrollUpdateNotification(:final DragUpdateDetails? dragDetails) =>
+        dragDetails != null,
+      OverscrollNotification(:final DragUpdateDetails? dragDetails) =>
+        dragDetails != null,
+      _ => false,
+    };
+  }
 
-    Widget readerContent = _readerPreferences.isPaged
-        ? _buildReaderPagedContent(context, page)
-        : _buildReaderScrollableContent(context, page);
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (BuildContext context, Widget? _) {
+        final ReaderPageData page = widget.page;
+        final ColorScheme colorScheme = Theme.of(context).colorScheme;
+        final ReaderPreferences preferences = _controller.preferences;
+        final bool isZoomed = _controller.zoomScale > 1.01;
 
-    // Always keep ClipRect + Transform in the widget tree to preserve the
-    // child ListView's scroll position across zoom state changes.
-    readerContent = ClipRect(
-      child: Transform.translate(
-        offset: isZoomed
-            ? Offset(_readerPanOffsetX, _readerPanOffsetY)
-            : Offset.zero,
-        child: Transform.scale(
-          scale: _readerZoomScale,
-          alignment: Alignment.center,
-          child: readerContent,
-        ),
-      ),
-    );
+        Widget readerContent = preferences.isPaged
+            ? _buildReaderPagedContent(context, page)
+            : _buildReaderScrollableContent(context, page);
 
-    if (isZoomed) {
-      final Size screenSize = MediaQuery.sizeOf(context);
-      final double maxPanX = screenSize.width * (_readerZoomScale - 1) / 2;
-      final double maxPanY = screenSize.height * (_readerZoomScale - 1) / 2;
-      readerContent = GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        dragStartBehavior: DragStartBehavior.down,
-        onPanUpdate: (DragUpdateDetails details) {
-          if (_isReaderScaleGestureActive) {
-            return;
-          }
-          final double dy = details.delta.dy;
-          // Vertical: first absorb into panY, then scroll the remainder.
-          final double proposedPanY = _readerPanOffsetY + dy;
-          final double clampedPanY = proposedPanY.clamp(-maxPanY, maxPanY);
-          final double consumedDy = clampedPanY - _readerPanOffsetY;
-          final double remainingDy = dy - consumedDy;
-          double overscrollDy = 0;
-          if (remainingDy.abs() > 0.5) {
-            final ScrollController vc = _readerPreferences.isPaged
-                ? _readerPageScrollControllerFor(_currentReaderPageIndex)
-                : _readerScrollController;
-            if (vc.hasClients) {
-              final double oldOffset = vc.offset;
-              final double rawOffset =
-                  oldOffset - remainingDy / _readerZoomScale;
-              final double newOffset = rawOffset.clamp(
-                vc.position.minScrollExtent,
-                vc.position.maxScrollExtent,
-              );
-              vc.jumpTo(newOffset);
-              // Compute overscroll: the drag the scroll controller refused.
-              final double scrolledScreen =
-                  (oldOffset - newOffset) * _readerZoomScale;
-              overscrollDy = remainingDy - scrolledScreen;
-            } else {
-              overscrollDy = remainingDy;
-            }
-          }
-          // Feed vertical overscroll into chapter boundary pull system.
-          if (overscrollDy.abs() > 0.5) {
-            _handleReaderZoomedOverscroll(page, overscrollDy);
-          }
-          _setStateIfMounted(() {
-            _readerPanOffsetX = (_readerPanOffsetX + details.delta.dx).clamp(
-              -maxPanX,
-              maxPanX,
-            );
-            _readerPanOffsetY = clampedPanY;
-          });
-        },
-        onPanEnd: (DragEndDetails details) {
-          if (_isReaderScaleGestureActive) {
-            return;
-          }
-          // Check if chapter pull was triggered.
-          _handleReaderZoomedPanEnd(page);
-          // Apply vertical momentum (fling).
-          final ScrollController vc = _readerPreferences.isPaged
-              ? _readerPageScrollControllerFor(_currentReaderPageIndex)
-              : _readerScrollController;
-          if (vc.hasClients) {
-            final double vy = details.velocity.pixelsPerSecond.dy;
-            if (vy.abs() > 100) {
-              final double targetOffset =
-                  (vc.offset - vy * 0.25 / _readerZoomScale).clamp(
+        readerContent = ClipRect(
+          child: Transform.translate(
+            offset: isZoomed
+                ? Offset(_controller.panOffsetX, _controller.panOffsetY)
+                : Offset.zero,
+            child: Transform.scale(
+              scale: _controller.zoomScale,
+              alignment: Alignment.center,
+              child: readerContent,
+            ),
+          ),
+        );
+
+        if (isZoomed) {
+          final Size screenSize = MediaQuery.sizeOf(context);
+          final double maxPanX =
+              screenSize.width * (_controller.zoomScale - 1) / 2;
+          final double maxPanY =
+              screenSize.height * (_controller.zoomScale - 1) / 2;
+          readerContent = GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            dragStartBehavior: DragStartBehavior.down,
+            onPanUpdate: (DragUpdateDetails details) {
+              if (_controller.isScaleGestureActive) return;
+              final double dy = details.delta.dy;
+              final double proposedPanY = _controller.panOffsetY + dy;
+              final double clampedPanY = proposedPanY.clamp(-maxPanY, maxPanY);
+              final double consumedDy = clampedPanY - _controller.panOffsetY;
+              final double remainingDy = dy - consumedDy;
+              double overscrollDy = 0;
+              if (remainingDy.abs() > 0.5) {
+                final ScrollController vc = _controller.preferences.isPaged
+                    ? _controller.pagedScrollControllerFor(
+                        _controller.currentPageIndex,
+                      )
+                    : _controller.scrollController;
+                if (vc.hasClients) {
+                  final double oldOffset = vc.offset;
+                  final double rawOffset =
+                      oldOffset - remainingDy / _controller.zoomScale;
+                  final double newOffset = rawOffset.clamp(
                     vc.position.minScrollExtent,
                     vc.position.maxScrollExtent,
                   );
-              unawaited(
-                vc.animateTo(
-                  targetOffset,
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeOutCubic,
+                  vc.jumpTo(newOffset);
+                  final double scrolledScreen =
+                      (oldOffset - newOffset) * _controller.zoomScale;
+                  overscrollDy = remainingDy - scrolledScreen;
+                } else {
+                  overscrollDy = remainingDy;
+                }
+              }
+              if (overscrollDy.abs() > 0.5) {
+                _controller.handleZoomedOverscroll(page, overscrollDy);
+              }
+              _controller.updatePanOffset(
+                x: (_controller.panOffsetX + details.delta.dx).clamp(
+                  -maxPanX,
+                  maxPanX,
                 ),
+                y: clampedPanY,
               );
-            }
-          }
-        },
-        child: readerContent,
-      );
-    } else {
-      readerContent = GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTapUp: _isReaderZoomGestureLocked ? null : _handleReaderTapUp,
-        child: readerContent,
-      );
-    }
+            },
+            onPanEnd: (DragEndDetails details) {
+              if (_controller.isScaleGestureActive) return;
+              _controller.handleZoomedPanEnd(page);
+              final ScrollController vc = _controller.preferences.isPaged
+                  ? _controller.pagedScrollControllerFor(
+                      _controller.currentPageIndex,
+                    )
+                  : _controller.scrollController;
+              if (vc.hasClients) {
+                final double vy = details.velocity.pixelsPerSecond.dy;
+                if (vy.abs() > 100) {
+                  final double targetOffset =
+                      (vc.offset - vy * 0.25 / _controller.zoomScale).clamp(
+                        vc.position.minScrollExtent,
+                        vc.position.maxScrollExtent,
+                      );
+                  unawaited(
+                    vc.animateTo(
+                      targetOffset,
+                      duration: const Duration(milliseconds: 400),
+                      curve: Curves.easeOutCubic,
+                    ),
+                  );
+                }
+              }
+            },
+            child: readerContent,
+          );
+        } else {
+          readerContent = GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTapUp: _controller.isZoomGestureLocked
+                ? null
+                : _handleReaderTapUp,
+            child: readerContent,
+          );
+        }
 
-    return AnimatedOpacity(
-      opacity: _isReaderExitTransitionActive ? 0 : 1,
-      duration: _readerExitFadeDuration,
-      curve: Curves.easeOutCubic,
-      child: IgnorePointer(
-        ignoring: _isReaderExitTransitionActive,
-        child: Scaffold(
-          backgroundColor: colorScheme.surfaceContainerLowest,
-          body: SizedBox(
-            key: _readerViewportKey,
-            child: Stack(
-              fit: StackFit.expand,
-              children: <Widget>[
-                Positioned.fill(
-                  child: _ReaderPinchZoomDetector(
-                    onPinchStart: _handleReaderPinchZoomStart,
-                    onPinchUpdate: _handleReaderPinchZoomUpdate,
-                    onPinchEnd: _handleReaderPinchZoomEnd,
-                    child: readerContent,
-                  ),
+        return AnimatedOpacity(
+          opacity: widget.isExitTransitionActive ? 0 : 1,
+          duration: _readerExitFadeDuration,
+          curve: Curves.easeOutCubic,
+          child: IgnorePointer(
+            ignoring: widget.isExitTransitionActive,
+            child: Scaffold(
+              backgroundColor: colorScheme.surfaceContainerLowest,
+              body: SizedBox(
+                key: _controller.viewportKey,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    Positioned.fill(
+                      child: ReaderPinchZoomDetector(
+                        onPinchStart: _controller.handlePinchZoomStart,
+                        onPinchUpdate: _controller.handlePinchZoomUpdate,
+                        onPinchEnd: _controller.handlePinchZoomEnd,
+                        child: readerContent,
+                      ),
+                    ),
+                    _buildReaderOverlay(context, page),
+                    _buildReaderChapterControlsOverlay(context, page),
+                  ],
                 ),
-                _buildReaderOverlay(context, page),
-                _buildReaderChapterControlsOverlay(context, page),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ReaderProgressSeekBar extends StatefulWidget {
-  const _ReaderProgressSeekBar({
-    required this.currentIndex,
-    required this.totalCount,
-    required this.onSeek,
-    this.onInteraction,
-  });
-
-  final int currentIndex;
-  final int totalCount;
-  final VoidCallback? onInteraction;
-  final ValueChanged<int> onSeek;
-
-  @override
-  State<_ReaderProgressSeekBar> createState() => _ReaderProgressSeekBarState();
-}
-
-class _ReaderProgressSeekBarState extends State<_ReaderProgressSeekBar> {
-  late double _value;
-  bool _scrubbing = false;
-
-  int get _maxIndex => math.max(0, widget.totalCount - 1);
-
-  @override
-  void initState() {
-    super.initState();
-    _value = widget.currentIndex.clamp(0, _maxIndex).toDouble();
-  }
-
-  @override
-  void didUpdateWidget(covariant _ReaderProgressSeekBar oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (_scrubbing) {
-      return;
-    }
-    final double nextValue = widget.currentIndex.clamp(0, _maxIndex).toDouble();
-    if ((nextValue - _value).abs() < 0.5) {
-      return;
-    }
-    _value = nextValue;
-  }
-
-  void _handleChangeStart(double _) {
-    widget.onInteraction?.call();
-    if (_scrubbing) {
-      return;
-    }
-    setState(() {
-      _scrubbing = true;
-    });
-  }
-
-  void _handleChanged(double rawValue) {
-    widget.onInteraction?.call();
-    final int nextIndex = rawValue.round().clamp(0, _maxIndex);
-    setState(() {
-      _value = nextIndex.toDouble();
-    });
-  }
-
-  void _handleChangeEnd(double rawValue) {
-    final int nextIndex = rawValue.round().clamp(0, _maxIndex);
-    setState(() {
-      _scrubbing = false;
-      _value = nextIndex.toDouble();
-    });
-    widget.onSeek(nextIndex);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.totalCount <= 0) {
-      return const SizedBox.shrink();
-    }
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final int current = _value.round().clamp(0, _maxIndex);
-    final TextStyle numberStyle = TextStyle(
-      color: colorScheme.onSurface.withValues(alpha: 0.76),
-      fontSize: 12,
-      fontWeight: FontWeight.w800,
-    );
-    return Row(
-      children: <Widget>[
-        SizedBox(
-          width: 34,
-          child: Text(
-            '${current + 1}',
-            textAlign: TextAlign.center,
-            style: numberStyle,
-          ),
-        ),
-        Expanded(
-          child: SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: 2.2,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-              inactiveTrackColor: colorScheme.outlineVariant.withValues(
-                alpha: 0.65,
               ),
             ),
-            child: Slider(
-              value: _value.clamp(0, _maxIndex.toDouble()),
-              min: 0,
-              max: _maxIndex.toDouble(),
-              onChangeStart: widget.totalCount > 1 ? _handleChangeStart : null,
-              onChanged: widget.totalCount > 1 ? _handleChanged : null,
-              onChangeEnd: widget.totalCount > 1 ? _handleChangeEnd : null,
-            ),
           ),
-        ),
-        SizedBox(
-          width: 34,
-          child: Text(
-            '${widget.totalCount}',
-            textAlign: TextAlign.center,
-            style: numberStyle,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ReaderPinchZoomDetector extends StatefulWidget {
-  const _ReaderPinchZoomDetector({
-    required this.child,
-    required this.onPinchStart,
-    required this.onPinchUpdate,
-    required this.onPinchEnd,
-  });
-
-  final Widget child;
-  final VoidCallback onPinchStart;
-  final ValueChanged<double> onPinchUpdate;
-  final VoidCallback onPinchEnd;
-
-  @override
-  State<_ReaderPinchZoomDetector> createState() =>
-      _ReaderPinchZoomDetectorState();
-}
-
-class _ReaderPinchZoomDetectorState extends State<_ReaderPinchZoomDetector> {
-  final Map<int, Offset> _pointers = <int, Offset>{};
-  double? _initialDistance;
-  bool _isPinchActive = false;
-
-  double _pointerDistance() {
-    if (_pointers.length < 2) {
-      return 0;
-    }
-    final List<Offset> positions = _pointers.values.toList();
-    return (positions[0] - positions[1]).distance;
-  }
-
-  void _handlePointerDown(PointerDownEvent event) {
-    _pointers[event.pointer] = event.position;
-    if (_pointers.length == 2 && !_isPinchActive) {
-      final double distance = _pointerDistance();
-      if (distance > 0) {
-        _initialDistance = distance;
-        _isPinchActive = true;
-        widget.onPinchStart();
-      }
-    }
-  }
-
-  void _handlePointerMove(PointerMoveEvent event) {
-    if (!_pointers.containsKey(event.pointer)) {
-      return;
-    }
-    _pointers[event.pointer] = event.position;
-    if (_isPinchActive &&
-        _pointers.length >= 2 &&
-        _initialDistance != null &&
-        _initialDistance! > 0) {
-      final double currentDistance = _pointerDistance();
-      widget.onPinchUpdate(currentDistance / _initialDistance!);
-    }
-  }
-
-  void _endPinchIfNeeded() {
-    if (_isPinchActive && _pointers.length < 2) {
-      _isPinchActive = false;
-      _initialDistance = null;
-      widget.onPinchEnd();
-    }
-  }
-
-  void _handlePointerUp(PointerUpEvent event) {
-    _pointers.remove(event.pointer);
-    _endPinchIfNeeded();
-  }
-
-  void _handlePointerCancel(PointerCancelEvent event) {
-    _pointers.remove(event.pointer);
-    _endPinchIfNeeded();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: _handlePointerDown,
-      onPointerMove: _handlePointerMove,
-      onPointerUp: _handlePointerUp,
-      onPointerCancel: _handlePointerCancel,
-      child: widget.child,
-    );
-  }
-}
-
-class _ReaderCommentBubbleMetrics {
-  const _ReaderCommentBubbleMetrics({
-    required this.width,
-    required this.height,
-  });
-
-  final double width;
-  final double height;
-}
-
-class _ReaderCommentBubblePlacement {
-  const _ReaderCommentBubblePlacement({
-    required this.index,
-    required this.left,
-    required this.top,
-    required this.width,
-  });
-
-  final int index;
-  final double left;
-  final double top;
-  final double width;
-}
-
-class _ReaderCommentCloudLayout {
-  const _ReaderCommentCloudLayout({
-    required this.height,
-    required this.placements,
-  });
-
-  final double height;
-  final List<_ReaderCommentBubblePlacement> placements;
-}
-
-class _ReaderChapterImage extends StatefulWidget {
-  const _ReaderChapterImage({
-    super.key,
-    required this.imageProvider,
-    required this.debugUrl,
-    required this.fit,
-    required this.onResolvedAspectRatio,
-    this.viewportHeight,
-    this.aspectRatio,
-  });
-
-  final ImageProvider<Object> imageProvider;
-  final String debugUrl;
-  final BoxFit fit;
-  final ValueChanged<double> onResolvedAspectRatio;
-  final double? viewportHeight;
-  final double? aspectRatio;
-
-  @override
-  State<_ReaderChapterImage> createState() => _ReaderChapterImageState();
-}
-
-class _ReaderChapterImageState extends State<_ReaderChapterImage> {
-  ImageStream? _imageStream;
-  ImageStreamListener? _imageStreamListener;
-  bool _hasFrame = false;
-  bool _hasError = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _resolveImage();
-  }
-
-  @override
-  void didUpdateWidget(covariant _ReaderChapterImage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.imageProvider != widget.imageProvider) {
-      _hasFrame = false;
-      _hasError = false;
-      _resolveImage(force: true);
-      return;
-    }
-    if (oldWidget.aspectRatio != widget.aspectRatio &&
-        widget.aspectRatio != null &&
-        !_hasFrame) {
-      setState(() {
-        _hasFrame = true;
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _detachImageStream();
-    super.dispose();
-  }
-
-  void _resolveImage({bool force = false}) {
-    final ImageStream newStream = widget.imageProvider.resolve(
-      createLocalImageConfiguration(context),
-    );
-    if (!force && _imageStream?.key == newStream.key) {
-      return;
-    }
-    _detachImageStream();
-    _imageStream = newStream;
-    _imageStreamListener = ImageStreamListener(
-      (ImageInfo imageInfo, bool synchronousCall) {
-        final int width = imageInfo.image.width;
-        final int height = imageInfo.image.height;
-        if (width > 0 && height > 0) {
-          widget.onResolvedAspectRatio(width / height);
-        }
-        if (!mounted || _hasFrame) {
-          return;
-        }
-        setState(() {
-          _hasFrame = true;
-          _hasError = false;
-        });
-      },
-      onError: (Object error, StackTrace? stackTrace) {
-        if (!mounted) {
-          return;
-        }
-        DebugTrace.log('reader.image_error', <String, Object?>{
-          'url': widget.debugUrl,
-          'error': error.toString(),
-        });
-        setState(() {
-          _hasError = true;
-        });
+        );
       },
     );
-    _imageStream!.addListener(_imageStreamListener!);
-  }
-
-  void _detachImageStream() {
-    final ImageStream? imageStream = _imageStream;
-    final ImageStreamListener? imageStreamListener = _imageStreamListener;
-    if (imageStream != null && imageStreamListener != null) {
-      imageStream.removeListener(imageStreamListener);
-    }
-    _imageStream = null;
-    _imageStreamListener = null;
-  }
-
-  Widget _buildLoadingBox() {
-    return Center(
-      child: CircularProgressIndicator(
-        strokeWidth: widget.viewportHeight == null ? 2.4 : 3,
-      ),
-    );
-  }
-
-  Widget _buildErrorBox() {
-    return const Center(child: Icon(Icons.broken_image_outlined, size: 36));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final double resolvedAspectRatio = widget.aspectRatio ?? 0.72;
-    final Widget image = Image(
-      image: widget.imageProvider,
-      fit: widget.fit,
-      width: double.infinity,
-      height: widget.viewportHeight,
-      gaplessPlayback: true,
-      errorBuilder:
-          (BuildContext context, Object error, StackTrace? stackTrace) {
-            return SizedBox(
-              height: widget.viewportHeight,
-              child: _buildErrorBox(),
-            );
-          },
-      frameBuilder:
-          (
-            BuildContext context,
-            Widget child,
-            int? frame,
-            bool wasSynchronouslyLoaded,
-          ) {
-            final bool isLoaded =
-                wasSynchronouslyLoaded || frame != null || _hasFrame;
-            if (widget.viewportHeight != null) {
-              return SizedBox(
-                height: widget.viewportHeight,
-                child: isLoaded ? child : _buildLoadingBox(),
-              );
-            }
-            return AspectRatio(
-              aspectRatio: resolvedAspectRatio,
-              child: Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  Positioned.fill(
-                    child: isLoaded
-                        ? child
-                        : (_hasError ? _buildErrorBox() : _buildLoadingBox()),
-                  ),
-                ],
-              ),
-            );
-          },
-    );
-    if (widget.viewportHeight != null) {
-      return image;
-    }
-    return RepaintBoundary(child: image);
-  }
-}
-
-class _ReaderPagedScrollPhysics extends PageScrollPhysics {
-  const _ReaderPagedScrollPhysics({this.triggerPageRatio = 0.5, super.parent})
-    : assert(triggerPageRatio > 0 && triggerPageRatio < 1);
-
-  final double triggerPageRatio;
-
-  @override
-  _ReaderPagedScrollPhysics applyTo(ScrollPhysics? ancestor) {
-    return _ReaderPagedScrollPhysics(
-      triggerPageRatio: triggerPageRatio,
-      parent: buildParent(ancestor),
-    );
-  }
-
-  double _pageExtent(ScrollMetrics position) {
-    if (position is PageMetrics) {
-      return position.viewportDimension * position.viewportFraction;
-    }
-    return position.viewportDimension;
-  }
-
-  double _getPage(ScrollMetrics position) {
-    if (position is PageMetrics && position.page != null) {
-      return position.page!;
-    }
-    return position.pixels / _pageExtent(position);
-  }
-
-  double _getPixels(ScrollMetrics position, double page) {
-    return page * _pageExtent(position);
-  }
-
-  double _getTargetPixels(
-    ScrollMetrics position,
-    Tolerance tolerance,
-    double velocity,
-  ) {
-    double page = _getPage(position);
-    if (velocity < -tolerance.velocity) {
-      page -= triggerPageRatio;
-    } else if (velocity > tolerance.velocity) {
-      page += triggerPageRatio;
-    } else {
-      final double nearestPage = page.roundToDouble();
-      final double delta = page - nearestPage;
-      if (delta <= -triggerPageRatio) {
-        page = nearestPage - 1;
-      } else if (delta >= triggerPageRatio) {
-        page = nearestPage + 1;
-      } else {
-        page = nearestPage;
-      }
-      return _getPixels(position, page);
-    }
-    return _getPixels(position, page.roundToDouble());
-  }
-
-  @override
-  Simulation? createBallisticSimulation(
-    ScrollMetrics position,
-    double velocity,
-  ) {
-    if ((velocity <= 0.0 && position.pixels <= position.minScrollExtent) ||
-        (velocity >= 0.0 && position.pixels >= position.maxScrollExtent)) {
-      return super.createBallisticSimulation(position, velocity);
-    }
-    final Tolerance tolerance = toleranceFor(position);
-    final double target = _getTargetPixels(position, tolerance, velocity);
-    if (target != position.pixels) {
-      return ScrollSpringSimulation(
-        spring,
-        position.pixels,
-        target,
-        velocity,
-        tolerance: tolerance,
-      );
-    }
-    return null;
   }
 }
