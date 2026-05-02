@@ -22,25 +22,26 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   }
 
   Widget _buildStandardBody(BuildContext context) {
+    final List<Widget> children = _buildStandardBodyChildren(context);
+    final String contentKey = _standardContentTransitionKey;
+
     return RefreshIndicator(
       onRefresh: _retryCurrentPage,
       child: NotificationListener<ScrollNotification>(
         onNotification: _handleStandardScrollNotification,
-        child: ListView(
+        child: ListView.builder(
           controller: _standardScrollController,
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-          children: <Widget>[
-            KeyedSubtree(
-              key: ValueKey<String>(_standardContentTransitionKey),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: _buildStandardBodyChildren(context),
-              ),
-            ),
-          ],
+          itemCount: children.length,
+          itemBuilder: (BuildContext context, int index) {
+            return KeyedSubtree(
+              key: ValueKey<String>('$contentKey::$index'),
+              child: children[index],
+            );
+          },
         ),
       ),
     );
@@ -631,7 +632,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     return _readerProgressStore.latestChapterPathKeyForCatalog(page.uri) ?? '';
   }
 
-  List<_ChapterPickerSection> _chapterPickerSections(DetailPageData page) {
+  List<ChapterPickerSection> _chapterPickerSections(DetailPageData page) {
     final List<ChapterData> allChapters = page.chapters.isNotEmpty
         ? page.chapters
         : page.chapterGroups
@@ -649,15 +650,15 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
               .values
               .toList(growable: false);
     if (allChapters.isEmpty) {
-      return const <_ChapterPickerSection>[];
+      return const <ChapterPickerSection>[];
     }
-    return <_ChapterPickerSection>[
-      _ChapterPickerSection(label: '全部章节', chapters: allChapters),
+    return <ChapterPickerSection>[
+      ChapterPickerSection(label: '全部章节', chapters: allChapters),
     ];
   }
 
   Future<void> _showDetailDownloadPicker(DetailPageData page) async {
-    final List<_ChapterPickerSection> sections = _chapterPickerSections(page);
+    final List<ChapterPickerSection> sections = _chapterPickerSections(page);
     final Set<String> downloadedKeys = _downloadedChapterPathKeysForDetail(
       page,
     );
@@ -1008,269 +1009,12 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     ].join('::');
   }
 
-  void _syncDetailChapterState(DetailPageData page, {bool forceReset = false}) {
-    final String routeKey = AppConfig.routeKeyForUri(Uri.parse(page.uri));
-    final List<_DetailChapterTabData> tabs = _detailChapterTabs(page);
-    _DetailChapterTabData? fallbackTab;
-    for (final _DetailChapterTabData tab in tabs) {
-      if (tab.enabled) {
-        fallbackTab = tab;
-        break;
-      }
-    }
-    fallbackTab ??= tabs.isEmpty ? null : tabs.first;
-    final String? preferredTabKey = _preferredDetailChapterTabKey(page);
-    if (forceReset || _detailChapterStateRouteKey != routeKey) {
-      _detailChapterStateRouteKey = routeKey;
-      _detailChapterItemKeys.clear();
-      _handledDetailAutoScrollSignature = '';
-      _selectedDetailChapterTabKey =
-          preferredTabKey ?? fallbackTab?.key ?? _detailAllChapterTabKey;
-      _isDetailChapterSortAscending = false;
-      return;
-    }
-    if (!tabs.any(
-      (_DetailChapterTabData tab) =>
-          tab.key == _selectedDetailChapterTabKey && tab.enabled,
-    )) {
-      _selectedDetailChapterTabKey =
-          fallbackTab?.key ?? _detailAllChapterTabKey;
-    }
-  }
-
-  List<_DetailChapterTabData> _detailChapterTabs(DetailPageData page) {
-    final List<ChapterData> allChapters = _detailChapterList(page);
-    if (page.chapterGroups.isNotEmpty) {
-      final bool hasAllGroup = page.chapterGroups.any(
-        (ChapterGroupData group) => _isAllDetailChapterGroupLabel(group.label),
-      );
-      final List<_DetailChapterTabData> tabs = <_DetailChapterTabData>[
-        if (!hasAllGroup && allChapters.isNotEmpty)
-          _DetailChapterTabData(
-            key: _detailAllChapterTabKey,
-            label: '全部',
-            chapters: allChapters,
-          ),
-        for (int index = 0; index < page.chapterGroups.length; index += 1)
-          _DetailChapterTabData(
-            key: 'group:$index',
-            label: _detailChapterTabLabel(page.chapterGroups[index].label),
-            chapters:
-                _isAllDetailChapterGroupLabel(
-                      page.chapterGroups[index].label,
-                    ) &&
-                    page.chapterGroups[index].chapters.isEmpty &&
-                    allChapters.isNotEmpty
-                ? allChapters
-                : page.chapterGroups[index].chapters,
-          ),
-      ];
-      if (tabs.isNotEmpty) {
-        return tabs;
-      }
-    }
-    if (allChapters.isEmpty) {
-      return const <_DetailChapterTabData>[];
-    }
-    return <_DetailChapterTabData>[
-      _DetailChapterTabData(
-        key: _detailAllChapterTabKey,
-        label: '全部',
-        chapters: allChapters,
-      ),
-    ];
-  }
-
-  bool _isAllDetailChapterGroupLabel(String label) {
-    final String normalized = label.replaceAll(RegExp(r'\s+'), '');
-    return normalized.isNotEmpty &&
-        (normalized == '全部' || normalized.contains('全部'));
-  }
-
-  String _detailChapterTabLabel(String label) {
-    final String normalized = label.replaceAll(RegExp(r'\s+'), '');
-    if (normalized.isEmpty) {
-      return '列表';
-    }
-    if (_isAllDetailChapterGroupLabel(normalized)) {
-      return '全部';
-    }
-    if (normalized.contains('番外')) {
-      return '番外';
-    }
-    if (normalized.contains('單話') ||
-        normalized.contains('单话') ||
-        normalized == '話' ||
-        normalized.endsWith('話')) {
-      return '話';
-    }
-    if (normalized.contains('卷')) {
-      return '卷';
-    }
-    return label.trim();
-  }
-
-  _DetailChapterTabData? _activeDetailChapterTab(DetailPageData page) {
-    final List<_DetailChapterTabData> tabs = _detailChapterTabs(page);
-    if (tabs.isEmpty) {
-      return null;
-    }
-    for (final _DetailChapterTabData tab in tabs) {
-      if (tab.key == _selectedDetailChapterTabKey && tab.enabled) {
-        return tab;
-      }
-    }
-    for (final _DetailChapterTabData tab in tabs) {
-      if (tab.enabled) {
-        return tab;
-      }
-    }
-    return tabs.first;
-  }
-
-  List<ChapterData> _visibleDetailChapters(DetailPageData page) {
-    final _DetailChapterTabData? activeTab = _activeDetailChapterTab(page);
-    if (activeTab == null || activeTab.chapters.isEmpty) {
-      return const <ChapterData>[];
-    }
-    if (!_isDetailChapterSortAscending) {
-      return activeTab.chapters;
-    }
-    return activeTab.chapters.reversed.toList(growable: false);
-  }
-
-  String? _preferredDetailChapterTabKey(DetailPageData page) {
-    final String lastReadChapterPathKey = _lastReadChapterPathKeyForDetail(
-      page,
-    );
-    if (lastReadChapterPathKey.isEmpty) {
-      return null;
-    }
-    for (final _DetailChapterTabData tab in _detailChapterTabs(page)) {
-      if (!tab.enabled) {
-        continue;
-      }
-      if (tab.chapters.any(
-        (ChapterData chapter) =>
-            _chapterPathKey(chapter.href) == lastReadChapterPathKey,
-      )) {
-        return tab.key;
-      }
-    }
-    return null;
-  }
-
-  String _detailChapterContentKey(
-    DetailPageData page,
-    _DetailChapterTabData? activeTab,
-    List<ChapterData> chapters,
-  ) {
-    return <String>[
-      AppConfig.routeKeyForUri(Uri.parse(page.uri)),
-      activeTab?.key ?? 'empty',
-      _isDetailChapterSortAscending ? 'asc' : 'desc',
-      '${chapters.length}',
-      chapters.isEmpty ? '' : chapters.first.href,
-      chapters.isEmpty ? '' : chapters.last.href,
-    ].join('::');
-  }
-
-  void _selectDetailChapterTab(String key) {
-    if (!mounted || _selectedDetailChapterTabKey == key) {
-      return;
-    }
-    _noteStandardViewportUserInteraction();
-    _setStateIfMounted(() {
-      _selectedDetailChapterTabKey = key;
-    });
-  }
-
-  void _toggleDetailChapterSortOrder() {
-    if (!mounted) {
-      return;
-    }
-    _noteStandardViewportUserInteraction();
-    _setStateIfMounted(() {
-      _isDetailChapterSortAscending = !_isDetailChapterSortAscending;
-    });
-  }
-
-  GlobalKey _detailChapterItemKeyFor(String chapterPathKey) {
-    return _detailChapterItemKeys.putIfAbsent(chapterPathKey, GlobalKey.new);
-  }
-
-  void _scheduleDetailChapterAutoPosition(
-    DetailPageData page,
-    List<ChapterData> visibleChapters,
-    String lastReadChapterPathKey,
-  ) {
-    if (lastReadChapterPathKey.isEmpty) {
-      return;
-    }
-    final bool hasVisibleLastRead = visibleChapters.any(
-      (ChapterData chapter) =>
-          _chapterPathKey(chapter.href) == lastReadChapterPathKey,
-    );
-    if (!hasVisibleLastRead) {
-      return;
-    }
-    final String signature =
-        '${AppConfig.routeKeyForUri(Uri.parse(page.uri))}::$lastReadChapterPathKey';
-    if (_handledDetailAutoScrollSignature == signature) {
-      return;
-    }
-    final DeferredViewportTicket ticket = _detailChapterAutoScrollCoordinator
-        .beginRequest();
-    _handledDetailAutoScrollSignature = signature;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _ensureDetailChapterVisible(
-        lastReadChapterPathKey,
-        routeKey: AppConfig.routeKeyForUri(Uri.parse(page.uri)),
-        attempts: 12,
-        ticket: ticket,
-      );
-    });
-  }
-
-  void _ensureDetailChapterVisible(
-    String chapterPathKey, {
-    required String routeKey,
-    required int attempts,
-    required DeferredViewportTicket ticket,
-  }) {
-    if (!_isActiveDetailChapterAutoScroll(ticket, routeKey: routeKey)) {
-      return;
-    }
-    final BuildContext? targetContext =
-        _detailChapterItemKeys[chapterPathKey]?.currentContext;
-    if (targetContext == null) {
-      if (attempts > 0) {
-        Future<void>.delayed(
-          const Duration(milliseconds: 100),
-          () => _ensureDetailChapterVisible(
-            chapterPathKey,
-            routeKey: routeKey,
-            attempts: attempts - 1,
-            ticket: ticket,
-          ),
-        );
-      }
-      return;
-    }
-    Scrollable.ensureVisible(
-      targetContext,
-      alignment: 0.12,
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-    );
-  }
-
   List<Widget> _buildHomeSections(HomePageData page) {
     final List<Widget> sections = <Widget>[];
 
     if (page.feature != null) {
       sections.add(
-        _FeatureBannerCard(
+        FeatureBannerCard(
           banner: page.feature!,
           onTap: () =>
               _navigateToHref(AppConfig.resolvePath('/topic').toString()),
@@ -1281,7 +1025,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
     for (final ComicSectionData section in page.sections) {
       sections.add(
-        _SurfaceBlock(
+        SurfaceBlock(
           title: section.title,
           actionLabel: section.href.isNotEmpty ? '更多' : null,
           onActionTap: section.href.isNotEmpty
@@ -1336,17 +1080,18 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
           .toList(growable: false);
 
       sections.add(
-        _SurfaceBlock(
+        SurfaceBlock(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              _FilterGroup(
+              FilterGroup(
                 group: FilterGroupData(
                   label: primaryGroup.label,
                   options: _visibleDiscoverThemeOptions(themeOptions),
                 ),
                 onTap: _navigateDiscoverFilter,
-                actionLabel: _isDiscoverThemeExpanded ? '收起分類' : '查看全部分類',
+                actionLabel: _isDiscoverThemeExpanded ? '收起' : '全部',
+                actionExpanded: _isDiscoverThemeExpanded,
                 onActionTap: () {
                   _setStateIfMounted(() {
                     _isDiscoverThemeExpanded = !_isDiscoverThemeExpanded;
@@ -1367,7 +1112,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                 ...secondaryGroups.map(
                   (FilterGroupData group) => Padding(
                     padding: const EdgeInsets.only(bottom: 16),
-                    child: _FilterGroup(
+                    child: FilterGroup(
                       group: group,
                       onTap: _navigateDiscoverFilter,
                     ),
@@ -1382,7 +1127,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     }
 
     sections.add(
-      _SurfaceBlock(
+      SurfaceBlock(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -1402,7 +1147,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
           ignoring: _isLoading,
           child: Opacity(
             opacity: _isLoading ? 0.72 : 1,
-            child: _PagerCard(
+            child: PagerCard(
               pager: page.pager,
               onPrev: page.pager.hasPrev
                   ? () {
@@ -1442,7 +1187,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     sections.add(
       _buildAnimatedSectionContent(
         contentKey: _discoverListContentKey(page),
-        child: _TopicIssueList(items: page.items, onTap: _navigateToHref),
+        child: TopicIssueList(items: page.items, onTap: _navigateToHref),
       ),
     );
 
@@ -1453,7 +1198,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
           ignoring: _isLoading,
           child: Opacity(
             opacity: _isLoading ? 0.72 : 1,
-            child: _PagerCard(
+            child: PagerCard(
               pager: page.pager,
               onPrev: page.pager.hasPrev
                   ? () => _navigateToHref(page.pager.prevHref)
@@ -1478,13 +1223,13 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
     if (page.categories.isNotEmpty || page.periods.isNotEmpty) {
       sections.add(
-        _SurfaceBlock(
+        SurfaceBlock(
           title: '榜單切換',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               if (page.categories.isNotEmpty)
-                _RankFilterGroup(
+                RankFilterGroup(
                   label: '榜單類型',
                   items: page.categories,
                   onTap: _navigateRankFilter,
@@ -1502,7 +1247,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                   ),
                 ),
               if (page.periods.isNotEmpty)
-                _RankFilterGroup(
+                RankFilterGroup(
                   label: '統計週期',
                   items: page.periods,
                   onTap: _navigateRankFilter,
@@ -1515,7 +1260,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     }
 
     sections.add(
-      _SurfaceBlock(
+      SurfaceBlock(
         title: '榜单列表',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1529,7 +1274,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                     .map(
                       (RankEntryData item) => Padding(
                         padding: const EdgeInsets.only(bottom: 12),
-                        child: _RankCard(
+                        child: RankCard(
                           item: item,
                           onTap: () => _navigateToHref(item.href),
                         ),
@@ -1552,8 +1297,8 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     final String lastReadChapterPathKey = _lastReadChapterPathKeyForDetail(
       page,
     );
-    final List<_DetailChapterTabData> chapterTabs = _detailChapterTabs(page);
-    final _DetailChapterTabData? activeChapterTab = _activeDetailChapterTab(
+    final List<DetailChapterTabData> chapterTabs = _detailChapterTabs(page);
+    final DetailChapterTabData? activeChapterTab = _activeDetailChapterTab(
       page,
     );
     final List<ChapterData> visibleChapters = _visibleDetailChapters(page);
@@ -1563,7 +1308,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       lastReadChapterPathKey,
     );
     final List<Widget> sections = <Widget>[
-      _DetailHeroCard(
+      DetailHeroCard(
         page: page,
         onReadNow: page.startReadingHref.isNotEmpty
             ? () => _openDetailChapter(page, page.startReadingHref)
@@ -1581,7 +1326,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
     if (page.summary.isNotEmpty) {
       sections.add(
-        _SurfaceBlock(
+        SurfaceBlock(
           title: '內容簡介',
           child: Text(page.summary, style: const TextStyle(height: 1.7)),
         ),
@@ -1590,16 +1335,16 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     }
 
     final List<Widget> infoChips = <Widget>[
-      if (page.authors.isNotEmpty) _InfoChip(label: '作者', value: page.authors),
-      if (page.status.isNotEmpty) _InfoChip(label: '狀態', value: page.status),
+      if (page.authors.isNotEmpty) InfoChip(label: '作者', value: page.authors),
+      if (page.status.isNotEmpty) InfoChip(label: '狀態', value: page.status),
       if (page.updatedAt.isNotEmpty)
-        _InfoChip(label: '更新', value: page.updatedAt),
-      if (page.heat.isNotEmpty) _InfoChip(label: '熱度', value: page.heat),
-      if (page.aliases.isNotEmpty) _InfoChip(label: '別名', value: page.aliases),
+        InfoChip(label: '更新', value: page.updatedAt),
+      if (page.heat.isNotEmpty) InfoChip(label: '熱度', value: page.heat),
+      if (page.aliases.isNotEmpty) InfoChip(label: '別名', value: page.aliases),
     ];
     if (infoChips.isNotEmpty) {
       sections.add(
-        _SurfaceBlock(
+        SurfaceBlock(
           title: '作品信息',
           child: Wrap(spacing: 10, runSpacing: 10, children: infoChips),
         ),
@@ -1608,7 +1353,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     }
 
     sections.add(
-      _SurfaceBlock(
+      SurfaceBlock(
         title: '章節目錄',
         actionLabel: page.chapters.isNotEmpty || page.chapterGroups.isNotEmpty
             ? '选择下载'
@@ -1621,7 +1366,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  _DetailChapterToolbar(
+                  DetailChapterToolbar(
                     tabs: chapterTabs,
                     selectedKey: activeChapterTab?.key,
                     isAscending: _isDetailChapterSortAscending,
@@ -1640,7 +1385,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                         activeChapterTab,
                         visibleChapters,
                       ),
-                      child: _ChapterGrid(
+                      child: ChapterGrid(
                         chapters: visibleChapters,
                         onTap: (String href) => _openDetailChapter(page, href),
                         downloadedChapterPathKeys: downloadedChapterKeys,

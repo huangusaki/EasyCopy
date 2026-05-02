@@ -18,23 +18,41 @@ class EasyCopyCoverImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget child = imageUrl.isEmpty
-        ? const EasyCopyPlaceholderImage()
-        : CachedNetworkImage(
-            imageUrl: imageUrl,
-            fit: fit,
-            cacheManager: EasyCopyImageCaches.coverCache,
-            errorWidget: (_, __, ___) => const EasyCopyPlaceholderImage(),
-          );
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        Widget child = imageUrl.isEmpty
+            ? const EasyCopyPlaceholderImage()
+            : CachedNetworkImage(
+                imageUrl: imageUrl,
+                fit: fit,
+                memCacheWidth: _coverCacheWidth(context, constraints),
+                cacheManager: EasyCopyImageCaches.coverCache,
+                placeholder: (_, __) => const EasyCopyCoverSkeleton(),
+                errorWidget: (_, __, ___) => const EasyCopyPlaceholderImage(),
+              );
 
-    if (aspectRatio != null) {
-      child = AspectRatio(aspectRatio: aspectRatio!, child: child);
+        if (aspectRatio != null) {
+          child = AspectRatio(aspectRatio: aspectRatio!, child: child);
+        }
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(borderRadius),
+          child: child,
+        );
+      },
+    );
+  }
+
+  int? _coverCacheWidth(BuildContext context, BoxConstraints constraints) {
+    final double logicalWidth = constraints.hasBoundedWidth
+        ? constraints.maxWidth
+        : MediaQuery.sizeOf(context).width;
+    if (!logicalWidth.isFinite || logicalWidth <= 0) {
+      return null;
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(borderRadius),
-      child: child,
-    );
+    final double devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+    return (logicalWidth * devicePixelRatio).ceil().clamp(160, 720).toInt();
   }
 }
 
@@ -62,6 +80,18 @@ class EasyCopyPlaceholderImage extends StatelessWidget {
           color: colorScheme.onSurface.withValues(alpha: 0.42),
         ),
       ),
+    );
+  }
+}
+
+class EasyCopyCoverSkeleton extends StatelessWidget {
+  const EasyCopyCoverSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(color: colorScheme.surfaceContainerHigh),
     );
   }
 }

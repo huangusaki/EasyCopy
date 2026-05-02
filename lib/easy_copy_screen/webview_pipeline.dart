@@ -294,7 +294,7 @@ extension _EasyCopyScreenWebviewPipeline on _EasyCopyScreenState {
 
   Future<ReaderPageData> _prepareReaderPageForDownload(Uri uri) async {
     final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
-    return resolveReaderPageForDownload(
+    return ReaderPageDownloadResolver.resolve(
       targetUri,
       loadFromStorageCache: (Uri chapterUri) {
         return _downloadService.loadCachedReaderPage(chapterUri.toString());

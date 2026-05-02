@@ -806,6 +806,10 @@ class SiteApiClient {
             'last_chapter',
             'browse',
           ]);
+          final Map<String, Object?> browse = _firstNonEmptyMap(item, <String>[
+            'browse',
+            'last_browse',
+          ]);
           final Map<String, Object?> source = comic.isEmpty ? item : comic;
           final String pathWord = _pickString(source, <String>[
             'path_word',
@@ -838,11 +842,19 @@ class SiteApiClient {
             comicHref: _buildComicHref(pathWord, source, item),
             chapterLabel: chapterLabel,
             chapterHref: _buildChapterHref(pathWord, chapterUuid),
-            visitedAt: _pickString(item, <String>[
-              'datetime_created',
-              'datetime_updated',
-              'created_at',
-            ]),
+            visitedAt: _pickFirstString(
+              <Map<String, Object?>>[item, browse],
+              const <String>[
+                'datetime_created',
+                'datetime_updated',
+                'created_at',
+                'updated_at',
+                'browse_at',
+                'browse_time',
+                'read_at',
+                'read_time',
+              ],
+            ),
           );
         })
         .where((ProfileHistoryItem item) => item.title.isNotEmpty)
@@ -1024,6 +1036,19 @@ class SiteApiClient {
       final Object? value = source[key];
       if (value is String && value.trim().isNotEmpty) {
         return value.trim();
+      }
+    }
+    return '';
+  }
+
+  String _pickFirstString(
+    List<Map<String, Object?>> sources,
+    List<String> keys,
+  ) {
+    for (final Map<String, Object?> source in sources) {
+      final String value = _pickString(source, keys);
+      if (value.isNotEmpty) {
+        return value;
       }
     }
     return '';

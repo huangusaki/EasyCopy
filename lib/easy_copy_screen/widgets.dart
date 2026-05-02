@@ -1,7 +1,14 @@
-part of '../easy_copy_screen.dart';
+// ignore_for_file: use_key_in_widget_constructors
 
-class _SurfaceBlock extends StatelessWidget {
-  const _SurfaceBlock({
+import 'package:easy_copy/easy_copy_screen/models.dart';
+import 'package:easy_copy/models/page_models.dart';
+import 'package:easy_copy/widgets/cover_image.dart';
+import 'package:easy_copy/widgets/settings_ui.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+class SurfaceBlock extends StatelessWidget {
+  const SurfaceBlock({
     this.title,
     required this.child,
     this.actionLabel,
@@ -25,8 +32,8 @@ class _SurfaceBlock extends StatelessWidget {
   }
 }
 
-class _DetailChapterToolbar extends StatelessWidget {
-  const _DetailChapterToolbar({
+class DetailChapterToolbar extends StatelessWidget {
+  const DetailChapterToolbar({
     required this.tabs,
     required this.selectedKey,
     required this.isAscending,
@@ -34,7 +41,7 @@ class _DetailChapterToolbar extends StatelessWidget {
     required this.onToggleSort,
   });
 
-  final List<_DetailChapterTabData> tabs;
+  final List<DetailChapterTabData> tabs;
   final String? selectedKey;
   final bool isAscending;
   final ValueChanged<String> onSelectTab;
@@ -51,9 +58,9 @@ class _DetailChapterToolbar extends StatelessWidget {
             child: Row(
               children: tabs
                   .map(
-                    (_DetailChapterTabData tab) => Padding(
+                    (DetailChapterTabData tab) => Padding(
                       padding: const EdgeInsets.only(right: 8),
-                      child: _DetailChapterControlChip(
+                      child: DetailChapterControlChip(
                         label: tab.label,
                         active: tab.key == selectedKey,
                         enabled: tab.enabled,
@@ -66,7 +73,7 @@ class _DetailChapterToolbar extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
-        _DetailChapterControlChip(
+        DetailChapterControlChip(
           label: isAscending ? '正序' : '倒序',
           icon: isAscending
               ? Icons.arrow_upward_rounded
@@ -80,8 +87,8 @@ class _DetailChapterToolbar extends StatelessWidget {
   }
 }
 
-class _DetailChapterControlChip extends StatelessWidget {
-  const _DetailChapterControlChip({
+class DetailChapterControlChip extends StatelessWidget {
+  const DetailChapterControlChip({
     required this.label,
     required this.active,
     required this.enabled,
@@ -151,9 +158,8 @@ class _DetailChapterControlChip extends StatelessWidget {
   }
 }
 
-
-class _FeatureBannerCard extends StatelessWidget {
-  const _FeatureBannerCard({required this.banner, required this.onTap});
+class FeatureBannerCard extends StatelessWidget {
+  const FeatureBannerCard({required this.banner, required this.onTap});
 
   final HeroBannerData banner;
   final VoidCallback onTap;
@@ -238,8 +244,8 @@ class _FeatureBannerCard extends StatelessWidget {
   }
 }
 
-class _TopicIssueList extends StatelessWidget {
-  const _TopicIssueList({required this.items, required this.onTap});
+class TopicIssueList extends StatelessWidget {
+  const TopicIssueList({required this.items, required this.onTap});
 
   final List<ComicCardData> items;
   final ValueChanged<String> onTap;
@@ -259,7 +265,7 @@ class _TopicIssueList extends StatelessWidget {
     return Column(
       children: List<Widget>.generate(items.length, (int index) {
         final ComicCardData item = items[index];
-        return _TopicIssueRow(
+        return TopicIssueRow(
           item: item,
           isLast: index == items.length - 1,
           onTap: () => onTap(item.href),
@@ -269,8 +275,8 @@ class _TopicIssueList extends StatelessWidget {
   }
 }
 
-class _TopicIssueRow extends StatelessWidget {
-  const _TopicIssueRow({
+class TopicIssueRow extends StatelessWidget {
+  const TopicIssueRow({
     required this.item,
     required this.isLast,
     required this.onTap,
@@ -317,7 +323,7 @@ class _TopicIssueRow extends StatelessWidget {
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: <Widget>[
                             if (item.badge.trim().isNotEmpty)
-                              _TopicMetaPill(
+                              TopicMetaPill(
                                 label: item.badge.replaceAll('專題', '专题'),
                               ),
                             if (item.secondaryText.trim().isNotEmpty)
@@ -376,8 +382,8 @@ class _TopicIssueRow extends StatelessWidget {
   }
 }
 
-class _TopicMetaPill extends StatelessWidget {
-  const _TopicMetaPill({required this.label});
+class TopicMetaPill extends StatelessWidget {
+  const TopicMetaPill({required this.label});
 
   final String label;
 
@@ -404,18 +410,20 @@ class _TopicMetaPill extends StatelessWidget {
   }
 }
 
-class _FilterGroup extends StatelessWidget {
-  const _FilterGroup({
+class FilterGroup extends StatelessWidget {
+  const FilterGroup({
     required this.group,
     required this.onTap,
     this.actionLabel,
     this.onActionTap,
+    this.actionExpanded = false,
   });
 
   final FilterGroupData group;
   final ValueChanged<String> onTap;
   final String? actionLabel;
   final VoidCallback? onActionTap;
+  final bool actionExpanded;
 
   @override
   Widget build(BuildContext context) {
@@ -424,44 +432,32 @@ class _FilterGroup extends StatelessWidget {
       children: <Widget>[
         Padding(
           padding: const EdgeInsets.only(bottom: 10),
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  group.label,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              if (actionLabel != null && onActionTap != null)
-                TextButton(
-                  onPressed: onActionTap,
-                  style: TextButton.styleFrom(
-                    foregroundColor: Theme.of(context).colorScheme.primary,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: Text(actionLabel!),
-                ),
-            ],
+          child: Text(
+            group.label,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
           ),
         ),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: group.options
-              .map(
-                (LinkAction option) => _LinkChip(
+              .map<Widget>(
+                (LinkAction option) => LinkChip(
                   label: option.label,
                   active: option.active,
                   onTap: () => onTap(option.href),
                 ),
+              )
+              .followedBy(
+                actionLabel != null && onActionTap != null
+                    ? <Widget>[
+                        FilterActionChip(
+                          label: actionLabel!,
+                          expanded: actionExpanded,
+                          onTap: onActionTap!,
+                        ),
+                      ]
+                    : const <Widget>[],
               )
               .toList(growable: false),
         ),
@@ -470,8 +466,8 @@ class _FilterGroup extends StatelessWidget {
   }
 }
 
-class _RankFilterGroup extends StatelessWidget {
-  const _RankFilterGroup({
+class RankFilterGroup extends StatelessWidget {
+  const RankFilterGroup({
     required this.label,
     required this.items,
     required this.onTap,
@@ -496,7 +492,7 @@ class _RankFilterGroup extends StatelessWidget {
           runSpacing: 8,
           children: items
               .map(
-                (LinkAction item) => _LinkChip(
+                (LinkAction item) => LinkChip(
                   label: item.label,
                   active: item.active,
                   onTap: () => onTap(item.href),
@@ -509,8 +505,8 @@ class _RankFilterGroup extends StatelessWidget {
   }
 }
 
-class _LinkChip extends StatelessWidget {
-  const _LinkChip({
+class LinkChip extends StatelessWidget {
+  const LinkChip({
     required this.label,
     required this.active,
     required this.onTap,
@@ -559,8 +555,67 @@ class _LinkChip extends StatelessWidget {
   }
 }
 
-class _PagerCard extends StatefulWidget {
-  const _PagerCard({
+class FilterActionChip extends StatelessWidget {
+  const FilterActionChip({
+    required this.label,
+    required this.expanded,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool expanded;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+        decoration: BoxDecoration(
+          color: colorScheme.primary.withValues(alpha: 0.18),
+          border: Border.all(color: colorScheme.primary.withValues(alpha: 0.9)),
+          borderRadius: BorderRadius.circular(999),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: colorScheme.primary.withValues(alpha: 0.16),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colorScheme.primary,
+                fontWeight: FontWeight.w900,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(
+              expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+              size: 16,
+              color: colorScheme.primary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class PagerCard extends StatefulWidget {
+  const PagerCard({
     required this.pager,
     required this.onPrev,
     required this.onNext,
@@ -573,10 +628,10 @@ class _PagerCard extends StatefulWidget {
   final ValueChanged<int>? onJumpToPage;
 
   @override
-  State<_PagerCard> createState() => _PagerCardState();
+  State<PagerCard> createState() => PagerCardState();
 }
 
-class _PagerCardState extends State<_PagerCard> {
+class PagerCardState extends State<PagerCard> {
   late final TextEditingController _pageController;
 
   @override
@@ -588,7 +643,7 @@ class _PagerCardState extends State<_PagerCard> {
   }
 
   @override
-  void didUpdateWidget(covariant _PagerCard oldWidget) {
+  void didUpdateWidget(covariant PagerCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.pager.currentLabel != widget.pager.currentLabel ||
         oldWidget.pager.totalLabel != widget.pager.totalLabel) {
@@ -640,7 +695,7 @@ class _PagerCardState extends State<_PagerCard> {
         children: <Widget>[
           Row(
             children: <Widget>[
-              _PagerNavButton(
+              PagerNavButton(
                 icon: Icons.arrow_back_rounded,
                 label: '上一页',
                 onPressed: widget.onPrev == null
@@ -672,7 +727,7 @@ class _PagerCardState extends State<_PagerCard> {
                   ),
                 ),
               ),
-              _PagerNavButton(
+              PagerNavButton(
                 icon: Icons.arrow_forward_rounded,
                 label: '下一页',
                 reverse: true,
@@ -796,8 +851,8 @@ class _PagerCardState extends State<_PagerCard> {
   }
 }
 
-class _PagerNavButton extends StatelessWidget {
-  const _PagerNavButton({
+class PagerNavButton extends StatelessWidget {
+  const PagerNavButton({
     required this.icon,
     required this.label,
     this.onPressed,
@@ -862,8 +917,8 @@ class _PagerNavButton extends StatelessWidget {
   }
 }
 
-class _RankCard extends StatelessWidget {
-  const _RankCard({required this.item, required this.onTap});
+class RankCard extends StatelessWidget {
+  const RankCard({required this.item, required this.onTap});
 
   final RankEntryData item;
   final VoidCallback onTap;
@@ -1001,8 +1056,8 @@ class _RankCard extends StatelessWidget {
   }
 }
 
-class _DetailHeroCard extends StatelessWidget {
-  const _DetailHeroCard({
+class DetailHeroCard extends StatelessWidget {
+  const DetailHeroCard({
     required this.page,
     required this.onReadNow,
     required this.onDownload,
@@ -1075,7 +1130,7 @@ class _DetailHeroCard extends StatelessWidget {
                         children: <Widget>[
                           if (page.authorLinks.isNotEmpty)
                             ...page.authorLinks.map(
-                              (LinkAction author) => _LinkChip(
+                              (LinkAction author) => LinkChip(
                                 label: author.label,
                                 active: true,
                                 onTap: () => onAuthorTap(author.href),
@@ -1083,7 +1138,7 @@ class _DetailHeroCard extends StatelessWidget {
                             )
                           else
                             ...authorLabels.map(
-                              (String author) => _LinkChip(
+                              (String author) => LinkChip(
                                 label: author,
                                 active: true,
                                 onTap: () => onTagTap(author),
@@ -1092,7 +1147,7 @@ class _DetailHeroCard extends StatelessWidget {
                           ...page.tags
                               .take(6)
                               .map(
-                                (LinkAction tag) => _LinkChip(
+                                (LinkAction tag) => LinkChip(
                                   label: tag.label,
                                   active: true,
                                   onTap: () => onTagTap(tag.label),
@@ -1151,8 +1206,8 @@ class _DetailHeroCard extends StatelessWidget {
   }
 }
 
-class _InfoChip extends StatelessWidget {
-  const _InfoChip({required this.label, required this.value});
+class InfoChip extends StatelessWidget {
+  const InfoChip({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -1191,8 +1246,8 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
-class _ChapterGrid extends StatelessWidget {
-  const _ChapterGrid({
+class ChapterGrid extends StatelessWidget {
+  const ChapterGrid({
     required this.chapters,
     required this.onTap,
     this.downloadedChapterPathKeys = const <String>{},
@@ -1319,75 +1374,6 @@ class _ChapterGrid extends StatelessWidget {
             ? child
             : KeyedSubtree(key: itemKey, child: child);
       },
-    );
-  }
-}
-
-class _ChapterPickerSection {
-  const _ChapterPickerSection({required this.label, required this.chapters});
-
-  final String label;
-  final List<ChapterData> chapters;
-}
-
-class _DetailChapterTabData {
-  const _DetailChapterTabData({
-    required this.key,
-    required this.label,
-    required this.chapters,
-  });
-
-  final String key;
-  final String label;
-  final List<ChapterData> chapters;
-
-  bool get enabled => chapters.isNotEmpty;
-}
-
-class _AdjacentChapterLinks {
-  const _AdjacentChapterLinks({this.prevHref = '', this.nextHref = ''});
-
-  final String prevHref;
-  final String nextHref;
-}
-
-class _CachedChapterNavigationContext {
-  const _CachedChapterNavigationContext({
-    this.prevHref = '',
-    this.nextHref = '',
-    this.catalogHref = '',
-  });
-
-  final String prevHref;
-  final String nextHref;
-  final String catalogHref;
-
-  bool get hasAnyValue =>
-      prevHref.trim().isNotEmpty ||
-      nextHref.trim().isNotEmpty ||
-      catalogHref.trim().isNotEmpty;
-
-  _CachedChapterNavigationContext copyWith({
-    String? prevHref,
-    String? nextHref,
-    String? catalogHref,
-  }) {
-    return _CachedChapterNavigationContext(
-      prevHref: prevHref ?? this.prevHref,
-      nextHref: nextHref ?? this.nextHref,
-      catalogHref: catalogHref ?? this.catalogHref,
-    );
-  }
-
-  _CachedChapterNavigationContext mergeMissing(
-    _CachedChapterNavigationContext fallback,
-  ) {
-    return _CachedChapterNavigationContext(
-      prevHref: prevHref.trim().isNotEmpty ? prevHref : fallback.prevHref,
-      nextHref: nextHref.trim().isNotEmpty ? nextHref : fallback.nextHref,
-      catalogHref: catalogHref.trim().isNotEmpty
-          ? catalogHref
-          : fallback.catalogHref,
     );
   }
 }

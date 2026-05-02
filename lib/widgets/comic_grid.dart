@@ -16,51 +16,110 @@ class ComicGrid extends StatelessWidget {
   final ValueChanged<String>? onLongPress;
   final String emptyMessage;
 
+  static const int _crossAxisCount = 3;
+  static const double _crossAxisSpacing = 12;
+  static const double _mainAxisSpacing = 14;
+  static const double _childAspectRatio = 0.50;
+
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
       return Text(emptyMessage);
     }
 
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: items.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 14,
-        childAspectRatio: 0.50,
-      ),
-      itemBuilder: (BuildContext context, int index) {
-        final ComicCardData item = items[index];
-        return _ComicCard(
-          item: item,
-          onTap: () => onTap(item.href),
-          onLongPress: onLongPress == null
-              ? null
-              : () => onLongPress!(item.href),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double maxWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width;
+        final double spacingWidth = _crossAxisSpacing * (_crossAxisCount - 1);
+        final double itemWidth = ((maxWidth - spacingWidth) / _crossAxisCount)
+            .clamp(0.0, maxWidth)
+            .toDouble();
+
+        if (itemWidth <= 0) {
+          return const SizedBox.shrink();
+        }
+
+        final double itemHeight = itemWidth / _childAspectRatio;
+        final int rowCount =
+            (items.length + _crossAxisCount - 1) ~/ _crossAxisCount;
+
+        return Column(
+          children: <Widget>[
+            for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
+              Padding(
+                padding: EdgeInsets.only(
+                  bottom: rowIndex == rowCount - 1 ? 0 : _mainAxisSpacing,
+                ),
+                child: Row(
+                  children: <Widget>[
+                    for (
+                      int columnIndex = 0;
+                      columnIndex < _crossAxisCount;
+                      columnIndex++
+                    ) ...<Widget>[
+                      if (columnIndex > 0)
+                        const SizedBox(width: _crossAxisSpacing),
+                      SizedBox(
+                        width: itemWidth,
+                        height: itemHeight,
+                        child: _buildItem(rowIndex, columnIndex),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+          ],
         );
       },
+    );
+  }
+
+  Widget _buildItem(int rowIndex, int columnIndex) {
+    final int itemIndex = rowIndex * _crossAxisCount + columnIndex;
+    if (itemIndex >= items.length) {
+      return const SizedBox.shrink();
+    }
+
+    final ComicCardData item = items[itemIndex];
+    return _ComicCard(
+      key: ValueKey<String>(item.href),
+      item: item,
+      onTap: onTap,
+      onLongPress: onLongPress,
     );
   }
 }
 
 class _ComicCard extends StatelessWidget {
-  const _ComicCard({required this.item, required this.onTap, this.onLongPress});
+  const _ComicCard({
+    required this.item,
+    required this.onTap,
+    this.onLongPress,
+    super.key,
+  });
 
   static const double _titleHeight = 33.6;
 
   final ComicCardData item;
-  final VoidCallback onTap;
-  final VoidCallback? onLongPress;
+  final ValueChanged<String> onTap;
+  final ValueChanged<String>? onLongPress;
+
+  void _handleTap() {
+    onTap(item.href);
+  }
+
+  void _handleLongPress() {
+    onLongPress?.call(item.href);
+  }
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return InkWell(
-      onTap: onTap,
-      onLongPress: onLongPress,
+      onTap: _handleTap,
+      onLongPress: onLongPress == null ? null : _handleLongPress,
       borderRadius: BorderRadius.circular(20),
       child: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
