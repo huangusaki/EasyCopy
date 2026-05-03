@@ -141,24 +141,13 @@ extension _EasyCopyScreenRouteClassifiers on _EasyCopyScreenState {
     return _session.isAuthenticated && _isDetailCatalogUri(uri);
   }
 
-  Uri get _visiblePageUriForTransition {
-    final EasyCopyPage? page = _page;
-    if (page == null) {
-      return _currentUri;
-    }
-    return AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
-  }
-
-  String get _standardBodyTransitionScope =>
-      standardPageTransitionScope(_page, _visiblePageUriForTransition);
-
   bool _isDiscoverMoreCategoryOption(LinkAction option) {
     return option.label.contains('查看全部分類') ||
         option.href.contains('/filter?point=');
   }
 
   List<LinkAction> _visibleDiscoverThemeOptions(List<LinkAction> options) {
-    if (_isDiscoverThemeExpanded || options.length <= 16) {
+    if (_discoverFilterExpandedNotifier.value || options.length <= 16) {
       return options;
     }
     const int previewCount = 15;

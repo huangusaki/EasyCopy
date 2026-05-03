@@ -22,90 +22,92 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   }
 
   Widget _buildStandardBody(BuildContext context) {
-    final List<Widget> children = _buildStandardBodyChildren(context);
-    final String contentKey = _standardContentTransitionKey;
+    final List<Widget> slivers = _buildStandardBodySlivers(context);
 
     return RefreshIndicator(
       onRefresh: _retryCurrentPage,
       child: NotificationListener<ScrollNotification>(
         onNotification: _handleStandardScrollNotification,
-        child: ListView.builder(
+        child: CustomScrollView(
           controller: _standardScrollController,
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-          itemCount: children.length,
-          itemBuilder: (BuildContext context, int index) {
-            return KeyedSubtree(
-              key: ValueKey<String>('$contentKey::$index'),
-              child: children[index],
-            );
-          },
+          slivers: slivers,
         ),
       ),
     );
   }
 
-  String get _standardContentTransitionKey {
-    final String prefix = _errorMessage != null && _page == null
-        ? 'error'
-        : 'page';
-    return '$prefix::$_standardBodyTransitionScope';
+  Widget _hPaddedBox(Widget child) {
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverToBoxAdapter(child: child),
+    );
   }
 
-  List<Widget> _buildStandardBodyChildren(BuildContext context) {
-    if (_errorMessage != null && _page == null) {
-      return _buildErrorSections(context);
-    }
-    return _buildStandardChildren(context);
+  Widget _hPaddedSliver(Widget sliver) {
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: sliver,
+    );
   }
 
-  List<Widget> _buildStandardChildren(BuildContext context) {
-    final List<Widget> children = <Widget>[
-      ..._buildStandardTopContent(context),
+  List<Widget> _buildStandardBodySlivers(BuildContext context) {
+    final List<Widget> slivers = <Widget>[
+      const SliverToBoxAdapter(child: SizedBox(height: 16)),
     ];
 
+    if (_errorMessage != null && _page == null) {
+      slivers.addAll(_buildErrorSections(context));
+      slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 28)));
+      return slivers;
+    }
+
+    slivers.addAll(_buildStandardTopContent(context));
+
     if (_page == null) {
-      children.addAll(_buildLoadingSections(context));
-      return children;
+      slivers.addAll(_buildLoadingSections(context));
+    } else {
+      final EasyCopyPage page = _page!;
+      if (page is HomePageData) {
+        slivers.addAll(_buildHomeSections(page));
+      } else if (page is DiscoverPageData) {
+        slivers.addAll(_buildDiscoverSections(page));
+      } else if (page is RankPageData) {
+        slivers.addAll(_buildRankSections(page));
+      } else if (page is DetailPageData) {
+        slivers.addAll(_buildDetailSections(page));
+      } else if (page is ProfilePageData) {
+        slivers.addAll(_buildProfileSections(page));
+      } else if (page is UnknownPageData) {
+        slivers.addAll(_buildMessageSections(page.message));
+      }
     }
 
-    final EasyCopyPage page = _page!;
-    if (page is HomePageData) {
-      children.addAll(_buildHomeSections(page));
-    } else if (page is DiscoverPageData) {
-      children.addAll(_buildDiscoverSections(page));
-    } else if (page is RankPageData) {
-      children.addAll(_buildRankSections(page));
-    } else if (page is DetailPageData) {
-      children.addAll(_buildDetailSections(page));
-    } else if (page is ProfilePageData) {
-      children.addAll(_buildProfileSections(page));
-    } else if (page is UnknownPageData) {
-      children.addAll(_buildMessageSections(page.message));
-    }
-
-    return children;
+    slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 28)));
+    return slivers;
   }
 
   List<Widget> _buildStandardTopContent(BuildContext context) {
     if (_shouldShowDiscoverSearchChrome) {
       return <Widget>[
-        _buildDiscoverSearchChrome(context),
-        const SizedBox(height: 18),
+        _hPaddedBox(_buildDiscoverSearchChrome(context)),
+        _hPaddedBox(const SizedBox(height: 18)),
       ];
     }
 
     if (_shouldShowHeaderCard) {
       return <Widget>[
-        _buildHeaderCard(
-          context,
-          title: _pageTitle,
-          showBackButton: _shouldShowBackButton,
-          showSearchBar: _shouldShowSearchBar,
+        _hPaddedBox(
+          _buildHeaderCard(
+            context,
+            title: _pageTitle,
+            showBackButton: _shouldShowBackButton,
+            showSearchBar: _shouldShowSearchBar,
+          ),
         ),
-        const SizedBox(height: 18),
+        _hPaddedBox(const SizedBox(height: 18)),
       ];
     }
 
@@ -327,51 +329,54 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
   List<Widget> _buildProfileSections(ProfilePageData page) {
     return <Widget>[
-      ProfilePageView(
-        page: page,
-        onAuthenticate: _openAuthFlow,
-        onLogout: _logout,
-        onOpenComic: _navigateToHref,
-        onOpenHistory: (ProfileHistoryItem item) {
-          final String targetHref = item.chapterHref.isNotEmpty
-              ? item.chapterHref
-              : item.comicHref;
-          _navigateToHref(targetHref);
-        },
-        onOpenCollections: () =>
-            _openProfileSubview(ProfileSubview.collections),
-        onOpenHistoryPage: () => _openProfileSubview(ProfileSubview.history),
-        onOpenCachedComicPage: () => _openProfileSubview(ProfileSubview.cached),
-        onOpenCollectionsPage: (int page) =>
-            _openProfileSubview(ProfileSubview.collections, page: page),
-        onOpenHistoryPageNumber: (int page) =>
-            _openProfileSubview(ProfileSubview.history, page: page),
-        currentHost: _hostManager.currentHost,
-        knownHosts: _hostManager.knownHosts,
-        candidateHosts: _hostManager.candidateHosts,
-        candidateHostAliases: _hostManager.candidateHostAliases,
-        hostSnapshot: _hostManager.probeSnapshot,
-        isRefreshingHosts: _isUpdatingHostSettings,
-        onRefreshHosts: _refreshHostSettings,
-        onUseAutomaticHostSelection: _useAutomaticHostSelection,
-        onSelectHost: _selectHost,
-        themePreference: _preferencesController.themePreference,
-        onThemePreferenceChanged: (AppThemePreference preference) {
-          unawaited(_preferencesController.setThemePreference(preference));
-        },
-        versionLabel: _appVersionLabel,
-        isCheckingForUpdates: _isCheckingForUpdates,
-        onCheckForUpdates: () {
-          unawaited(_checkForUpdates());
-        },
-        onOpenProjectRepository: () {
-          unawaited(_openProjectRepository());
-        },
-        afterContinueReading: _buildDownloadManagementEntry(),
-        cachedComicCards: _cachedComicCardsForProfile(),
-        activeSubview: AppConfig.profileSubviewForUri(_currentUri),
-        onOpenCachedComic: _openCachedComicFromProfile,
-        onDeleteCachedComic: _deleteCachedComicFromProfile,
+      _hPaddedBox(
+        ProfilePageView(
+          page: page,
+          onAuthenticate: _openAuthFlow,
+          onLogout: _logout,
+          onOpenComic: _navigateToHref,
+          onOpenHistory: (ProfileHistoryItem item) {
+            final String targetHref = item.chapterHref.isNotEmpty
+                ? item.chapterHref
+                : item.comicHref;
+            _navigateToHref(targetHref);
+          },
+          onOpenCollections: () =>
+              _openProfileSubview(ProfileSubview.collections),
+          onOpenHistoryPage: () => _openProfileSubview(ProfileSubview.history),
+          onOpenCachedComicPage: () =>
+              _openProfileSubview(ProfileSubview.cached),
+          onOpenCollectionsPage: (int page) =>
+              _openProfileSubview(ProfileSubview.collections, page: page),
+          onOpenHistoryPageNumber: (int page) =>
+              _openProfileSubview(ProfileSubview.history, page: page),
+          currentHost: _hostManager.currentHost,
+          knownHosts: _hostManager.knownHosts,
+          candidateHosts: _hostManager.candidateHosts,
+          candidateHostAliases: _hostManager.candidateHostAliases,
+          hostSnapshot: _hostManager.probeSnapshot,
+          isRefreshingHosts: _isUpdatingHostSettings,
+          onRefreshHosts: _refreshHostSettings,
+          onUseAutomaticHostSelection: _useAutomaticHostSelection,
+          onSelectHost: _selectHost,
+          themePreference: _preferencesController.themePreference,
+          onThemePreferenceChanged: (AppThemePreference preference) {
+            unawaited(_preferencesController.setThemePreference(preference));
+          },
+          versionLabel: _appVersionLabel,
+          isCheckingForUpdates: _isCheckingForUpdates,
+          onCheckForUpdates: () {
+            unawaited(_checkForUpdates());
+          },
+          onOpenProjectRepository: () {
+            unawaited(_openProjectRepository());
+          },
+          afterContinueReading: _buildDownloadManagementEntry(),
+          cachedComicCards: _cachedComicCardsForProfile(),
+          activeSubview: AppConfig.profileSubviewForUri(_currentUri),
+          onOpenCachedComic: _openCachedComicFromProfile,
+          onDeleteCachedComic: _deleteCachedComicFromProfile,
+        ),
       ),
     ];
   }
@@ -881,7 +886,12 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   }
 
   List<Widget> _buildLoadingSections(BuildContext context) {
-    return <Widget>[_buildLoadingIndicator(context)];
+    return <Widget>[
+      SliverFillRemaining(
+        hasScrollBody: false,
+        child: _buildLoadingIndicator(context),
+      ),
+    ];
   }
 
   Widget _buildLoadingIndicator(BuildContext context) {
@@ -916,52 +926,54 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   List<Widget> _buildErrorSections(BuildContext context) {
     return <Widget>[
       ..._buildStandardTopContent(context),
-      AppSurfaceCard(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: <Widget>[
-            Icon(
-              Icons.cloud_off_rounded,
-              size: 48,
-              color: Theme.of(context).colorScheme.error,
-            ),
-            const SizedBox(height: 14),
-            const Text(
-              '内容整理失败',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 10),
-            Text(_errorMessage ?? '', textAlign: TextAlign.center),
-            const SizedBox(height: 10),
-            Text(
-              _currentUri.toString(),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withValues(alpha: 0.62),
-                fontSize: 12,
+      _hPaddedBox(
+        AppSurfaceCard(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: <Widget>[
+              Icon(
+                Icons.cloud_off_rounded,
+                size: 48,
+                color: Theme.of(context).colorScheme.error,
               ),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: FilledButton.tonal(
-                    onPressed: _loadHome,
-                    child: const Text('回到首頁'),
-                  ),
+              const SizedBox(height: 14),
+              const Text(
+                '内容整理失败',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 10),
+              Text(_errorMessage ?? '', textAlign: TextAlign.center),
+              const SizedBox(height: 10),
+              Text(
+                _currentUri.toString(),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.62),
+                  fontSize: 12,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: _retryCurrentPage,
-                    child: const Text('重新整理'),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: FilledButton.tonal(
+                      onPressed: _loadHome,
+                      child: const Text('回到首頁'),
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: _retryCurrentPage,
+                      child: const Text('重新整理'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     ];
@@ -1014,29 +1026,33 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
     if (page.feature != null) {
       sections.add(
-        FeatureBannerCard(
-          banner: page.feature!,
-          onTap: () =>
-              _navigateToHref(AppConfig.resolvePath('/topic').toString()),
+        _hPaddedBox(
+          FeatureBannerCard(
+            banner: page.feature!,
+            onTap: () =>
+                _navigateToHref(AppConfig.resolvePath('/topic').toString()),
+          ),
         ),
       );
-      sections.add(const SizedBox(height: 18));
+      sections.add(_hPaddedBox(const SizedBox(height: 18)));
     }
 
     for (final ComicSectionData section in page.sections) {
       sections.add(
-        SurfaceBlock(
-          title: section.title,
-          actionLabel: section.href.isNotEmpty ? '更多' : null,
-          onActionTap: section.href.isNotEmpty
-              ? () {
-                  unawaited(_openHomeSectionHref(section.href));
-                }
-              : null,
-          child: ComicGrid(items: section.items, onTap: _navigateToHref),
+        _hPaddedBox(
+          SurfaceBlock(
+            title: section.title,
+            actionLabel: section.href.isNotEmpty ? '更多' : null,
+            onActionTap: section.href.isNotEmpty
+                ? () {
+                    unawaited(_openHomeSectionHref(section.href));
+                  }
+                : null,
+            child: ComicGrid(items: section.items, onTap: _navigateToHref),
+          ),
         ),
       );
-      sections.add(const SizedBox(height: 18));
+      sections.add(_hPaddedBox(const SizedBox(height: 18)));
     }
 
     return sections;
@@ -1080,88 +1096,125 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
           .toList(growable: false);
 
       sections.add(
-        SurfaceBlock(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              FilterGroup(
-                group: FilterGroupData(
-                  label: primaryGroup.label,
-                  options: _visibleDiscoverThemeOptions(themeOptions),
-                ),
-                onTap: _navigateDiscoverFilter,
-                actionLabel: _isDiscoverThemeExpanded ? '收起' : '全部',
-                actionExpanded: _isDiscoverThemeExpanded,
-                onActionTap: () {
-                  _setStateIfMounted(() {
-                    _isDiscoverThemeExpanded = !_isDiscoverThemeExpanded;
-                  });
-                },
-              ),
-              if (secondaryGroups.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 18),
-                Builder(
-                  builder: (BuildContext context) {
-                    return Container(
-                      height: 1,
-                      color: Theme.of(context).dividerColor,
-                    );
-                  },
-                ),
-                const SizedBox(height: 18),
-                ...secondaryGroups.map(
-                  (FilterGroupData group) => Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: FilterGroup(
-                      group: group,
+        _hPaddedBox(
+          ValueListenableBuilder<bool>(
+            valueListenable: _discoverFilterExpandedNotifier,
+            builder: (BuildContext context, bool expanded, Widget? _) {
+              final List<LinkAction> visibleThemeOptions =
+                  _visibleDiscoverThemeOptions(themeOptions);
+              return SurfaceBlock(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    FilterGroup(
+                      group: FilterGroupData(
+                        label: primaryGroup.label,
+                        options: visibleThemeOptions,
+                      ),
                       onTap: _navigateDiscoverFilter,
+                      actionLabel:
+                          themeOptions.length > 16
+                          ? (expanded ? '收起' : '全部')
+                          : null,
+                      actionExpanded: expanded,
+                      onActionTap: themeOptions.length > 16
+                          ? () {
+                              _discoverFilterExpandedNotifier.value = !expanded;
+                            }
+                          : null,
                     ),
-                  ),
+                    if (secondaryGroups.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 18),
+                      Container(
+                        height: 1,
+                        color: Theme.of(context).dividerColor,
+                      ),
+                      const SizedBox(height: 18),
+                      for (final FilterGroupData group in secondaryGroups)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: FilterGroup(
+                            group: group,
+                            onTap: _navigateDiscoverFilter,
+                          ),
+                        ),
+                    ],
+                  ],
                 ),
-              ],
-            ],
+              );
+            },
           ),
         ),
       );
-      sections.add(const SizedBox(height: 18));
+      sections.add(_hPaddedBox(const SizedBox(height: 18)));
     }
 
-    sections.add(
-      SurfaceBlock(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            if (_isLoading) _buildInlineSectionLoadingIndicator(),
-            _buildAnimatedSectionContent(
-              contentKey: _discoverListContentKey(page),
-              child: ComicGrid(items: page.items, onTap: _navigateToHref),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (hasPager) {
-      sections.add(const SizedBox(height: 18));
+    if (_isLoading) {
+      sections.add(_hPaddedBox(_buildInlineSectionLoadingIndicator()));
+    }
+
+    if (page.items.isEmpty) {
       sections.add(
-        IgnorePointer(
-          ignoring: _isLoading,
-          child: Opacity(
-            opacity: _isLoading ? 0.72 : 1,
-            child: PagerCard(
-              pager: page.pager,
-              onPrev: page.pager.hasPrev
-                  ? () {
-                      unawaited(_openDiscoverPagerHref(page.pager.prevHref));
-                    }
-                  : null,
-              onNext: page.pager.hasNext
-                  ? () {
-                      unawaited(_openDiscoverPagerHref(page.pager.nextHref));
-                    }
-                  : null,
-              onJumpToPage: (int targetPage) {
-                unawaited(_jumpDiscoverToPage(page, targetPage));
+        _hPaddedBox(
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 40),
+            child: Center(child: Text('暫時沒有可展示的內容。')),
+          ),
+        ),
+      );
+    } else {
+      sections.add(
+        _hPaddedSliver(
+          SliverGrid(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 14,
+              childAspectRatio: 0.50,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (BuildContext context, int index) {
+                final ComicCardData item = page.items[index];
+                return RepaintBoundary(
+                  child: ComicCardTile(
+                    key: ValueKey<String>(item.href),
+                    item: item,
+                    onTap: _navigateToHref,
+                  ),
+                );
               },
+              childCount: page.items.length,
+              addAutomaticKeepAlives: false,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (hasPager) {
+      sections.add(_hPaddedBox(const SizedBox(height: 18)));
+      sections.add(
+        _hPaddedBox(
+          IgnorePointer(
+            ignoring: _isLoading,
+            child: Opacity(
+              opacity: _isLoading ? 0.72 : 1,
+              child: PagerCard(
+                pager: page.pager,
+                onPrev: page.pager.hasPrev
+                    ? () {
+                        unawaited(_openDiscoverPagerHref(page.pager.prevHref));
+                      }
+                    : null,
+                onNext: page.pager.hasNext
+                    ? () {
+                        unawaited(_openDiscoverPagerHref(page.pager.nextHref));
+                      }
+                    : null,
+                onJumpToPage: (int targetPage) {
+                  unawaited(_jumpDiscoverToPage(page, targetPage));
+                },
+              ),
             ),
           ),
         ),
@@ -1180,35 +1233,39 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
         page.pager.totalLabel.isNotEmpty;
 
     if (_isLoading) {
-      sections.add(_buildInlineSectionLoadingIndicator());
-      sections.add(const SizedBox(height: 14));
+      sections.add(_hPaddedBox(_buildInlineSectionLoadingIndicator()));
+      sections.add(_hPaddedBox(const SizedBox(height: 14)));
     }
 
     sections.add(
-      _buildAnimatedSectionContent(
-        contentKey: _discoverListContentKey(page),
-        child: TopicIssueList(items: page.items, onTap: _navigateToHref),
+      _hPaddedBox(
+        _buildAnimatedSectionContent(
+          contentKey: _discoverListContentKey(page),
+          child: TopicIssueList(items: page.items, onTap: _navigateToHref),
+        ),
       ),
     );
 
     if (hasPager) {
-      sections.add(const SizedBox(height: 18));
+      sections.add(_hPaddedBox(const SizedBox(height: 18)));
       sections.add(
-        IgnorePointer(
-          ignoring: _isLoading,
-          child: Opacity(
-            opacity: _isLoading ? 0.72 : 1,
-            child: PagerCard(
-              pager: page.pager,
-              onPrev: page.pager.hasPrev
-                  ? () => _navigateToHref(page.pager.prevHref)
-                  : null,
-              onNext: page.pager.hasNext
-                  ? () => _navigateToHref(page.pager.nextHref)
-                  : null,
-              onJumpToPage: (int value) {
-                unawaited(_jumpDiscoverToPage(page, value));
-              },
+        _hPaddedBox(
+          IgnorePointer(
+            ignoring: _isLoading,
+            child: Opacity(
+              opacity: _isLoading ? 0.72 : 1,
+              child: PagerCard(
+                pager: page.pager,
+                onPrev: page.pager.hasPrev
+                    ? () => _navigateToHref(page.pager.prevHref)
+                    : null,
+                onNext: page.pager.hasNext
+                    ? () => _navigateToHref(page.pager.nextHref)
+                    : null,
+                onJumpToPage: (int value) {
+                  unawaited(_jumpDiscoverToPage(page, value));
+                },
+              ),
             ),
           ),
         ),
@@ -1223,67 +1280,71 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
     if (page.categories.isNotEmpty || page.periods.isNotEmpty) {
       sections.add(
-        SurfaceBlock(
-          title: '榜單切換',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              if (page.categories.isNotEmpty)
-                RankFilterGroup(
-                  label: '榜單類型',
-                  items: page.categories,
-                  onTap: _navigateRankFilter,
-                ),
-              if (page.categories.isNotEmpty && page.periods.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  child: Builder(
-                    builder: (BuildContext context) {
-                      return Container(
-                        height: 1,
-                        color: Theme.of(context).dividerColor,
-                      );
-                    },
+        _hPaddedBox(
+          SurfaceBlock(
+            title: '榜單切換',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                if (page.categories.isNotEmpty)
+                  RankFilterGroup(
+                    label: '榜單類型',
+                    items: page.categories,
+                    onTap: _navigateRankFilter,
                   ),
-                ),
-              if (page.periods.isNotEmpty)
-                RankFilterGroup(
-                  label: '統計週期',
-                  items: page.periods,
-                  onTap: _navigateRankFilter,
-                ),
-            ],
+                if (page.categories.isNotEmpty && page.periods.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Builder(
+                      builder: (BuildContext context) {
+                        return Container(
+                          height: 1,
+                          color: Theme.of(context).dividerColor,
+                        );
+                      },
+                    ),
+                  ),
+                if (page.periods.isNotEmpty)
+                  RankFilterGroup(
+                    label: '統計週期',
+                    items: page.periods,
+                    onTap: _navigateRankFilter,
+                  ),
+              ],
+            ),
           ),
         ),
       );
-      sections.add(const SizedBox(height: 18));
+      sections.add(_hPaddedBox(const SizedBox(height: 18)));
     }
 
     sections.add(
-      SurfaceBlock(
-        title: '榜单列表',
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            if (_isLoading) _buildInlineSectionLoadingIndicator(),
-            _buildAnimatedSectionContent(
-              contentKey: _rankListContentKey(page),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: page.items
-                    .map(
-                      (RankEntryData item) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: RankCard(
-                          item: item,
-                          onTap: () => _navigateToHref(item.href),
+      _hPaddedBox(
+        SurfaceBlock(
+          title: '榜单列表',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              if (_isLoading) _buildInlineSectionLoadingIndicator(),
+              _buildAnimatedSectionContent(
+                contentKey: _rankListContentKey(page),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: page.items
+                      .map(
+                        (RankEntryData item) => Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: RankCard(
+                            item: item,
+                            onTap: () => _navigateToHref(item.href),
+                          ),
                         ),
-                      ),
-                    )
-                    .toList(growable: false),
+                      )
+                      .toList(growable: false),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1308,30 +1369,34 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       lastReadChapterPathKey,
     );
     final List<Widget> sections = <Widget>[
-      DetailHeroCard(
-        page: page,
-        onReadNow: page.startReadingHref.isNotEmpty
-            ? () => _openDetailChapter(page, page.startReadingHref)
-            : null,
-        onDownload: () => _showDetailDownloadPicker(page),
-        onToggleCollection: page.comicId.trim().isEmpty
-            ? null
-            : () => unawaited(_toggleDetailCollection(page)),
-        isCollectionBusy: _isUpdatingCollection,
-        onTagTap: _submitSearchFromCurrentStack,
-        onAuthorTap: _navigateToHref,
+      _hPaddedBox(
+        DetailHeroCard(
+          page: page,
+          onReadNow: page.startReadingHref.isNotEmpty
+              ? () => _openDetailChapter(page, page.startReadingHref)
+              : null,
+          onDownload: () => _showDetailDownloadPicker(page),
+          onToggleCollection: page.comicId.trim().isEmpty
+              ? null
+              : () => unawaited(_toggleDetailCollection(page)),
+          isCollectionBusy: _isUpdatingCollection,
+          onTagTap: _submitSearchFromCurrentStack,
+          onAuthorTap: _navigateToHref,
+        ),
       ),
-      const SizedBox(height: 18),
+      _hPaddedBox(const SizedBox(height: 18)),
     ];
 
     if (page.summary.isNotEmpty) {
       sections.add(
-        SurfaceBlock(
-          title: '內容簡介',
-          child: Text(page.summary, style: const TextStyle(height: 1.7)),
+        _hPaddedBox(
+          SurfaceBlock(
+            title: '內容簡介',
+            child: Text(page.summary, style: const TextStyle(height: 1.7)),
+          ),
         ),
       );
-      sections.add(const SizedBox(height: 18));
+      sections.add(_hPaddedBox(const SizedBox(height: 18)));
     }
 
     final List<Widget> infoChips = <Widget>[
@@ -1344,57 +1409,62 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     ];
     if (infoChips.isNotEmpty) {
       sections.add(
-        SurfaceBlock(
-          title: '作品信息',
-          child: Wrap(spacing: 10, runSpacing: 10, children: infoChips),
+        _hPaddedBox(
+          SurfaceBlock(
+            title: '作品信息',
+            child: Wrap(spacing: 10, runSpacing: 10, children: infoChips),
+          ),
         ),
       );
-      sections.add(const SizedBox(height: 18));
+      sections.add(_hPaddedBox(const SizedBox(height: 18)));
     }
 
     sections.add(
-      SurfaceBlock(
-        title: '章節目錄',
-        actionLabel: page.chapters.isNotEmpty || page.chapterGroups.isNotEmpty
-            ? '选择下载'
-            : null,
-        onActionTap: page.chapters.isNotEmpty || page.chapterGroups.isNotEmpty
-            ? () => _showDetailDownloadPicker(page)
-            : null,
-        child: chapterTabs.isEmpty
-            ? const Text('章節還在整理中，向下刷新可重試。')
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  DetailChapterToolbar(
-                    tabs: chapterTabs,
-                    selectedKey: activeChapterTab?.key,
-                    isAscending: _isDetailChapterSortAscending,
-                    onSelectTab: _selectDetailChapterTab,
-                    onToggleSort: visibleChapters.length > 1
-                        ? _toggleDetailChapterSortOrder
-                        : null,
-                  ),
-                  const SizedBox(height: 14),
-                  if (visibleChapters.isEmpty)
-                    const Text('這個分組暫時沒有章節。')
-                  else
-                    _buildAnimatedSectionContent(
-                      contentKey: _detailChapterContentKey(
-                        page,
-                        activeChapterTab,
-                        visibleChapters,
-                      ),
-                      child: ChapterGrid(
-                        chapters: visibleChapters,
-                        onTap: (String href) => _openDetailChapter(page, href),
-                        downloadedChapterPathKeys: downloadedChapterKeys,
-                        lastReadChapterPathKey: lastReadChapterPathKey,
-                        itemKeyBuilder: _detailChapterItemKeyFor,
-                      ),
+      _hPaddedBox(
+        SurfaceBlock(
+          title: '章節目錄',
+          actionLabel: page.chapters.isNotEmpty || page.chapterGroups.isNotEmpty
+              ? '选择下载'
+              : null,
+          onActionTap: page.chapters.isNotEmpty || page.chapterGroups.isNotEmpty
+              ? () => _showDetailDownloadPicker(page)
+              : null,
+          child: chapterTabs.isEmpty
+              ? const Text('章節還在整理中，向下刷新可重試。')
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    DetailChapterToolbar(
+                      tabs: chapterTabs,
+                      selectedKey: activeChapterTab?.key,
+                      isAscending: _isDetailChapterSortAscending,
+                      onSelectTab: _selectDetailChapterTab,
+                      onToggleSort: visibleChapters.length > 1
+                          ? _toggleDetailChapterSortOrder
+                          : null,
                     ),
-                ],
-              ),
+                    const SizedBox(height: 14),
+                    if (visibleChapters.isEmpty)
+                      const Text('這個分組暫時沒有章節。')
+                    else
+                      _buildAnimatedSectionContent(
+                        contentKey: _detailChapterContentKey(
+                          page,
+                          activeChapterTab,
+                          visibleChapters,
+                        ),
+                        child: ChapterGrid(
+                          chapters: visibleChapters,
+                          onTap: (String href) =>
+                              _openDetailChapter(page, href),
+                          downloadedChapterPathKeys: downloadedChapterKeys,
+                          lastReadChapterPathKey: lastReadChapterPathKey,
+                          itemKeyBuilder: _detailChapterItemKeyFor,
+                        ),
+                      ),
+                  ],
+                ),
+        ),
       ),
     );
 
@@ -1403,20 +1473,22 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
   List<Widget> _buildMessageSections(String message) {
     return <Widget>[
-      AppSurfaceCard(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: <Widget>[
-            const Icon(Icons.layers_clear_rounded, size: 44),
-            const SizedBox(height: 12),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(height: 1.6),
-            ),
-            const SizedBox(height: 18),
-            FilledButton(onPressed: _loadHome, child: const Text('回到首頁')),
-          ],
+      _hPaddedBox(
+        AppSurfaceCard(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: <Widget>[
+              const Icon(Icons.layers_clear_rounded, size: 44),
+              const SizedBox(height: 12),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(height: 1.6),
+              ),
+              const SizedBox(height: 18),
+              FilledButton(onPressed: _loadHome, child: const Text('回到首頁')),
+            ],
+          ),
         ),
       ),
     ];

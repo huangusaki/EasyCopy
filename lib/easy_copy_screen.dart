@@ -9,7 +9,6 @@ import 'package:easy_copy/easy_copy_screen/models.dart';
 import 'package:easy_copy/easy_copy_screen/widgets.dart';
 import 'package:easy_copy/models/app_preferences.dart';
 import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/page_transition_scope.dart';
 import 'package:easy_copy/reader/reader_screen.dart';
 import 'package:easy_copy/services/android_document_tree_bridge.dart';
 import 'package:easy_copy/services/app_update_checker.dart';
@@ -160,7 +159,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   int _nextNavigationRequestId = 0;
   bool _isFailingOver = false;
   int _consecutiveFrameFailures = 0;
-  bool _isDiscoverThemeExpanded = false;
+  final ValueNotifier<bool> _discoverFilterExpandedNotifier =
+      ValueNotifier<bool>(false);
   List<CachedComicLibraryEntry> _cachedComics =
       const <CachedComicLibraryEntry>[];
   Future<void>? _cachedLibraryRefreshTask;
@@ -253,6 +253,7 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
     _searchController.dispose();
     _standardScrollController.dispose();
     _downloadQueueManager.dispose();
+    _discoverFilterExpandedNotifier.dispose();
     super.dispose();
   }
 

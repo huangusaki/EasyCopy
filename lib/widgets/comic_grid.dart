@@ -83,7 +83,7 @@ class ComicGrid extends StatelessWidget {
     }
 
     final ComicCardData item = items[itemIndex];
-    return _ComicCard(
+    return ComicCardTile(
       key: ValueKey<String>(item.href),
       item: item,
       onTap: onTap,
@@ -92,8 +92,8 @@ class ComicGrid extends StatelessWidget {
   }
 }
 
-class _ComicCard extends StatelessWidget {
-  const _ComicCard({
+class ComicCardTile extends StatelessWidget {
+  const ComicCardTile({
     required this.item,
     required this.onTap,
     this.onLongPress,
