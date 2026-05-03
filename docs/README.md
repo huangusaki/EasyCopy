@@ -21,13 +21,35 @@
 
 ## 截图
 
-| 首页 | 发现筛选 |
-| :---: | :---: |
-| <img src="screenshots/home-dark.jpg" width="260" /> | <img src="screenshots/discover-filters-dark.jpg" width="260" /> |
+<div align="center">
 
-| 阅读页 | 阅读设置 |
-| :---: | :---: |
-| <img src="screenshots/reader-page.jpg" width="260" /> | <img src="screenshots/reader-settings.jpg" width="260" /> |
+<h3>浏览</h3>
+
+<table>
+  <tr>
+    <td align="center"><strong>发现筛选</strong></td>
+    <td align="center"><strong>作品详情</strong></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/browse-discover-filters-light.jpg" width="260" /></td>
+    <td align="center"><img src="screenshots/comic-detail-light.jpg" width="260" /></td>
+  </tr>
+</table>
+
+<h3>阅读</h3>
+
+<table>
+  <tr>
+    <td align="center"><strong>阅读页</strong></td>
+    <td align="center"><strong>阅读设置</strong></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/reader-page-comments-light.jpg" width="260" /></td>
+    <td align="center"><img src="screenshots/reader-settings-light.jpg" width="260" /></td>
+  </tr>
+</table>
+
+</div>
 
 ## 工作原理
 

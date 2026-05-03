@@ -17,8 +17,12 @@ class AppSurfaceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final bool isLight = colorScheme.brightness == Brightness.light;
+    final Color cardColor = isLight
+        ? colorScheme.surfaceContainerLow
+        : colorScheme.surfaceContainerHigh;
     return Material(
-      color: colorScheme.surface,
+      color: cardColor,
       borderRadius: BorderRadius.circular(24),
       clipBehavior: Clip.antiAlias,
       child: Padding(
@@ -53,11 +57,7 @@ class AppSurfaceCard extends StatelessWidget {
 }
 
 class SettingsSection extends StatelessWidget {
-  const SettingsSection({
-    required this.children,
-    this.title,
-    super.key,
-  });
+  const SettingsSection({required this.children, this.title, super.key});
 
   final String? title;
   final List<Widget> children;
@@ -152,16 +152,18 @@ class SettingsSelectRow<T> extends StatelessWidget {
         return SafeArea(
           child: ListView(
             shrinkWrap: true,
-            children: options.map((_SelectItem<T> option) {
-              final bool selected = option.value == value;
-              return ListTile(
-                title: Text(option.label),
-                trailing: selected
-                    ? const Icon(Icons.check_rounded)
-                    : const SizedBox(width: 24),
-                onTap: () => Navigator.of(context).pop(option.value),
-              );
-            }).toList(growable: false),
+            children: options
+                .map((_SelectItem<T> option) {
+                  final bool selected = option.value == value;
+                  return ListTile(
+                    title: Text(option.label),
+                    trailing: selected
+                        ? const Icon(Icons.check_rounded)
+                        : const SizedBox(width: 24),
+                    onTap: () => Navigator.of(context).pop(option.value),
+                  );
+                })
+                .toList(growable: false),
           ),
         );
       },
@@ -219,10 +221,7 @@ class SettingsSliderRow extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(
-            label,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
           Slider(
             value: value.clamp(min, max),
             min: min,
@@ -237,11 +236,7 @@ class SettingsSliderRow extends StatelessWidget {
 }
 
 class _SettingsRow extends StatelessWidget {
-  const _SettingsRow({
-    required this.label,
-    required this.child,
-    this.onTap,
-  });
+  const _SettingsRow({required this.label, required this.child, this.onTap});
 
   final String label;
   final Widget child;

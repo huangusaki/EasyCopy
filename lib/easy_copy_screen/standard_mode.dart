@@ -1040,19 +1040,24 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     for (final ComicSectionData section in page.sections) {
       sections.add(
         _hPaddedBox(
-          SurfaceBlock(
-            title: section.title,
-            actionLabel: section.href.isNotEmpty ? '更多' : null,
-            onActionTap: section.href.isNotEmpty
-                ? () {
-                    unawaited(_openHomeSectionHref(section.href));
-                  }
-                : null,
-            child: ComicGrid(items: section.items, onTap: _navigateToHref),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              SectionHeader(
+                title: section.title,
+                actionLabel: section.href.isNotEmpty ? '更多' : null,
+                onActionTap: section.href.isNotEmpty
+                    ? () {
+                        unawaited(_openHomeSectionHref(section.href));
+                      }
+                    : null,
+              ),
+              ComicGrid(items: section.items, onTap: _navigateToHref),
+            ],
           ),
         ),
       );
-      sections.add(_hPaddedBox(const SizedBox(height: 18)));
+      sections.add(_hPaddedBox(const SizedBox(height: 22)));
     }
 
     return sections;
@@ -1112,8 +1117,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                         options: visibleThemeOptions,
                       ),
                       onTap: _navigateDiscoverFilter,
-                      actionLabel:
-                          themeOptions.length > 16
+                      actionLabel: themeOptions.length > 16
                           ? (expanded ? '收起' : '全部')
                           : null,
                       actionExpanded: expanded,
@@ -1163,14 +1167,27 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
         ),
       );
     } else {
+      final ({bool hasSubtitle, bool hasSecondary}) meta = comicMetaCoverage(
+        page.items,
+      );
+      final double availableWidth = MediaQuery.sizeOf(context).width - 32;
+      final double itemWidth = (availableWidth - 24) / 3;
+      final double itemHeight = comicCardHeightFor(
+        itemWidth: itemWidth,
+        hasSubtitle: meta.hasSubtitle,
+        hasSecondary: meta.hasSecondary,
+      );
+      final double aspectRatio = itemHeight <= 0
+          ? 0.50
+          : (itemWidth / itemHeight);
       sections.add(
         _hPaddedSliver(
           SliverGrid(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 3,
               crossAxisSpacing: 12,
-              mainAxisSpacing: 14,
-              childAspectRatio: 0.50,
+              mainAxisSpacing: 10,
+              childAspectRatio: aspectRatio,
             ),
             delegate: SliverChildBuilderDelegate(
               (BuildContext context, int index) {
@@ -1320,31 +1337,29 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
     sections.add(
       _hPaddedBox(
-        SurfaceBlock(
-          title: '榜单列表',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              if (_isLoading) _buildInlineSectionLoadingIndicator(),
-              _buildAnimatedSectionContent(
-                contentKey: _rankListContentKey(page),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: page.items
-                      .map(
-                        (RankEntryData item) => Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: RankCard(
-                            item: item,
-                            onTap: () => _navigateToHref(item.href),
-                          ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const SectionHeader(title: '榜单列表'),
+            if (_isLoading) _buildInlineSectionLoadingIndicator(),
+            _buildAnimatedSectionContent(
+              contentKey: _rankListContentKey(page),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: page.items
+                    .map(
+                      (RankEntryData item) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: RankCard(
+                          item: item,
+                          onTap: () => _navigateToHref(item.href),
                         ),
-                      )
-                      .toList(growable: false),
-                ),
+                      ),
+                    )
+                    .toList(growable: false),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
