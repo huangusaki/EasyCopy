@@ -784,18 +784,20 @@ class PagerCard extends StatelessWidget {
     final bool jumpable = onJumpToPage != null;
 
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      mainAxisAlignment: MainAxisAlignment.center,
       children: <Widget>[
         _PagerSideButton(
           icon: Icons.arrow_back_rounded,
           onPressed: onPrev == null ? null : () => _runAction(context, onPrev),
         ),
+        const SizedBox(width: 10),
         _PagerIndicatorChip(
           current: currentDisplay,
           total: totalDisplay,
           enabled: jumpable,
           onTap: jumpable ? () => _openJumpSheet(context) : null,
         ),
+        const SizedBox(width: 10),
         _PagerSideButton(
           icon: Icons.arrow_forward_rounded,
           onPressed: onNext == null ? null : () => _runAction(context, onNext),
@@ -1562,16 +1564,15 @@ class ChapterGrid extends StatelessWidget {
       colorScheme.primary,
     );
     final Color downloadedColor = semanticColors.success;
-    final bool showsLastReadState = lastReadChapterPathKey.isNotEmpty;
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: chapters.length,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
         crossAxisSpacing: 10,
         mainAxisSpacing: 10,
-        childAspectRatio: showsLastReadState ? 2.15 : 2.42,
+        childAspectRatio: 1.7,
       ),
       itemBuilder: (BuildContext context, int index) {
         final ChapterData chapter = chapters[index];
@@ -1605,41 +1606,21 @@ class ChapterGrid extends StatelessWidget {
             child: Row(
               children: <Widget>[
                 Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        chapter.label,
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.1,
-                          fontWeight: FontWeight.w800,
-                          color: isLastRead ? onLastReadColor : null,
-                        ),
-                      ),
-                      if (isLastRead) ...<Widget>[
-                        const SizedBox(height: 2),
-                        Text(
-                          '上次看到这里',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: onLastReadColor.withValues(alpha: 0.84),
-                            fontSize: 10,
-                            height: 1.1,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ],
+                  child: Text(
+                    chapter.label,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.1,
+                      fontWeight: FontWeight.w800,
+                      color: isLastRead ? onLastReadColor : null,
+                    ),
                   ),
                 ),
                 if (isLastRead || isDownloaded) ...<Widget>[
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 4),
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -1647,14 +1628,14 @@ class ChapterGrid extends StatelessWidget {
                       if (isLastRead)
                         Icon(
                           Icons.bookmark_rounded,
-                          size: 16,
+                          size: 13,
                           color: onLastReadColor,
                         ),
                       if (isDownloaded) ...<Widget>[
-                        if (isLastRead) const SizedBox(height: 4),
+                        if (isLastRead) const SizedBox(height: 3),
                         Icon(
                           Icons.check_circle_rounded,
-                          size: 16,
+                          size: 13,
                           color: downloadedColor,
                         ),
                       ],

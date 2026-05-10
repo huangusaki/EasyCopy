@@ -23,6 +23,8 @@ class AppPreferencesController extends ChangeNotifier {
 
   AppThemePreference get themePreference => _preferences.themePreference;
 
+  int get lastPrimaryTabIndex => _preferences.lastPrimaryTabIndex;
+
   ReaderPreferences get readerPreferences => _preferences.readerPreferences;
 
   DownloadPreferences get downloadPreferences =>
@@ -35,6 +37,17 @@ class AppPreferencesController extends ChangeNotifier {
   Future<void> setThemePreference(AppThemePreference preference) {
     return _replacePreferences(
       _preferences.copyWith(themePreference: preference),
+    );
+  }
+
+  Future<void> setLastPrimaryTabIndex(int index) async {
+    await ensureInitialized();
+    final int normalizedIndex = index.clamp(0, 3).toInt();
+    if (_preferences.lastPrimaryTabIndex == normalizedIndex) {
+      return;
+    }
+    return _replacePreferences(
+      _preferences.copyWith(lastPrimaryTabIndex: normalizedIndex),
     );
   }
 

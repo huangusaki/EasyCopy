@@ -55,12 +55,15 @@ extension _EasyCopyScreenBootstrapActions on _EasyCopyScreenState {
         });
       }
     }
-    final Uri homeUri = debugUri ?? appDestinations.first.uri;
+    final int initialTabIndex = _preferencesController.lastPrimaryTabIndex
+        .clamp(0, appDestinations.length - 1)
+        .toInt();
+    final Uri homeUri = debugUri ?? appDestinations[initialTabIndex].uri;
     if (!mounted) {
       return;
     }
     _setStateIfMounted(() {
-      _selectedIndex = tabIndexForUri(homeUri);
+      _setSelectedPrimaryTabIndex(tabIndexForUri(homeUri), persist: false);
     });
     _syncSearchController();
     await _loadUri(homeUri, historyMode: NavigationIntent.resetToRoot);

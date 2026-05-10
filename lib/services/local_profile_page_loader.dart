@@ -23,6 +23,27 @@ class LocalProfilePageLoader {
     Uri uri, {
     required String authScope,
   }) async {
+    final ProfilePageData localPage = await loadLocalProfile(
+      uri,
+      authScope: authScope,
+    );
+    final ProfileSubview view = AppConfig.profileSubviewForUri(uri);
+    if (!localPage.isLoggedIn || view == ProfileSubview.cached) {
+      return localPage;
+    }
+
+    final ProfilePageData serverPage = await _apiClient.loadProfile(uri: uri);
+    // Continue reading is always local and should not use server history.
+    return serverPage.copyWith(
+      continueReading: localPage.continueReading,
+      clearContinueReading: localPage.continueReading == null,
+    );
+  }
+
+  Future<ProfilePageData> loadLocalProfile(
+    Uri uri, {
+    required String authScope,
+  }) async {
     await _libraryStore.ensureInitialized();
     await _session.ensureInitialized();
 
@@ -62,20 +83,13 @@ class LocalProfilePageLoader {
       }
     }
 
-    if (isLoggedIn) {
-      final ProfilePageData serverPage = await _apiClient.loadProfile(uri: uri);
-      // Continue reading is always local and should not use server history.
-      return serverPage.copyWith(
-        continueReading: continueReading,
-        clearContinueReading: continueReading == null,
-      );
-    }
+    final String localScope = isLoggedIn ? authScope : guestScope;
 
     final (
       List<ProfileLibraryItem> collectionsPreview,
       int collectionsTotal,
     ) = await _libraryStore.readCollectionsPage(
-      guestScope,
+      localScope,
       page: view == ProfileSubview.collections ? activePage : 1,
       pageSize: 20,
     );
@@ -83,7 +97,7 @@ class LocalProfilePageLoader {
       List<ProfileHistoryItem> historyPreview,
       int historyTotal,
     ) = await _libraryStore.readHistoryPage(
-      guestScope,
+      localScope,
       page: view == ProfileSubview.history ? activePage : 1,
       pageSize: 20,
     );

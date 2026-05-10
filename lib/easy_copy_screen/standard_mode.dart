@@ -5,19 +5,25 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     return Scaffold(
       key: const ValueKey<String>('standard-scaffold'),
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: _onItemTapped,
-        destinations: appDestinations
-            .map(
-              (AppDestination destination) => NavigationDestination(
-                icon: Icon(destination.icon),
-                label: destination.label,
-              ),
-            )
-            .toList(growable: false),
+      extendBody: true,
+      bottomNavigationBar: ClipRect(
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: NavigationBar(
+            selectedIndex: _selectedIndex,
+            onDestinationSelected: _onItemTapped,
+            destinations: appDestinations
+                .map(
+                  (AppDestination destination) => NavigationDestination(
+                    icon: Icon(destination.icon),
+                    label: destination.label,
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ),
       ),
-      body: SafeArea(child: _buildStandardBody(context)),
+      body: SafeArea(bottom: false, child: _buildStandardBody(context)),
     );
   }
 
@@ -60,7 +66,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
     if (_errorMessage != null && _page == null) {
       slivers.addAll(_buildErrorSections(context));
-      slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 28)));
+      slivers.add(_buildBottomInsetSliver());
       return slivers;
     }
 
@@ -85,8 +91,17 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       }
     }
 
-    slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 28)));
+    slivers.add(_buildBottomInsetSliver());
     return slivers;
+  }
+
+  Widget _buildBottomInsetSliver() {
+    return SliverToBoxAdapter(
+      child: Builder(
+        builder: (BuildContext context) =>
+            SizedBox(height: MediaQuery.of(context).padding.bottom + 28),
+      ),
+    );
   }
 
   List<Widget> _buildStandardTopContent(BuildContext context) {
@@ -280,7 +295,6 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       href,
       currentUri: _currentUri,
     );
-    _moveStandardPagerViewportToTop();
     if (_currentEntry.routeKey == AppConfig.routeKeyForUri(targetUri)) {
       return;
     }
@@ -289,6 +303,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       preserveVisiblePage: true,
       historyMode: NavigationIntent.preserve,
     );
+    _moveStandardPagerViewportToDiscoverList(targetUri);
   }
 
   Future<void> _jumpDiscoverToPage(
@@ -309,7 +324,6 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       pager: page.pager,
       page: targetPage,
     );
-    _moveStandardPagerViewportToTop();
     if (_currentEntry.routeKey == AppConfig.routeKeyForUri(targetUri)) {
       return;
     }
@@ -318,13 +332,90 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       preserveVisiblePage: true,
       historyMode: NavigationIntent.preserve,
     );
+    _moveStandardPagerViewportToDiscoverList(targetUri);
   }
 
-  void _moveStandardPagerViewportToTop() {
-    _tabSessionStore.updateScroll(_selectedIndex, _currentEntry.routeKey, 0);
-    if (_standardScrollController.hasClients) {
-      _standardScrollController.jumpTo(0);
+  void _moveStandardPagerViewportToDiscoverList(Uri targetUri) {
+    final String routeKey = AppConfig.routeKeyForUri(targetUri);
+    final DeferredViewportTicket ticket = _standardScrollRestoreCoordinator
+        .beginRequest();
+    _suspendStandardScrollTracking = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _jumpStandardToDiscoverListAnchor(routeKey, attempts: 10, ticket: ticket);
+    });
+  }
+
+  GlobalKey<State<StatefulWidget>> _discoverListAnchorKey(
+    DiscoverPageData page,
+  ) {
+    final String routeKey = AppConfig.routeKeyForUri(Uri.parse(page.uri));
+    return _discoverListAnchorKeys.putIfAbsent(
+      routeKey,
+      () => GlobalKey<State<StatefulWidget>>(
+        debugLabel: 'discover-list:$routeKey',
+      ),
+    );
+  }
+
+  void _jumpStandardToDiscoverListAnchor(
+    String routeKey, {
+    required int attempts,
+    required DeferredViewportTicket ticket,
+  }) {
+    if (!_isActiveStandardScrollRestore(
+      ticket,
+      tabIndex: _selectedIndex,
+      routeKey: routeKey,
+    )) {
+      _finishStandardScrollRestore(ticket);
+      return;
     }
+    final EasyCopyPage? page = _page;
+    final BuildContext? anchorContext = page is DiscoverPageData
+        ? _discoverListAnchorKey(page).currentContext
+        : null;
+    if (anchorContext == null || !_standardScrollController.hasClients) {
+      if (attempts > 0) {
+        Future<void>.delayed(
+          const Duration(milliseconds: 80),
+          () => _jumpStandardToDiscoverListAnchor(
+            routeKey,
+            attempts: attempts - 1,
+            ticket: ticket,
+          ),
+        );
+        return;
+      }
+      _jumpStandardToOffset(
+        0,
+        tabIndex: _selectedIndex,
+        routeKey: routeKey,
+        attempts: 0,
+        ticket: ticket,
+      );
+      return;
+    }
+    unawaited(
+      Scrollable.ensureVisible(
+        anchorContext,
+        duration: Duration.zero,
+        alignment: 0,
+      ).whenComplete(() {
+        if (_isActiveStandardScrollRestore(
+              ticket,
+              tabIndex: _selectedIndex,
+              routeKey: routeKey,
+            ) &&
+            _standardScrollController.hasClients) {
+          _tabSessionStore.updateScroll(
+            _selectedIndex,
+            routeKey,
+            _standardScrollController.offset,
+          );
+        }
+        _finishStandardScrollRestore(ticket);
+      }),
+    );
   }
 
   List<Widget> _buildProfileSections(ProfilePageData page) {
@@ -761,10 +852,9 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                                     final bool selected = selectedKeys.contains(
                                       key,
                                     );
-                                    final Color downloadedColor =
-                                        Theme.of(context)
-                                            .extension<AppSemanticColors>()!
-                                            .success;
+                                    final Color downloadedColor = Theme.of(
+                                      context,
+                                    ).extension<AppSemanticColors>()!.success;
                                     return CheckboxListTile(
                                       value: selected,
                                       controlAffinity:
@@ -1161,6 +1251,12 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       sections.add(_hPaddedBox(_buildInlineSectionLoadingIndicator()));
     }
 
+    sections.add(
+      SliverToBoxAdapter(
+        child: SizedBox(key: _discoverListAnchorKey(page), height: 1),
+      ),
+    );
+
     if (page.items.isEmpty) {
       sections.add(
         _hPaddedBox(
@@ -1259,6 +1355,11 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     }
 
     sections.add(
+      SliverToBoxAdapter(
+        child: SizedBox(key: _discoverListAnchorKey(page), height: 1),
+      ),
+    );
+    sections.add(
       _hPaddedBox(
         _buildAnimatedSectionContent(
           contentKey: _discoverListContentKey(page),
@@ -1278,10 +1379,14 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
               child: PagerCard(
                 pager: page.pager,
                 onPrev: page.pager.hasPrev
-                    ? () => _navigateToHref(page.pager.prevHref)
+                    ? () {
+                        unawaited(_openDiscoverPagerHref(page.pager.prevHref));
+                      }
                     : null,
                 onNext: page.pager.hasNext
-                    ? () => _navigateToHref(page.pager.nextHref)
+                    ? () {
+                        unawaited(_openDiscoverPagerHref(page.pager.nextHref));
+                      }
                     : null,
                 onJumpToPage: (int value) {
                   unawaited(_jumpDiscoverToPage(page, value));

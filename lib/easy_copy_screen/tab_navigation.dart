@@ -1,6 +1,19 @@
 part of '../easy_copy_screen.dart';
 
 extension _EasyCopyScreenTabNavigation on _EasyCopyScreenState {
+  void _setSelectedPrimaryTabIndex(int index, {bool persist = true}) {
+    if (index < 0 || index >= appDestinations.length) {
+      return;
+    }
+    if (_selectedIndex == index) {
+      return;
+    }
+    _selectedIndex = index;
+    if (persist) {
+      unawaited(_preferencesController.setLastPrimaryTabIndex(index));
+    }
+  }
+
   Future<void> _retryCurrentPage() async {
     final EasyCopyPage? page = _page;
     if (page is ProfilePageData ||
@@ -270,7 +283,7 @@ extension _EasyCopyScreenTabNavigation on _EasyCopyScreenState {
       for (int index = 0; index < appDestinations.length; index += 1) {
         _abandonCurrentRequest(index, phase: 'logout');
       }
-      _selectedIndex = 3;
+      _setSelectedPrimaryTabIndex(3);
       _tabSessionStore.resetToRoot(3);
       _tabSessionStore.updateCurrent(
         3,
@@ -320,7 +333,7 @@ extension _EasyCopyScreenTabNavigation on _EasyCopyScreenState {
         phase: 'restore-tab-$index',
       );
       _abandonCurrentRequest(index, phase: 'restore-tab-$index');
-      _selectedIndex = index;
+      _setSelectedPrimaryTabIndex(index);
     });
     if (page is! ReaderPageData) {
       _restoreStandardScrollPosition(

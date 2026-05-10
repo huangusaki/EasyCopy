@@ -58,6 +58,13 @@ T _enumValue<T extends Enum>(Iterable<T> values, Object? rawValue, T fallback) {
   return fallback;
 }
 
+int _primaryTabIndex(Object? rawValue) {
+  final int? parsed = rawValue is num
+      ? rawValue.round()
+      : int.tryParse((rawValue as String?)?.trim() ?? '');
+  return (parsed ?? 0).clamp(0, 3).toInt();
+}
+
 @immutable
 class DownloadPreferences {
   const DownloadPreferences({
@@ -274,6 +281,7 @@ class AppPreferences {
     this.themePreference = AppThemePreference.system,
     this.readerPreferences = const ReaderPreferences(),
     this.downloadPreferences = const DownloadPreferences(),
+    this.lastPrimaryTabIndex = 0,
   });
 
   factory AppPreferences.fromJson(Map<String, Object?> json) {
@@ -293,6 +301,7 @@ class AppPreferences {
               (Object? key, Object? value) => MapEntry(key.toString(), value),
             ),
       ),
+      lastPrimaryTabIndex: _primaryTabIndex(json['lastPrimaryTabIndex']),
     );
   }
 
@@ -314,6 +323,7 @@ class AppPreferences {
   final AppThemePreference themePreference;
   final ReaderPreferences readerPreferences;
   final DownloadPreferences downloadPreferences;
+  final int lastPrimaryTabIndex;
 
   ThemeMode get materialThemeMode {
     switch (themePreference) {
@@ -374,11 +384,13 @@ class AppPreferences {
     AppThemePreference? themePreference,
     ReaderPreferences? readerPreferences,
     DownloadPreferences? downloadPreferences,
+    int? lastPrimaryTabIndex,
   }) {
     return AppPreferences(
       themePreference: themePreference ?? this.themePreference,
       readerPreferences: readerPreferences ?? this.readerPreferences,
       downloadPreferences: downloadPreferences ?? this.downloadPreferences,
+      lastPrimaryTabIndex: lastPrimaryTabIndex ?? this.lastPrimaryTabIndex,
     );
   }
 
@@ -387,6 +399,7 @@ class AppPreferences {
       'themePreference': _enumName(themePreference),
       'readerPreferences': readerPreferences.toJson(),
       'downloadPreferences': downloadPreferences.toJson(),
+      'lastPrimaryTabIndex': lastPrimaryTabIndex,
     };
   }
 }

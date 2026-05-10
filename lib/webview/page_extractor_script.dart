@@ -625,10 +625,10 @@ const String _pageExtractionScriptTemplate = r"""
             ? text(pager.querySelectorAll('.page-total')[pager.querySelectorAll('.page-total').length - 1])
             : '',
         prevHref: linkUrl(
-          pager ? pager.querySelector('.prev a, .prev-all a') : null,
+          pager ? pager.querySelector('.prev a') || pager.querySelector('.prev-all a') : null,
         ),
         nextHref: linkUrl(
-          pager ? pager.querySelector('.next a, .next-all a') : null,
+          pager ? pager.querySelector('.next a') || pager.querySelector('.next-all a') : null,
         ),
       },
     };

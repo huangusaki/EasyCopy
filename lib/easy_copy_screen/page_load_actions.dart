@@ -92,7 +92,7 @@ extension _EasyCopyScreenPageLoadActions on _EasyCopyScreenState {
           break;
       }
       if (shouldActivateTab) {
-        _selectedIndex = tabIndex;
+        _setSelectedPrimaryTabIndex(tabIndex);
       }
       _tabSessionStore.updateCurrent(
         tabIndex,
@@ -267,7 +267,7 @@ extension _EasyCopyScreenPageLoadActions on _EasyCopyScreenState {
 
     _mutateSessionState(() {
       if (switchToTab) {
-        _selectedIndex = tabIndex;
+        _setSelectedPrimaryTabIndex(tabIndex);
       }
       _tabSessionStore.updatePage(tabIndex, resolvedPage);
       if (resolvedPage is DetailPageData) {
@@ -645,15 +645,31 @@ extension _EasyCopyScreenPageLoadActions on _EasyCopyScreenState {
       sourceKind: NavigationRequestSourceKind.profile,
     );
     final PageQueryKey key = _pageQueryKeyForUri(resolvedTargetUri);
-    // Local profile pages should always reflect the latest local library state,
-    // so we bypass profile caching entirely.
+    final ProfileSubview activeSubview = AppConfig.profileSubviewForUri(
+      resolvedTargetUri,
+    );
 
     try {
-      final EasyCopyPage profilePage = await _pageRepository.loadFresh(
-        resolvedTargetUri,
-        authScope: key.authScope,
-        requestContext: requestContext,
-      );
+      final EasyCopyPage profilePage = activeSubview == ProfileSubview.cached
+          ? await _localProfilePageLoader.loadLocalProfile(
+              resolvedTargetUri,
+              authScope: key.authScope,
+            )
+          : await _pageRepository.loadFresh(
+              resolvedTargetUri,
+              authScope: key.authScope,
+              requestContext: requestContext,
+            );
+      if (!_canCommitRequest(requestContext)) {
+        _recordDiscardedNavigationMutation(
+          requestContext,
+          phase: 'profile-load',
+        );
+        return;
+      }
+      if (profilePage is! ProfilePageData) {
+        return;
+      }
       _applyLoadedPage(
         profilePage,
         requestContext: requestContext,
@@ -663,6 +679,52 @@ extension _EasyCopyScreenPageLoadActions on _EasyCopyScreenState {
         visibleUri: resolvedTargetUri,
       );
     } catch (error) {
+      await _loadLocalProfilePageAfterFreshFailure(
+        resolvedTargetUri,
+        error,
+        authScope: key.authScope,
+        requestContext: requestContext,
+        showFailureNotice: forceRefresh,
+      );
+    }
+  }
+
+  Future<void> _loadLocalProfilePageAfterFreshFailure(
+    Uri targetUri,
+    Object error, {
+    required String authScope,
+    required NavigationRequestContext requestContext,
+    required bool showFailureNotice,
+  }) async {
+    if (error is SupersededPageLoadException ||
+        error.toString().contains('登录已失效')) {
+      await _handlePageLoadFailure(error, requestContext: requestContext);
+      return;
+    }
+
+    try {
+      final ProfilePageData localProfilePage = await _localProfilePageLoader
+          .loadLocalProfile(targetUri, authScope: authScope);
+      if (!_canCommitRequest(requestContext)) {
+        _recordDiscardedNavigationMutation(
+          requestContext,
+          phase: 'profile-local-fallback',
+        );
+        return;
+      }
+      _applyLoadedPage(
+        localProfilePage,
+        requestContext: requestContext,
+        switchToTab: _shouldActivateAsyncResultTab(
+          requestContext.targetTabIndex,
+        ),
+        visibleUri: targetUri,
+      );
+      if (showFailureNotice &&
+          requestContext.targetTabIndex == _selectedIndex) {
+        _showNotice(error.toString());
+      }
+    } catch (_) {
       await _handlePageLoadFailure(error, requestContext: requestContext);
     }
   }

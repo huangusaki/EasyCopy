@@ -471,13 +471,16 @@ class AppTheme {
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: colorScheme.surface,
+        backgroundColor: colorScheme.surface.withValues(alpha: 0.62),
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        height: 64,
         indicatorColor: colorScheme.secondary.withValues(alpha: 0.22),
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         labelTextStyle: WidgetStatePropertyAll<TextStyle>(
           TextStyle(
             color: colorScheme.onSurface,
-            fontSize: 12,
+            fontSize: 11,
             fontWeight: FontWeight.w600,
           ),
         ),

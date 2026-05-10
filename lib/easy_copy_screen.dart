@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:crypto/crypto.dart';
 import 'package:easy_copy/config/app_config.dart';
@@ -132,6 +133,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _standardScrollController = ScrollController();
+  final Map<String, GlobalKey<State<StatefulWidget>>> _discoverListAnchorKeys =
+      <String, GlobalKey<State<StatefulWidget>>>{};
   final HostManager _hostManager = HostManager.instance;
   final SiteSession _session = SiteSession.instance;
   final SiteApiClient _siteApiClient = SiteApiClient.instance;

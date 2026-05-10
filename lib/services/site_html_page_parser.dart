@@ -234,8 +234,16 @@ class SiteHtmlPageParser {
       pager: PagerData(
         currentLabel: _queryText(pager, '.page-all-item.active a'),
         totalLabel: totalLabels.isEmpty ? '' : _text(totalLabels.last),
-        prevHref: _linkUrl(uri, _querySelector(pager, '.prev a, .prev-all a')),
-        nextHref: _linkUrl(uri, _querySelector(pager, '.next a, .next-all a')),
+        prevHref: _linkUrl(
+          uri,
+          _querySelector(pager, '.prev a') ??
+              _querySelector(pager, '.prev-all a'),
+        ),
+        nextHref: _linkUrl(
+          uri,
+          _querySelector(pager, '.next a') ??
+              _querySelector(pager, '.next-all a'),
+        ),
       ),
       spotlight: isTopicRoute
           ? const <ComicCardData>[]
