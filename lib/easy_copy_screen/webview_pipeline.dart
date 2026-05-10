@@ -28,7 +28,7 @@ extension _EasyCopyScreenWebviewPipeline on _EasyCopyScreenState {
             }
             if (!AppConfig.isAllowedNavigationUri(nextUri)) {
               if (canSurfacePendingLoad) {
-                _showSnackBar('已阻止跳转到站外页面');
+                _showNotice('已阻止跳转到站外页面');
               }
               return NavigationDecision.prevent;
             }
@@ -103,7 +103,7 @@ extension _EasyCopyScreenWebviewPipeline on _EasyCopyScreenState {
                 _detachPrimaryWebViewIfIdle();
                 return;
               }
-              _failPendingPageLoad('頁面已加載，但轉換內容失敗。');
+              _failPendingPageLoad('页面已加载，但转换内容失败。');
             }
           },
           onUrlChange: (UrlChange change) {
@@ -158,7 +158,7 @@ extension _EasyCopyScreenWebviewPipeline on _EasyCopyScreenState {
             }
             unawaited(
               _handleMainFrameFailure(
-                error.description.isEmpty ? '頁面加載失敗，請稍後重試。' : error.description,
+                error.description.isEmpty ? '页面加载失败，请稍后重试。' : error.description,
               ),
             );
           },

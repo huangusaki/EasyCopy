@@ -39,6 +39,7 @@ import 'package:easy_copy/services/site_html_page_loader.dart';
 import 'package:easy_copy/services/site_session.dart';
 import 'package:easy_copy/services/standard_page_load_controller.dart';
 import 'package:easy_copy/services/tab_activation_policy.dart';
+import 'package:easy_copy/theme/app_theme.dart';
 import 'package:easy_copy/webview/page_extractor_script.dart';
 import 'package:easy_copy/widgets/auth_webview_screen.dart';
 import 'package:easy_copy/widgets/comic_grid.dart';

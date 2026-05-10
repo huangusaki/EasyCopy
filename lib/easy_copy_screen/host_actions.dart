@@ -79,7 +79,7 @@ extension _EasyCopyScreenHostActions on _EasyCopyScreenState {
     }
     final String currentVersion = _appVersion.trim();
     if (currentVersion.isEmpty) {
-      _showSnackBar('版本信息不可用');
+      _showNotice('版本信息不可用');
       return;
     }
 
@@ -93,7 +93,7 @@ extension _EasyCopyScreenHostActions on _EasyCopyScreenState {
         return;
       }
       if (!updateInfo.hasUpdate) {
-        _showSnackBar('已是最新版本');
+        _showNotice('已是最新版本');
         return;
       }
 
@@ -123,7 +123,7 @@ extension _EasyCopyScreenHostActions on _EasyCopyScreenState {
       }
     } catch (_) {
       if (mounted) {
-        _showSnackBar('检查更新失败');
+        _showNotice('检查更新失败');
       }
     } finally {
       if (mounted) {
@@ -147,11 +147,11 @@ extension _EasyCopyScreenHostActions on _EasyCopyScreenState {
         mode: LaunchMode.externalApplication,
       );
       if (!launched && mounted) {
-        _showSnackBar('打开失败');
+        _showNotice('打开失败');
       }
     } catch (_) {
       if (mounted) {
-        _showSnackBar('打开失败');
+        _showNotice('打开失败');
       }
     }
   }
@@ -170,14 +170,14 @@ extension _EasyCopyScreenHostActions on _EasyCopyScreenState {
         return;
       }
       final bool isPinned = _hostManager.sessionPinnedHost != null;
-      _showSnackBar(
+      _showNotice(
         isPinned
             ? '测速完成，当前仍手动锁定到域名 ${_hostManager.currentHost}'
             : '测速完成，已自动选择 ${_hostManager.currentHost}',
       );
     } catch (_) {
       if (mounted) {
-        _showSnackBar('测速失败，请稍后重试');
+        _showNotice('测速失败，请稍后重试');
       }
     } finally {
       if (mounted) {
@@ -202,14 +202,14 @@ extension _EasyCopyScreenHostActions on _EasyCopyScreenState {
       await _hostManager.pinSessionHost(normalizedHost);
       await _syncSessionCookiesToCurrentHost();
       if (mounted) {
-        _showSnackBar('已切换到 $normalizedHost');
+        _showNotice('已切换到 $normalizedHost');
       }
     } catch (error) {
       if (mounted) {
         final String message = error is StateError
             ? error.message.toString()
             : '切换域名失败，请稍后重试';
-        _showSnackBar(message);
+        _showNotice(message);
       }
     } finally {
       if (mounted) {
@@ -234,11 +234,11 @@ extension _EasyCopyScreenHostActions on _EasyCopyScreenState {
       await _hostManager.refreshProbes(force: true);
       await _syncSessionCookiesToCurrentHost();
       if (mounted) {
-        _showSnackBar('已恢复自动选择，当前域名 ${_hostManager.currentHost}');
+        _showNotice('已恢复自动选择，当前域名 ${_hostManager.currentHost}');
       }
     } catch (_) {
       if (mounted) {
-        _showSnackBar('恢复自动选择失败，请稍后重试');
+        _showNotice('恢复自动选择失败，请稍后重试');
       }
     } finally {
       if (mounted) {
@@ -251,37 +251,11 @@ extension _EasyCopyScreenHostActions on _EasyCopyScreenState {
     }
   }
 
-  void _showSnackBar(String message) {
+  void _showNotice(String message) {
     if (!mounted) {
       return;
     }
-    TopNotice.show(context, message, tone: _topNoticeToneFor(message));
-  }
-
-  TopNoticeTone _topNoticeToneFor(String message) {
-    final String normalized = message.trim().toLowerCase();
-    if (normalized.isEmpty) {
-      return TopNoticeTone.info;
-    }
-    if (normalized.contains('失败') ||
-        normalized.contains('异常') ||
-        normalized.contains('错误') ||
-        normalized.contains('失效') ||
-        normalized.contains('不可用')) {
-      return TopNoticeTone.error;
-    }
-    if (normalized.contains('警告') ||
-        normalized.contains('稍后') ||
-        normalized.contains('阻止')) {
-      return TopNoticeTone.warning;
-    }
-    if (normalized.contains('已') ||
-        normalized.contains('完成') ||
-        normalized.contains('恢复') ||
-        normalized.contains('继续')) {
-      return TopNoticeTone.success;
-    }
-    return TopNoticeTone.info;
+    TopNotice.show(context, message, tone: TopNotice.toneForMessage(message));
   }
 
   Future<void> _handleMainFrameFailure(String message) async {
@@ -307,7 +281,7 @@ extension _EasyCopyScreenHostActions on _EasyCopyScreenState {
               entry.copyWith(isLoading: false, clearError: true),
         );
       });
-      _showSnackBar(message);
+      _showNotice(message);
     }
     if (_isFailingOver) {
       return;
@@ -333,7 +307,7 @@ extension _EasyCopyScreenHostActions on _EasyCopyScreenState {
       if (!mounted) {
         return;
       }
-      _showSnackBar('当前入口异常，已切换到备用站点。');
+      _showNotice('当前入口异常，已切换到备用站点。');
       await _loadUri(
         AppConfig.rewriteToCurrentHost(_currentUri),
         preserveVisiblePage: _page != null,
@@ -373,7 +347,7 @@ extension _EasyCopyScreenHostActions on _EasyCopyScreenState {
       if (!mounted) {
         return true;
       }
-      _showSnackBar('网络异常，已自动切换到 $nextHost');
+      _showNotice('网络异常，已自动切换到 $nextHost');
       await _loadUri(
         AppConfig.rewriteToCurrentHost(_currentUri),
         preserveVisiblePage: _page != null,

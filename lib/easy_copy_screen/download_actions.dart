@@ -101,7 +101,7 @@ extension _EasyCopyScreenDownloadActions on _EasyCopyScreenState {
     if (!mounted || message.trim().isEmpty) {
       return;
     }
-    _showSnackBar(message);
+    _showNotice(message);
   }
 
   DownloadQueueSnapshot get _downloadQueueSnapshot =>
@@ -248,12 +248,12 @@ extension _EasyCopyScreenDownloadActions on _EasyCopyScreenState {
         );
 
     if (!enqueueResult.hasAddedTasks) {
-      _showSnackBar(enqueueResult.failureNotice());
+      _showNotice(enqueueResult.failureNotice());
       return;
     }
 
     final bool keepPaused = await _downloadQueueManager.addTasks(newTasks);
-    _showSnackBar(enqueueResult.successNotice(keepPaused: keepPaused));
+    _showNotice(enqueueResult.successNotice(keepPaused: keepPaused));
   }
 
   Future<void> _pauseDownloadQueue() async {
@@ -262,7 +262,7 @@ extension _EasyCopyScreenDownloadActions on _EasyCopyScreenState {
       return;
     }
     await _downloadQueueManager.pauseQueue();
-    _showSnackBar('后台缓存将在当前图片完成后暂停');
+    _showNotice('后台缓存将在当前图片完成后暂停');
   }
 
   Future<void> _resumeDownloadQueue() async {
@@ -270,7 +270,7 @@ extension _EasyCopyScreenDownloadActions on _EasyCopyScreenState {
       return;
     }
     await _downloadQueueManager.resumeQueue();
-    _showSnackBar('已继续后台缓存');
+    _showNotice('已继续后台缓存');
   }
 
   Future<void> _confirmDeleteCachedComic(CachedComicLibraryEntry item) async {
@@ -301,7 +301,7 @@ extension _EasyCopyScreenDownloadActions on _EasyCopyScreenState {
         ? item.comicTitle
         : _comicQueueKey(item.comicHref);
     await _downloadQueueManager.deleteCachedComic(item, comicKey: comicKey);
-    _showSnackBar('已删除 ${item.comicTitle} 的缓存');
+    _showNotice('已删除 ${item.comicTitle} 的缓存');
   }
 
   Future<void> _confirmRemoveQueuedComic(DownloadQueueTask task) async {
@@ -329,7 +329,7 @@ extension _EasyCopyScreenDownloadActions on _EasyCopyScreenState {
     }
 
     await _downloadQueueManager.removeQueuedComic(task);
-    _showSnackBar('已移出 ${task.comicTitle} 的缓存任务');
+    _showNotice('已移出 ${task.comicTitle} 的缓存任务');
   }
 
   Future<void> _confirmRemoveQueuedComicAndCache(DownloadQueueTask task) async {
@@ -357,7 +357,7 @@ extension _EasyCopyScreenDownloadActions on _EasyCopyScreenState {
     }
 
     await _downloadQueueManager.removeComicAndDeleteCache(task);
-    _showSnackBar('已移除 ${task.comicTitle} 的下载任务和本地缓存');
+    _showNotice('已移除 ${task.comicTitle} 的下载任务和本地缓存');
   }
 
   Future<void> _confirmClearDownloadQueue() async {
@@ -385,7 +385,7 @@ extension _EasyCopyScreenDownloadActions on _EasyCopyScreenState {
     }
 
     await _downloadQueueManager.clearQueue();
-    _showSnackBar('已清空下载队列');
+    _showNotice('已清空下载队列');
   }
 
   Future<void> _confirmRemoveQueuedTask(DownloadQueueTask task) async {
@@ -413,18 +413,18 @@ extension _EasyCopyScreenDownloadActions on _EasyCopyScreenState {
     }
 
     await _downloadQueueManager.removeQueuedTask(task);
-    _showSnackBar('已移出 ${task.chapterLabel}');
+    _showNotice('已移出 ${task.chapterLabel}');
   }
 
   Future<void> _retryDownloadQueueTask(DownloadQueueTask task) async {
     await _downloadQueueManager.retryTask(task);
-    _showSnackBar('已重新加入 ${task.chapterLabel}');
+    _showNotice('已重新加入 ${task.chapterLabel}');
   }
 
   bool _canEditDownloadStorage() {
     final String? reason = _downloadQueueManager.storageEditBlockReason();
     if (reason != null) {
-      _showSnackBar(reason);
+      _showNotice(reason);
       return false;
     }
     return true;
@@ -472,10 +472,10 @@ extension _EasyCopyScreenDownloadActions on _EasyCopyScreenState {
       if (result == null) {
         return;
       }
-      _showSnackBar('$successMessage，完成后自动切换');
+      _showNotice('$successMessage，完成后自动切换');
     } catch (error) {
       await _refreshDownloadStorageState();
-      _showSnackBar(_formatDownloadError(error));
+      _showNotice(_formatDownloadError(error));
     }
   }
 

@@ -190,7 +190,7 @@ class SiteHtmlPageParser {
           );
 
     return HomePageData(
-      title: '首頁',
+      title: '首页',
       uri: uri.toString(),
       heroBanners: const <HeroBannerData>[],
       sections: sections,
@@ -895,7 +895,7 @@ class SiteHtmlPageParser {
             _querySelector(card, '.specialContentImage img'),
           ),
           href: href,
-          badge: '專題',
+          badge: '专题',
         );
       }).whereType<ComicCardData>(),
       (ComicCardData item) => item.href,
@@ -1077,7 +1077,7 @@ class SiteHtmlPageParser {
   }
 
   Map<int, String> _chapterTypeLabels(Object? rawTypes) {
-    final Map<int, String> labels = <int, String>{1: '話', 2: '卷', 3: '番外篇'};
+    final Map<int, String> labels = <int, String>{1: '话', 2: '卷', 3: '番外篇'};
     for (final Object? item in _listValue(rawTypes)) {
       final Map<String, Object?> map = _asMap(item);
       final int? id = (map['id'] as num?)?.toInt();

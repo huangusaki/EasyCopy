@@ -247,7 +247,7 @@ const String _pageExtractionScriptTemplate = r"""
       secondaryText: queryText(card, '.specialContentButtonTime'),
       coverUrl: imageUrl(card.querySelector('.specialContentImage img')),
       href: linkUrl(anchor),
-      badge: '專題',
+      badge: '专题',
     };
   };
   const collectTopicListCards = (root) =>
@@ -586,7 +586,7 @@ const String _pageExtractionScriptTemplate = r"""
 
     return {
       type: 'home',
-      title: '首頁',
+      title: '首页',
       uri: location.href,
       heroBanners: [],
       sections,
@@ -786,13 +786,12 @@ const String _pageExtractionScriptTemplate = r"""
     type: 'profile',
     title: '我的',
     uri: location.href,
-    message: '個人中心還在重構中，這個版本先把首頁、發現、排行和閱讀體驗做好。',
   });
   const buildUnknownPayload = () => ({
     type: 'unknown',
     title: pageTitle(),
     uri: location.href,
-    message: '這個頁面還沒有完成原生重建。',
+    message: '这个页面还没有完成原生重建。',
   });
   const needsMoreTime = (type) => {
     if (type === 'reader') {

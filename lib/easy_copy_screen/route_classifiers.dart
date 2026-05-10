@@ -114,7 +114,7 @@ extension _EasyCopyScreenRouteClassifiers on _EasyCopyScreenState {
     final EasyCopyPage? page = _page;
     if (page == null) {
       if (_isDetailRoute) {
-        return '漫畫詳情';
+        return '漫画详情';
       }
       return appDestinations[_selectedIndex].label;
     }

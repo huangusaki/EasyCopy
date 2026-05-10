@@ -369,8 +369,7 @@ class ProfilePageView extends StatelessWidget {
         message.isNotEmpty &&
         message != '登录后可查看收藏与历史。' &&
         message != '登录后可查看收藏、历史和继续阅读。' &&
-        message != '登录后可发表评论并查看账号信息。' &&
-        message != '個人中心還在重構中，這個版本先把首頁、發現、排行和閱讀體驗做好。';
+        message != '登录后可发表评论并查看账号信息。';
 
     return _SectionCard(
       child: Column(
@@ -509,37 +508,172 @@ class _AppearanceSettingsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return AppSurfaceCard(
       title: '外观',
-      child: SettingsSection(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          SettingsSelectRow<AppThemePreference>(
-            label: '主题模式',
-            value: themePreference,
-            items: const <DropdownMenuItem<AppThemePreference>>[
-              DropdownMenuItem<AppThemePreference>(
-                value: AppThemePreference.system,
-                child: Text('跟随系统'),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              '主题配色',
+              style: TextStyle(
+                color: colorScheme.onSurface.withValues(alpha: 0.72),
+                fontWeight: FontWeight.w700,
               ),
-              DropdownMenuItem<AppThemePreference>(
-                value: AppThemePreference.light,
-                child: Text('浅色'),
-              ),
-              DropdownMenuItem<AppThemePreference>(
-                value: AppThemePreference.dark,
-                child: Text('深色'),
-              ),
-            ],
-            onChanged: (AppThemePreference? nextValue) {
-              if (nextValue == null || onChanged == null) {
-                return;
-              }
-              onChanged!(nextValue);
-            },
+            ),
+          ),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: AppThemePreference.values
+                .map(
+                  (AppThemePreference option) => _ThemeSwatch(
+                    option: option,
+                    selected: option == themePreference,
+                    onTap: onChanged == null ? null : () => onChanged!(option),
+                  ),
+                )
+                .toList(growable: false),
           ),
         ],
       ),
     );
+  }
+}
+
+class _ThemeSwatch extends StatelessWidget {
+  const _ThemeSwatch({
+    required this.option,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final AppThemePreference option;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final Color borderColor = selected
+        ? colorScheme.primary
+        : colorScheme.outlineVariant;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Ink(
+        width: 92,
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor, width: selected ? 2 : 1),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Container(
+              width: double.infinity,
+              height: 56,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: colorScheme.outline.withValues(alpha: 0.2),
+                  width: 0.5,
+                ),
+              ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  _buildPreview(option),
+                  if (selected)
+                    Center(
+                      child: Container(
+                        width: 26,
+                        height: 26,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: colorScheme.primary,
+                        ),
+                        child: Icon(
+                          Icons.check_rounded,
+                          size: 16,
+                          color: colorScheme.onPrimary,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              appThemePreferenceLabel(option),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: colorScheme.onSurface,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Widget _buildPreview(AppThemePreference option) {
+    switch (option) {
+      case AppThemePreference.system:
+        return Row(
+          children: const <Widget>[
+            Expanded(child: ColoredBox(color: Color(0xFFFFFFFF))),
+            Expanded(child: ColoredBox(color: Color(0xFF000000))),
+          ],
+        );
+      case AppThemePreference.pureWhite:
+        return const ColoredBox(color: Color(0xFFFFFFFF));
+      case AppThemePreference.pureBlack:
+        return const ColoredBox(color: Color(0xFF000000));
+      case AppThemePreference.warmLight:
+        return const ColoredBox(color: Color(0xFFFAF6EE));
+      case AppThemePreference.warmDark:
+        return const ColoredBox(color: Color(0xFF18130E));
+      case AppThemePreference.lightOrange:
+        return const ColoredBox(color: Color(0xFFFFF3E6));
+      case AppThemePreference.softGreen:
+        return const ColoredBox(color: Color(0xFFC7EDCC));
+      case AppThemePreference.bluePink:
+        return const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: <Color>[
+                Color(0xFFC9D5FF),
+                Color(0xFFEEDBF1),
+                Color(0xFFFFCEDF),
+              ],
+            ),
+          ),
+        );
+      case AppThemePreference.lightBlueGreen:
+        return const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: <Color>[
+                Color(0xFFC4E0FF),
+                Color(0xFFD2E9DD),
+                Color(0xFFC0E8CB),
+              ],
+            ),
+          ),
+        );
+    }
   }
 }
 

@@ -26,6 +26,7 @@ import 'package:easy_copy/services/reader_progress_store.dart';
 import 'package:easy_copy/services/site_api_client.dart';
 import 'package:easy_copy/services/site_session.dart';
 import 'package:easy_copy/widgets/settings_ui.dart';
+import 'package:easy_copy/widgets/top_notice.dart';
 import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 
@@ -76,7 +77,7 @@ class ReaderScreenState extends State<ReaderScreen> {
       onRequestChapterNavigation: widget.onRequestChapterNavigation,
       onRequestAuth: widget.onRequestAuth,
       onLogoutForExpiredSession: widget.onLogoutForExpiredSession,
-      onShowMessage: _showSnackBar,
+      onShowMessage: _showNotice,
     );
     _controller.attachPlatformSubscriptions();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -101,11 +102,9 @@ class ReaderScreenState extends State<ReaderScreen> {
     super.dispose();
   }
 
-  void _showSnackBar(String message) {
+  void _showNotice(String message) {
     if (!mounted) return;
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    messenger.clearSnackBars();
-    messenger.showSnackBar(SnackBar(content: Text(message)));
+    TopNotice.show(context, message, tone: TopNotice.toneForMessage(message));
   }
 
   void _handleReaderTapUp(TapUpDetails details) {

@@ -713,16 +713,16 @@ class SiteApiClient {
     ]);
     final List<String> memberships = <String>[
       if (_pickBool(results, 'vip')) 'VIP',
-      if (_pickBool(results, 'comic_vip')) '漫畫會員',
-      if (_pickBool(results, 'cartoon_vip')) '動畫會員',
+      if (_pickBool(results, 'comic_vip')) '漫画会员',
+      if (_pickBool(results, 'cartoon_vip')) '动画会员',
     ];
     return ProfileUserData(
       userId: userId,
-      username: username.isEmpty ? '未命名用戶' : username,
+      username: username.isEmpty ? '未命名用户' : username,
       nickname: nickname,
       avatarUrl: avatarUrl,
       createdAt: createdAt,
-      membershipLabel: memberships.isEmpty ? '普通會員' : memberships.join(' / '),
+      membershipLabel: memberships.isEmpty ? '普通会员' : memberships.join(' / '),
     );
   }
 

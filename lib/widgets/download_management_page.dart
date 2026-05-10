@@ -290,10 +290,23 @@ class _QueueSection extends StatelessWidget {
     if (snapshot.isEmpty) {
       return const AppSurfaceCard(title: '缓存队列', child: Text('当前没有待处理章节。'));
     }
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final List<_QueuedComicGroup> groups = _groupQueue(snapshot.tasks);
     return AppSurfaceCard(
       title: '缓存队列',
-      action: TextButton(onPressed: onClearQueue, child: const Text('清空')),
+      action: OutlinedButton.icon(
+        onPressed: onClearQueue,
+        icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+        label: const Text('清空队列'),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: colorScheme.error,
+          side: BorderSide(
+            color: colorScheme.error.withValues(alpha: 0.6),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          visualDensity: VisualDensity.compact,
+        ),
+      ),
       child: Column(
         children: groups
             .map((_QueuedComicGroup group) {
@@ -457,7 +470,7 @@ class _QueueGroupRow extends StatelessWidget {
   }
 }
 
-class _CachedLibrarySection extends StatelessWidget {
+class _CachedLibrarySection extends StatefulWidget {
   const _CachedLibrarySection({
     required this.comics,
     required this.onOpenCachedComic,
@@ -469,30 +482,73 @@ class _CachedLibrarySection extends StatelessWidget {
   final ValueChanged<CachedComicLibraryEntry> onDeleteCachedComic;
 
   @override
+  State<_CachedLibrarySection> createState() => _CachedLibrarySectionState();
+}
+
+class _CachedLibrarySectionState extends State<_CachedLibrarySection> {
+  static const int _collapsedLimit = 8;
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final List<CachedComicLibraryEntry> comics = widget.comics;
     if (comics.isEmpty) {
       return const AppSurfaceCard(title: '已缓存', child: Text('还没有已缓存漫画。'));
     }
-    final List<CachedComicLibraryEntry> visibleComics = comics
-        .take(8)
-        .toList(growable: false);
+    final bool canCollapse = comics.length > _collapsedLimit;
+    final List<CachedComicLibraryEntry> visibleComics =
+        canCollapse && !_expanded
+        ? comics.take(_collapsedLimit).toList(growable: false)
+        : comics;
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return AppSurfaceCard(
       title: '已缓存',
+      action: Text(
+        '共 ${comics.length} 部',
+        style: TextStyle(
+          color: colorScheme.onSurface.withValues(alpha: 0.58),
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
       child: Column(
-        children: visibleComics
-            .map((CachedComicLibraryEntry entry) {
-              return Padding(
-                padding: EdgeInsets.only(
-                  bottom: identical(entry, visibleComics.last) ? 0 : 12,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          ...visibleComics.map((CachedComicLibraryEntry entry) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: identical(entry, visibleComics.last) ? 0 : 12,
+              ),
+              child: _CachedComicRow(
+                entry: entry,
+                onTap: () => widget.onOpenCachedComic(entry),
+                onDelete: () => widget.onDeleteCachedComic(entry),
+              ),
+            );
+          }),
+          if (canCollapse) ...<Widget>[
+            const SizedBox(height: 12),
+            Center(
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _expanded = !_expanded;
+                  });
+                },
+                icon: Icon(
+                  _expanded
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
                 ),
-                child: _CachedComicRow(
-                  entry: entry,
-                  onTap: () => onOpenCachedComic(entry),
-                  onDelete: () => onDeleteCachedComic(entry),
+                label: Text(
+                  _expanded
+                      ? '收起'
+                      : '展开剩余 ${comics.length - _collapsedLimit} 部',
                 ),
-              );
-            })
-            .toList(growable: false),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -515,6 +571,13 @@ class _CachedComicRow extends StatelessWidget {
     final String latestChapterTitle = entry.chapters.isEmpty
         ? '暂无章节'
         : entry.chapters.first.chapterTitle;
+    final int cachedCount = entry.cachedChapterCount;
+    final int totalCount = entry.detailSnapshot?.totalChapterCount ?? 0;
+    final bool hasCoverage = totalCount > 0 && totalCount >= cachedCount;
+    final bool isPartial = hasCoverage && cachedCount < totalCount;
+    final String coverageLabel = hasCoverage
+        ? '已缓存 $cachedCount / 共 $totalCount 话'
+        : '$cachedCount 话已缓存';
     return Material(
       color: colorScheme.surfaceContainerLow,
       borderRadius: BorderRadius.circular(18),
@@ -547,9 +610,14 @@ class _CachedComicRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '${entry.cachedChapterCount} 话已缓存',
+                      coverageLabel,
                       style: TextStyle(
-                        color: colorScheme.onSurface.withValues(alpha: 0.66),
+                        color: isPartial
+                            ? colorScheme.tertiary
+                            : colorScheme.onSurface.withValues(alpha: 0.66),
+                        fontWeight: isPartial
+                            ? FontWeight.w700
+                            : FontWeight.w500,
                       ),
                     ),
                   ],

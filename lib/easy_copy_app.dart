@@ -21,14 +21,25 @@ class EasyCopyApp extends StatelessWidget {
         return MaterialApp(
           title: AppConfig.appName,
           debugShowCheckedModeBanner: false,
-          theme: AppTheme.buildLightTheme(),
-          darkTheme: AppTheme.buildDarkTheme(),
+          theme: controller.preferences.buildLightTheme(),
+          darkTheme: controller.preferences.buildDarkTheme(),
           themeMode: controller.preferences.materialThemeMode,
           builder: (BuildContext context, Widget? child) {
-            final Brightness brightness = Theme.of(context).brightness;
+            final ThemeData theme = Theme.of(context);
+            final Brightness brightness = theme.brightness;
             final Brightness iconBrightness = brightness == Brightness.dark
                 ? Brightness.light
                 : Brightness.dark;
+            final Gradient? backgroundGradient = theme
+                .extension<AppSemanticColors>()
+                ?.backgroundGradient;
+            Widget body = child ?? const SizedBox.shrink();
+            if (backgroundGradient != null) {
+              body = DecoratedBox(
+                decoration: BoxDecoration(gradient: backgroundGradient),
+                child: body,
+              );
+            }
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: SystemUiOverlayStyle(
                 statusBarColor: Colors.transparent,
@@ -39,7 +50,7 @@ class EasyCopyApp extends StatelessWidget {
                 systemNavigationBarDividerColor: Colors.transparent,
                 systemNavigationBarContrastEnforced: false,
               ),
-              child: child ?? const SizedBox.shrink(),
+              child: body,
             );
           },
           home: home ?? EasyCopyScreen(preferencesController: controller),

@@ -594,7 +594,7 @@ class HomePageData extends EasyCopyPage {
 
   factory HomePageData.fromJson(Map<String, Object?> json) {
     return HomePageData(
-      title: _stringValue(json['title'], fallback: '首頁'),
+      title: _stringValue(json['title'], fallback: '首页'),
       uri: _stringValue(json['uri']),
       heroBanners: _readList<HeroBannerData>(
         json,
@@ -645,7 +645,7 @@ class DiscoverPageData extends EasyCopyPage {
 
   factory DiscoverPageData.fromJson(Map<String, Object?> json) {
     return DiscoverPageData(
-      title: _stringValue(json['title'], fallback: '發現'),
+      title: _stringValue(json['title'], fallback: '发现'),
       uri: _stringValue(json['uri']),
       filters: _readList<FilterGroupData>(
         json,
@@ -814,6 +814,7 @@ class DetailPageData extends EasyCopyPage {
       summary: summary,
       tags: tags,
       startReadingHref: startReadingHref,
+      totalChapterCount: chapters.length,
     );
   }
 
@@ -895,6 +896,7 @@ class CachedComicDetailSnapshot {
     this.summary = '',
     this.tags = const <LinkAction>[],
     this.startReadingHref = '',
+    this.totalChapterCount = 0,
   });
 
   factory CachedComicDetailSnapshot.fromJson(Map<String, Object?> json) {
@@ -908,6 +910,7 @@ class CachedComicDetailSnapshot {
       summary: _stringValue(json['summary']),
       tags: _readList<LinkAction>(json, 'tags', LinkAction.fromJson),
       startReadingHref: _stringValue(json['startReadingHref']),
+      totalChapterCount: _intValue(json['totalChapterCount']),
     );
   }
 
@@ -920,6 +923,7 @@ class CachedComicDetailSnapshot {
   final String summary;
   final List<LinkAction> tags;
   final String startReadingHref;
+  final int totalChapterCount;
 
   bool get isEmpty {
     return aliases.isEmpty &&
@@ -929,7 +933,8 @@ class CachedComicDetailSnapshot {
         status.isEmpty &&
         summary.isEmpty &&
         startReadingHref.isEmpty &&
-        tags.isEmpty;
+        tags.isEmpty &&
+        totalChapterCount == 0;
   }
 
   CachedComicDetailSnapshot copyWith({
@@ -942,6 +947,7 @@ class CachedComicDetailSnapshot {
     String? summary,
     List<LinkAction>? tags,
     String? startReadingHref,
+    int? totalChapterCount,
   }) {
     return CachedComicDetailSnapshot(
       aliases: aliases ?? this.aliases,
@@ -953,6 +959,7 @@ class CachedComicDetailSnapshot {
       summary: summary ?? this.summary,
       tags: tags ?? this.tags,
       startReadingHref: startReadingHref ?? this.startReadingHref,
+      totalChapterCount: totalChapterCount ?? this.totalChapterCount,
     );
   }
 
@@ -967,6 +974,7 @@ class CachedComicDetailSnapshot {
       'summary': summary,
       'tags': tags.map((LinkAction item) => item.toJson()).toList(),
       'startReadingHref': startReadingHref,
+      'totalChapterCount': totalChapterCount,
     };
   }
 }
@@ -1209,9 +1217,9 @@ class UnknownPageData extends EasyCopyPage {
 
   factory UnknownPageData.fromJson(Map<String, Object?> json) {
     return UnknownPageData(
-      title: _stringValue(json['title'], fallback: '未支援頁面'),
+      title: _stringValue(json['title'], fallback: '未支持页面'),
       uri: _stringValue(json['uri']),
-      message: _stringValue(json['message'], fallback: '這個頁面還沒有完成原生重建。'),
+      message: _stringValue(json['message'], fallback: '这个页面还没有完成原生重建。'),
     );
   }
 

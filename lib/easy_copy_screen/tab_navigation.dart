@@ -201,7 +201,7 @@ extension _EasyCopyScreenTabNavigation on _EasyCopyScreenState {
       }, syncSearch: sourceTabIndex == _selectedIndex);
       unawaited(_persistDetailPageCache(updatedPage));
       if (mounted) {
-        _showSnackBar(nextCollected ? '已加入书架' : '已取消收藏');
+        _showNotice(nextCollected ? '已加入书架' : '已取消收藏');
       }
     } catch (error) {
       final String message = error is SiteApiException
@@ -211,7 +211,7 @@ extension _EasyCopyScreenTabNavigation on _EasyCopyScreenState {
         await _logout(showFeedback: false);
       }
       if (mounted) {
-        _showSnackBar(message.isEmpty ? '收藏操作失败，请稍后重试。' : message);
+        _showNotice(message.isEmpty ? '收藏操作失败，请稍后重试。' : message);
       }
     } finally {
       if (mounted) {
@@ -283,7 +283,7 @@ extension _EasyCopyScreenTabNavigation on _EasyCopyScreenState {
       historyMode: NavigationIntent.resetToRoot,
     );
     if (showFeedback) {
-      _showSnackBar('已退出登录');
+      _showNotice('已退出登录');
     }
   }
 

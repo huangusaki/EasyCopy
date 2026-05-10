@@ -57,6 +57,32 @@ class TopNotice {
     _currentEntry = null;
     currentEntry?.remove();
   }
+
+  static TopNoticeTone toneForMessage(String message) {
+    final String normalized = message.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return TopNoticeTone.info;
+    }
+    if (normalized.contains('失败') ||
+        normalized.contains('异常') ||
+        normalized.contains('错误') ||
+        normalized.contains('失效') ||
+        normalized.contains('不可用')) {
+      return TopNoticeTone.error;
+    }
+    if (normalized.contains('警告') ||
+        normalized.contains('稍后') ||
+        normalized.contains('阻止')) {
+      return TopNoticeTone.warning;
+    }
+    if (normalized.contains('已') ||
+        normalized.contains('完成') ||
+        normalized.contains('恢复') ||
+        normalized.contains('继续')) {
+      return TopNoticeTone.success;
+    }
+    return TopNoticeTone.info;
+  }
 }
 
 class _TopNoticeBubble extends StatelessWidget {

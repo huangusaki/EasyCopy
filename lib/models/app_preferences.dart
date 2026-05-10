@@ -1,6 +1,40 @@
+import 'package:easy_copy/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
-enum AppThemePreference { system, light, dark }
+enum AppThemePreference {
+  system,
+  pureWhite,
+  pureBlack,
+  warmLight,
+  warmDark,
+  lightOrange,
+  softGreen,
+  bluePink,
+  lightBlueGreen,
+}
+
+String appThemePreferenceLabel(AppThemePreference value) {
+  switch (value) {
+    case AppThemePreference.system:
+      return '跟随系统';
+    case AppThemePreference.pureWhite:
+      return '纯白';
+    case AppThemePreference.pureBlack:
+      return '纯黑';
+    case AppThemePreference.warmLight:
+      return '浅棕色';
+    case AppThemePreference.warmDark:
+      return '深棕色';
+    case AppThemePreference.lightOrange:
+      return '浅橙';
+    case AppThemePreference.softGreen:
+      return '豆沙绿';
+    case AppThemePreference.bluePink:
+      return '蓝粉渐变';
+    case AppThemePreference.lightBlueGreen:
+      return '浅蓝浅绿';
+  }
+}
 
 enum ReaderScreenOrientation { portrait, landscape }
 
@@ -244,11 +278,7 @@ class AppPreferences {
 
   factory AppPreferences.fromJson(Map<String, Object?> json) {
     return AppPreferences(
-      themePreference: _enumValue<AppThemePreference>(
-        AppThemePreference.values,
-        json['themePreference'],
-        AppThemePreference.system,
-      ),
+      themePreference: _readThemePreference(json['themePreference']),
       readerPreferences: ReaderPreferences.fromJson(
         ((json['readerPreferences'] as Map<Object?, Object?>?) ??
                 const <Object?, Object?>{})
@@ -266,6 +296,21 @@ class AppPreferences {
     );
   }
 
+  static AppThemePreference _readThemePreference(Object? raw) {
+    final String value = (raw as String?)?.trim() ?? '';
+    switch (value) {
+      case 'light':
+        return AppThemePreference.warmLight;
+      case 'dark':
+        return AppThemePreference.warmDark;
+    }
+    return _enumValue<AppThemePreference>(
+      AppThemePreference.values,
+      value,
+      AppThemePreference.system,
+    );
+  }
+
   final AppThemePreference themePreference;
   final ReaderPreferences readerPreferences;
   final DownloadPreferences downloadPreferences;
@@ -274,10 +319,54 @@ class AppPreferences {
     switch (themePreference) {
       case AppThemePreference.system:
         return ThemeMode.system;
-      case AppThemePreference.light:
+      case AppThemePreference.pureWhite:
+      case AppThemePreference.warmLight:
+      case AppThemePreference.lightOrange:
+      case AppThemePreference.softGreen:
+      case AppThemePreference.bluePink:
+      case AppThemePreference.lightBlueGreen:
         return ThemeMode.light;
-      case AppThemePreference.dark:
+      case AppThemePreference.pureBlack:
+      case AppThemePreference.warmDark:
         return ThemeMode.dark;
+    }
+  }
+
+  ThemeData buildLightTheme() {
+    switch (themePreference) {
+      case AppThemePreference.system:
+      case AppThemePreference.pureWhite:
+        return AppTheme.buildPureWhiteTheme();
+      case AppThemePreference.warmLight:
+        return AppTheme.buildWarmLightTheme();
+      case AppThemePreference.lightOrange:
+        return AppTheme.buildLightOrangeTheme();
+      case AppThemePreference.softGreen:
+        return AppTheme.buildSoftGreenTheme();
+      case AppThemePreference.bluePink:
+        return AppTheme.buildBluePinkTheme();
+      case AppThemePreference.lightBlueGreen:
+        return AppTheme.buildLightBlueGreenTheme();
+      case AppThemePreference.warmDark:
+      case AppThemePreference.pureBlack:
+        return AppTheme.buildPureWhiteTheme();
+    }
+  }
+
+  ThemeData buildDarkTheme() {
+    switch (themePreference) {
+      case AppThemePreference.system:
+      case AppThemePreference.pureBlack:
+        return AppTheme.buildPureBlackTheme();
+      case AppThemePreference.warmDark:
+        return AppTheme.buildWarmDarkTheme();
+      case AppThemePreference.pureWhite:
+      case AppThemePreference.warmLight:
+      case AppThemePreference.lightOrange:
+      case AppThemePreference.softGreen:
+      case AppThemePreference.bluePink:
+      case AppThemePreference.lightBlueGreen:
+        return AppTheme.buildPureBlackTheme();
     }
   }
 

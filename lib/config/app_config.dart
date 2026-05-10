@@ -105,8 +105,8 @@ class AppConfig {
 
   static List<AppDestination> buildDestinations() {
     return <AppDestination>[
-      const AppDestination(label: '首頁', icon: Icons.home, path: '/'),
-      const AppDestination(label: '發現', icon: Icons.explore, path: '/comics'),
+      const AppDestination(label: '首页', icon: Icons.home, path: '/'),
+      const AppDestination(label: '发现', icon: Icons.explore, path: '/comics'),
       const AppDestination(label: '排行', icon: Icons.bar_chart, path: '/rank'),
       const AppDestination(label: '我的', icon: Icons.person, path: profilePath),
     ];

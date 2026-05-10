@@ -89,7 +89,7 @@ extension _EasyCopyScreenSearchActions on _EasyCopyScreenState {
       _searchHistoryEntries = next;
     }
     await _searchHistoryStore.remove(normalized);
-    _showSnackBar('已删除搜索历史：$normalized');
+    _showNotice('已删除搜索历史：$normalized');
   }
 
   Future<void> _confirmClearSearchHistory() async {
@@ -126,7 +126,7 @@ extension _EasyCopyScreenSearchActions on _EasyCopyScreenState {
       _searchHistoryEntries = const <String>[];
     }
     await _searchHistoryStore.clear();
-    _showSnackBar('已清空搜索历史');
+    _showNotice('已清空搜索历史');
   }
 
   void _submitSearchFromCurrentStack(String value) {

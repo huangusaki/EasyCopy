@@ -46,7 +46,7 @@ class ComicGrid extends StatelessWidget {
     required this.items,
     required this.onTap,
     this.onLongPress,
-    this.emptyMessage = '暫時沒有可展示的內容。',
+    this.emptyMessage = '暂时没有可展示的内容。',
     super.key,
   });
 

@@ -2,6 +2,7 @@
 
 import 'package:easy_copy/easy_copy_screen/models.dart';
 import 'package:easy_copy/models/page_models.dart';
+import 'package:easy_copy/theme/app_theme.dart';
 import 'package:easy_copy/widgets/cover_image.dart';
 import 'package:easy_copy/widgets/settings_ui.dart';
 import 'package:flutter/material.dart';
@@ -301,7 +302,10 @@ class FeatureBannerCard extends StatelessWidget {
                     colorScheme.surfaceContainerHigh,
                     colorScheme.surfaceContainerHighest,
                   ]
-                : const <Color>[Color(0xFFFFEEE1), Color(0xFFFFD1B8)],
+                : <Color>[
+                    colorScheme.primaryContainer,
+                    colorScheme.secondaryContainer,
+                  ],
           ),
         ),
         child: Row(
@@ -317,7 +321,7 @@ class FeatureBannerCard extends StatelessWidget {
                       fontWeight: FontWeight.w800,
                       color: isDark
                           ? colorScheme.secondary
-                          : const Color(0xFF995630),
+                          : colorScheme.onPrimaryContainer,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -441,9 +445,7 @@ class TopicIssueRow extends StatelessWidget {
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: <Widget>[
                             if (item.badge.trim().isNotEmpty)
-                              TopicMetaPill(
-                                label: item.badge.replaceAll('專題', '专题'),
-                              ),
+                              TopicMetaPill(label: item.badge),
                             if (item.secondaryText.trim().isNotEmpty)
                               Text(
                                 item.secondaryText,
@@ -1549,9 +1551,17 @@ class ChapterGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    const Color lastReadColor = Color(0xFF1F4B99);
-    const Color lastReadBorderColor = Color(0xFF173872);
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    final AppSemanticColors semanticColors = theme
+        .extension<AppSemanticColors>()!;
+    final Color lastReadColor = colorScheme.primary;
+    final Color onLastReadColor = colorScheme.onPrimary;
+    final Color lastReadBorderColor = Color.alphaBlend(
+      Colors.black.withValues(alpha: 0.18),
+      colorScheme.primary,
+    );
+    final Color downloadedColor = semanticColors.success;
     final bool showsLastReadState = lastReadChapterPathKey.isNotEmpty;
     return GridView.builder(
       shrinkWrap: true,
@@ -1589,7 +1599,7 @@ class ChapterGrid extends StatelessWidget {
               border: isLastRead
                   ? Border.all(color: lastReadBorderColor, width: 1.2)
                   : isDownloaded
-                  ? Border.all(color: const Color(0xFF18A558))
+                  ? Border.all(color: downloadedColor)
                   : null,
             ),
             child: Row(
@@ -1608,7 +1618,7 @@ class ChapterGrid extends StatelessWidget {
                           fontSize: 13,
                           height: 1.1,
                           fontWeight: FontWeight.w800,
-                          color: isLastRead ? Colors.white : null,
+                          color: isLastRead ? onLastReadColor : null,
                         ),
                       ),
                       if (isLastRead) ...<Widget>[
@@ -1618,7 +1628,7 @@ class ChapterGrid extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.84),
+                            color: onLastReadColor.withValues(alpha: 0.84),
                             fontSize: 10,
                             height: 1.1,
                             fontWeight: FontWeight.w700,
@@ -1635,17 +1645,17 @@ class ChapterGrid extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: <Widget>[
                       if (isLastRead)
-                        const Icon(
+                        Icon(
                           Icons.bookmark_rounded,
                           size: 16,
-                          color: Colors.white,
+                          color: onLastReadColor,
                         ),
                       if (isDownloaded) ...<Widget>[
                         if (isLastRead) const SizedBox(height: 4),
-                        const Icon(
+                        Icon(
                           Icons.check_circle_rounded,
                           size: 16,
-                          color: Color(0xFF18A558),
+                          color: downloadedColor,
                         ),
                       ],
                     ],

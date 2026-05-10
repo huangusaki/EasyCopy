@@ -196,7 +196,7 @@ extension _EasyCopyScreenPageLoadActions on _EasyCopyScreenState {
     try {
       await _controller.loadRequest(targetUri);
     } catch (_) {
-      _failPendingPageLoad('頁面加載失敗，請稍後重試。');
+      _failPendingPageLoad('页面加载失败，请稍后重试。');
       rethrow;
     }
     return pendingLoad.completer.future.timeout(
@@ -382,7 +382,7 @@ extension _EasyCopyScreenPageLoadActions on _EasyCopyScreenState {
       return;
     }
     if (!AppConfig.isAllowedNavigationUri(targetUri)) {
-      _showSnackBar('已阻止跳转到站外页面');
+      _showNotice('已阻止跳转到站外页面');
       return;
     }
     _consecutiveFrameFailures = 0;
@@ -688,7 +688,7 @@ extension _EasyCopyScreenPageLoadActions on _EasyCopyScreenState {
     if (message.contains('登录已失效')) {
       await _logout(showFeedback: false);
       if (requestContext.targetTabIndex == _selectedIndex) {
-        _showSnackBar('登录已失效，请重新登录。');
+        _showNotice('登录已失效，请重新登录。');
       }
       return;
     }
@@ -699,7 +699,7 @@ extension _EasyCopyScreenPageLoadActions on _EasyCopyScreenState {
     if (entry.page != null) {
       _finishTabEntryLoading(requestContext);
       if (requestContext.targetTabIndex == _selectedIndex) {
-        _showSnackBar(message);
+        _showNotice(message);
       }
       return;
     }

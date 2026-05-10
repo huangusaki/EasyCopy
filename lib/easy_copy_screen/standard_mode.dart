@@ -261,7 +261,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
               textInputAction: TextInputAction.search,
               decoration: const InputDecoration(
                 border: InputBorder.none,
-                hintText: '搜尋漫畫、作者或題材',
+                hintText: '搜索漫画、作者或题材',
               ),
             ),
           ),
@@ -296,12 +296,12 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     int targetPage,
   ) async {
     if (targetPage < 1) {
-      _showSnackBar('请输入有效页码');
+      _showNotice('请输入有效页码');
       return;
     }
     final int? totalPageCount = page.pager.totalPageCount;
     if (totalPageCount != null && targetPage > totalPageCount) {
-      _showSnackBar('页码超出范围，最多 $totalPageCount 页');
+      _showNotice('页码超出范围，最多 $totalPageCount 页');
       return;
     }
     final Uri targetUri = AppConfig.buildDiscoverPagerJumpUri(
@@ -761,6 +761,10 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                                     final bool selected = selectedKeys.contains(
                                       key,
                                     );
+                                    final Color downloadedColor =
+                                        Theme.of(context)
+                                            .extension<AppSemanticColors>()!
+                                            .success;
                                     return CheckboxListTile(
                                       value: selected,
                                       controlAffinity:
@@ -775,9 +779,9 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                                         });
                                       },
                                       secondary: isDownloaded
-                                          ? const Icon(
+                                          ? Icon(
                                               Icons.check_circle_rounded,
-                                              color: Color(0xFF18A558),
+                                              color: downloadedColor,
                                             )
                                           : null,
                                       title: Text(chapter.label),
@@ -960,7 +964,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                   Expanded(
                     child: FilledButton.tonal(
                       onPressed: _loadHome,
-                      child: const Text('回到首頁'),
+                      child: const Text('回到首页'),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -1162,7 +1166,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
         _hPaddedBox(
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 40),
-            child: Center(child: Text('暫時沒有可展示的內容。')),
+            child: Center(child: Text('暂时没有可展示的内容。')),
           ),
         ),
       );
@@ -1299,13 +1303,13 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       sections.add(
         _hPaddedBox(
           SurfaceBlock(
-            title: '榜單切換',
+            title: '榜单切换',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 if (page.categories.isNotEmpty)
                   RankFilterGroup(
-                    label: '榜單類型',
+                    label: '榜单类型',
                     items: page.categories,
                     onTap: _navigateRankFilter,
                   ),
@@ -1323,7 +1327,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                   ),
                 if (page.periods.isNotEmpty)
                   RankFilterGroup(
-                    label: '統計週期',
+                    label: '统计周期',
                     items: page.periods,
                     onTap: _navigateRankFilter,
                   ),
@@ -1406,7 +1410,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       sections.add(
         _hPaddedBox(
           SurfaceBlock(
-            title: '內容簡介',
+            title: '内容简介',
             child: Text(page.summary, style: const TextStyle(height: 1.7)),
           ),
         ),
@@ -1416,11 +1420,11 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
     final List<Widget> infoChips = <Widget>[
       if (page.authors.isNotEmpty) InfoChip(label: '作者', value: page.authors),
-      if (page.status.isNotEmpty) InfoChip(label: '狀態', value: page.status),
+      if (page.status.isNotEmpty) InfoChip(label: '状态', value: page.status),
       if (page.updatedAt.isNotEmpty)
         InfoChip(label: '更新', value: page.updatedAt),
-      if (page.heat.isNotEmpty) InfoChip(label: '熱度', value: page.heat),
-      if (page.aliases.isNotEmpty) InfoChip(label: '別名', value: page.aliases),
+      if (page.heat.isNotEmpty) InfoChip(label: '热度', value: page.heat),
+      if (page.aliases.isNotEmpty) InfoChip(label: '别名', value: page.aliases),
     ];
     if (infoChips.isNotEmpty) {
       sections.add(
@@ -1437,7 +1441,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     sections.add(
       _hPaddedBox(
         SurfaceBlock(
-          title: '章節目錄',
+          title: '章节目录',
           actionLabel: page.chapters.isNotEmpty || page.chapterGroups.isNotEmpty
               ? '选择下载'
               : null,
@@ -1445,7 +1449,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
               ? () => _showDetailDownloadPicker(page)
               : null,
           child: chapterTabs.isEmpty
-              ? const Text('章節還在整理中，向下刷新可重試。')
+              ? const Text('章节还在整理中，向下刷新可重试。')
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
@@ -1460,7 +1464,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                     ),
                     const SizedBox(height: 14),
                     if (visibleChapters.isEmpty)
-                      const Text('這個分組暫時沒有章節。')
+                      const Text('这个分组暂时没有章节。')
                     else
                       _buildAnimatedSectionContent(
                         contentKey: _detailChapterContentKey(
@@ -1501,7 +1505,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                 style: const TextStyle(height: 1.6),
               ),
               const SizedBox(height: 18),
-              FilledButton(onPressed: _loadHome, child: const Text('回到首頁')),
+              FilledButton(onPressed: _loadHome, child: const Text('回到首页')),
             ],
           ),
         ),

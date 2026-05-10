@@ -95,7 +95,7 @@ extension _EasyCopyScreenDetailChapterState on _EasyCopyScreenState {
         normalized.contains('单话') ||
         normalized == '話' ||
         normalized.endsWith('話')) {
-      return '話';
+      return '话';
     }
     if (normalized.contains('卷')) {
       return '卷';
