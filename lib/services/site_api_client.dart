@@ -253,24 +253,17 @@ class SiteApiClient {
     await _session.ensureInitialized();
     final int normalizedLimit = limit.clamp(1, 120);
     final int normalizedOffset = offset < 0 ? 0 : offset;
-    final Uri uri =
-        Uri.https(_chapterCommentApiHost, '/api/v3/roasts', <String, String>{
-          'chapter_id': normalizedChapterId,
-          'limit': '$normalizedLimit',
-          'offset': '$normalizedOffset',
-          '_update': 'true',
-        });
-    final http.Response response = await EasyCopyNetworkClient.get(
-      _client,
-      uri,
-      headers: _buildRequestHeaders(),
-      label: 'api.comments',
-    );
-    final Map<String, Object?> payload = _decodeJsonMap(
-      response,
+    final (:payload, :statusCode) = await _getChapterCommentJson(
+      '/api/v3/roasts',
+      queryParameters: <String, String>{
+        'chapter_id': normalizedChapterId,
+        'limit': '$normalizedLimit',
+        'offset': '$normalizedOffset',
+        '_update': 'true',
+      },
       malformedMessage: '章节评论返回格式异常。',
     );
-    final int code = (payload['code'] as num?)?.toInt() ?? response.statusCode;
+    final int code = (payload['code'] as num?)?.toInt() ?? statusCode;
     if (code != 200) {
       throw SiteApiException((payload['message'] as String?) ?? '评论加载失败：$code');
     }
@@ -308,29 +301,21 @@ class SiteApiClient {
       throw SiteApiException('请输入评论内容。');
     }
 
-    final http.Response response = await EasyCopyNetworkClient.post(
-      _client,
-      Uri.https(_chapterCommentApiHost, '/api/v3/member/roast'),
+    final (:payload, :statusCode) = await _postChapterCommentJson(
+      '/api/v3/member/roast',
       headers: _buildRequestHeaders(
         includeAuth: true,
         contentType: 'application/x-www-form-urlencoded',
+        includeSiteContext: true,
       ),
       body: <String, String>{
         'chapter_id': normalizedChapterId,
         'roast': normalizedContent,
         '_update': 'true',
       },
-      label: 'api.comment.submit',
-    );
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      throw SiteApiException('登录已失效，请重新登录。');
-    }
-
-    final Map<String, Object?> payload = _decodeJsonMap(
-      response,
       malformedMessage: '评论接口返回格式异常。',
     );
-    final int code = (payload['code'] as num?)?.toInt() ?? response.statusCode;
+    final int code = (payload['code'] as num?)?.toInt() ?? statusCode;
     if (code != 200) {
       throw SiteApiException((payload['message'] as String?) ?? '评论发送失败：$code');
     }
@@ -447,6 +432,82 @@ class SiteApiClient {
       throw SiteApiException((payload['message'] as String?) ?? '接口请求失败：$code');
     }
     return payload;
+  }
+
+  Future<({Map<String, Object?> payload, int statusCode})>
+  _getChapterCommentJson(
+    String path, {
+    required Map<String, String> queryParameters,
+    required String malformedMessage,
+  }) async {
+    await _session.ensureInitialized();
+    Object? lastError;
+    for (final String host in _chapterCommentApiHosts()) {
+      final Uri uri = Uri.https(host, path, queryParameters);
+      try {
+        final http.Response response = await EasyCopyNetworkClient.get(
+          _client,
+          uri,
+          headers: _buildRequestHeaders(includeSiteContext: true),
+          maxRetries: 0,
+          label: 'api.comments',
+        );
+        final Map<String, Object?>? payload = _tryDecodeJsonMap(response);
+        if (payload == null) {
+          lastError = SiteApiException(malformedMessage);
+          continue;
+        }
+        return (payload: payload, statusCode: response.statusCode);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError is SiteApiException) {
+      throw lastError;
+    }
+    throw SiteApiException('评论加载失败，请稍后重试。');
+  }
+
+  Future<({Map<String, Object?> payload, int statusCode})>
+  _postChapterCommentJson(
+    String path, {
+    required Map<String, String> headers,
+    required Object body,
+    required String malformedMessage,
+  }) async {
+    await _session.ensureInitialized();
+    Object? lastError;
+    for (final String host in _chapterCommentApiHosts()) {
+      final Uri uri = Uri.https(host, path);
+      try {
+        final http.Response response = await EasyCopyNetworkClient.post(
+          _client,
+          uri,
+          headers: headers,
+          body: body,
+          label: 'api.comment.submit',
+        );
+        if (response.statusCode == 401 || response.statusCode == 403) {
+          throw SiteApiException('登录已失效，请重新登录。');
+        }
+        final Map<String, Object?>? payload = _tryDecodeJsonMap(response);
+        if (payload == null) {
+          lastError = SiteApiException(malformedMessage);
+          continue;
+        }
+        return (payload: payload, statusCode: response.statusCode);
+      } on SiteApiException {
+        rethrow;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError is SiteApiException) {
+      throw lastError;
+    }
+    throw SiteApiException('评论发送失败，请稍后重试。');
   }
 
   Future<Map<String, Object?>> _getSearchJson({
@@ -1092,29 +1153,52 @@ class SiteApiClient {
     bool includeAuth = false,
     String accept = 'application/json',
     String? contentType,
+    bool includeSiteContext = false,
   }) {
+    final Uri siteBaseUri = AppConfig.baseUri;
     return <String, String>{
       'Accept': accept,
       if (contentType != null) 'Content-Type': contentType,
       'User-Agent': AppConfig.desktopUserAgent,
       'platform': '2',
+      if (includeSiteContext) 'Origin': siteBaseUri.origin,
+      if (includeSiteContext) 'Referer': siteBaseUri.toString(),
       if (includeAuth && (_session.token ?? '').isNotEmpty)
         'Authorization': 'Token ${_session.token}',
       if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
     };
   }
 
-  Map<String, Object?> _decodeJsonMap(
-    http.Response response, {
-    required String malformedMessage,
-  }) {
-    final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    if (decoded is! Map) {
-      throw SiteApiException(malformedMessage);
+  List<String> _chapterCommentApiHosts() {
+    final String currentHost = AppConfig.baseUri.host.trim().toLowerCase();
+    final String bareHost = currentHost.startsWith('www.')
+        ? currentHost.substring(4)
+        : currentHost;
+    final List<String> candidates = <String>[
+      if (bareHost.isNotEmpty) 'api.$bareHost',
+      _chapterCommentApiHost,
+      'api.copy-manga.com',
+      'api.2026copy.com',
+    ];
+    final Set<String> seen = <String>{};
+    return candidates
+        .where((String host) => host.trim().isNotEmpty)
+        .where((String host) => seen.add(host))
+        .toList(growable: false);
+  }
+
+  Map<String, Object?>? _tryDecodeJsonMap(http.Response response) {
+    try {
+      final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is! Map) {
+        return null;
+      }
+      return decoded.map(
+        (Object? key, Object? value) => MapEntry(key.toString(), value),
+      );
+    } catch (_) {
+      return null;
     }
-    return decoded.map(
-      (Object? key, Object? value) => MapEntry(key.toString(), value),
-    );
   }
 
   int _compareProfileLibraryItemByUpdatedAtDesc(
