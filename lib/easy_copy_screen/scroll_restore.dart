@@ -31,6 +31,10 @@ extension _EasyCopyScreenScrollRestore on _EasyCopyScreenState {
     _suspendStandardScrollTracking = false;
   }
 
+  void _suspendStandardScrollTrackingForRouteStackChange() {
+    _suspendStandardScrollTracking = true;
+  }
+
   bool _isActiveStandardScrollRestore(
     DeferredViewportTicket ticket, {
     required int tabIndex,
@@ -68,7 +72,9 @@ extension _EasyCopyScreenScrollRestore on _EasyCopyScreenState {
       );
       return;
     }
-    if (page == null || !_standardScrollController.hasClients) {
+    if (page == null ||
+        _suspendStandardScrollTracking ||
+        !_standardScrollController.hasClients) {
       return;
     }
     _tabSessionStore.updateScroll(

@@ -345,6 +345,7 @@ extension _EasyCopyScreenReaderNavigation on _EasyCopyScreenState {
     if (page is ReaderPageData && await _handleReaderBackNavigation(page)) {
       return;
     }
+    _suspendStandardScrollTrackingForRouteStackChange();
     final PrimaryTabRouteEntry? previousEntry = _tabSessionStore.pop(
       _selectedIndex,
     );
@@ -423,9 +424,11 @@ extension _EasyCopyScreenReaderNavigation on _EasyCopyScreenState {
     // is pushed on top of the previous entry (e.g. profile root).  This
     // way pressing back from the catalog page returns the user to where
     // they came from instead of getting stuck in a replaced entry.
+    _suspendStandardScrollTrackingForRouteStackChange();
     _tabSessionStore.pop(_selectedIndex);
     await _loadUri(
       catalogUri,
+      skipPersistVisiblePageState: true,
       sourceTabIndex: _selectedIndex,
       historyMode: NavigationIntent.push,
     );
