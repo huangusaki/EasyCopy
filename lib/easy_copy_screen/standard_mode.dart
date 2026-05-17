@@ -6,20 +6,22 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       key: const ValueKey<String>('standard-scaffold'),
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       extendBody: true,
-      bottomNavigationBar: ClipRect(
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: NavigationBar(
-            selectedIndex: _selectedIndex,
-            onDestinationSelected: _onItemTapped,
-            destinations: appDestinations
-                .map(
-                  (AppDestination destination) => NavigationDestination(
-                    icon: Icon(destination.icon),
-                    label: destination.label,
-                  ),
-                )
-                .toList(growable: false),
+      bottomNavigationBar: RepaintBoundary(
+        child: ClipRect(
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: NavigationBar(
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: _onItemTapped,
+              destinations: appDestinations
+                  .map(
+                    (AppDestination destination) => NavigationDestination(
+                      icon: Icon(destination.icon),
+                      label: destination.label,
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
           ),
         ),
       ),
@@ -30,16 +32,19 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   Widget _buildStandardBody(BuildContext context) {
     final List<Widget> slivers = _buildStandardBodySlivers(context);
 
-    return RefreshIndicator(
-      onRefresh: _retryCurrentPage,
-      child: NotificationListener<ScrollNotification>(
-        onNotification: _handleStandardScrollNotification,
-        child: CustomScrollView(
-          controller: _standardScrollController,
-          physics: const AlwaysScrollableScrollPhysics(
-            parent: BouncingScrollPhysics(),
+    return _TabContentFadeIn(
+      contentKey: '$_selectedIndex::${_currentEntry.routeKey}',
+      child: RefreshIndicator(
+        onRefresh: _retryCurrentPage,
+        child: NotificationListener<ScrollNotification>(
+          onNotification: _handleStandardScrollNotification,
+          child: CustomScrollView(
+            controller: _standardScrollController,
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
+            slivers: slivers,
           ),
-          slivers: slivers,
         ),
       ),
     );

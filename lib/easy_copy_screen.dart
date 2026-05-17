@@ -73,6 +73,7 @@ part 'easy_copy_screen/standard_mode.dart';
 
 const Duration _pageFadeTransitionDuration = Duration(milliseconds: 320);
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
+const Duration _standardBodyFadeInDuration = Duration(milliseconds: 220);
 const String _detailAllChapterTabKey = '__detail_all__';
 
 Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
@@ -80,6 +81,68 @@ Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
     opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
     child: child,
   );
+}
+
+/// Triggers a brief fade-in (with a subtle slide-up) every time [contentKey]
+/// changes. Unlike [AnimatedSwitcher], it keeps a single subtree mounted at all
+/// times, so descendants that own shared resources (like [ScrollController]s)
+/// never collide with a transitioning twin.
+class _TabContentFadeIn extends StatefulWidget {
+  const _TabContentFadeIn({required this.contentKey, required this.child});
+
+  final String contentKey;
+  final Widget child;
+
+  @override
+  State<_TabContentFadeIn> createState() => _TabContentFadeInState();
+}
+
+class _TabContentFadeInState extends State<_TabContentFadeIn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _fade;
+  late final Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: _standardBodyFadeInDuration,
+      value: 1,
+    );
+    final CurvedAnimation curve = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOutCubic,
+    );
+    _fade = curve;
+    _slide = Tween<Offset>(
+      begin: const Offset(0, 0.012),
+      end: Offset.zero,
+    ).animate(curve);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TabContentFadeIn oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.contentKey != widget.contentKey) {
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fade,
+      child: SlideTransition(position: _slide, child: widget.child),
+    );
+  }
 }
 
 class _EasyCopyScreenDownloadTaskRunner implements DownloadTaskRunner {
