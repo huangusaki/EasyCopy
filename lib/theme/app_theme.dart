@@ -537,3 +537,51 @@ class AppTheme {
     );
   }
 }
+
+extension WallpaperThemeOverlay on ThemeData {
+  /// 壁纸模式下的半透明主题。
+  ThemeData applyWallpaperOverlay({required bool active}) {
+    if (!active) {
+      return this;
+    }
+    final ColorScheme baseScheme = colorScheme;
+    final ColorScheme overlayScheme = baseScheme.copyWith(
+      surface: baseScheme.surface.withValues(alpha: 0.78),
+      surfaceContainerLowest: baseScheme.surfaceContainerLowest.withValues(
+        alpha: 0.78,
+      ),
+      surfaceContainerLow: baseScheme.surfaceContainerLow.withValues(
+        alpha: 0.82,
+      ),
+      surfaceContainer: baseScheme.surfaceContainer.withValues(alpha: 0.84),
+      surfaceContainerHigh: baseScheme.surfaceContainerHigh.withValues(
+        alpha: 0.86,
+      ),
+      surfaceContainerHighest: baseScheme.surfaceContainerHighest.withValues(
+        alpha: 0.88,
+      ),
+    );
+    final CardThemeData baseCardTheme = cardTheme;
+    final BottomSheetThemeData baseBottomSheetTheme = bottomSheetTheme;
+    final NavigationBarThemeData baseNavigationBarTheme = navigationBarTheme;
+    final InputDecorationThemeData baseInputDecorationTheme =
+        inputDecorationTheme;
+    return copyWith(
+      colorScheme: overlayScheme,
+      scaffoldBackgroundColor: Colors.transparent,
+      canvasColor: Colors.transparent,
+      cardTheme: baseCardTheme.copyWith(
+        color: overlayScheme.surface.withValues(alpha: 0.8),
+      ),
+      bottomSheetTheme: baseBottomSheetTheme.copyWith(
+        backgroundColor: overlayScheme.surface.withValues(alpha: 0.92),
+      ),
+      navigationBarTheme: baseNavigationBarTheme.copyWith(
+        backgroundColor: overlayScheme.surface.withValues(alpha: 0.4),
+      ),
+      inputDecorationTheme: baseInputDecorationTheme.copyWith(
+        fillColor: overlayScheme.surfaceContainerLow,
+      ),
+    );
+  }
+}

@@ -23,6 +23,8 @@ import 'package:flutter/services.dart';
 const double _readerNextChapterPullTriggerDistance = 266;
 const double _readerNextChapterPagedTriggerDistance = 152;
 const double _readerNextChapterPullActivationExtent = 100;
+const double _readerScrollProgressStep = 96;
+const double _readerPagedProgressStep = 48;
 
 typedef ReaderChapterNavigationCallback =
     Future<void> Function(
@@ -93,9 +95,11 @@ class ReaderController extends ChangeNotifier {
   int _currentPageIndex = 0;
   int _visibleImageIndex = 0;
   ReaderPosition? _lastPersistedPosition;
+  ReaderPosition? _lastScheduledProgressPosition;
   AppliedReaderEnvironment? _appliedEnvironment;
   ReaderPreferences? _lastObservedPreferences;
   bool _presentationSyncScheduled = false;
+  bool _visibleImageIndexUpdateScheduled = false;
 
   bool _isSettingsOpen = false;
   bool _isChapterControlsVisible = false;
@@ -274,6 +278,7 @@ class ReaderController extends ChangeNotifier {
   Future<void> flushProgressPersistence() async {
     _progressDebounce?.cancel();
     _progressDebounce = null;
+    _lastScheduledProgressPosition = null;
     await _persistCurrentProgress();
   }
 
@@ -552,6 +557,10 @@ class ReaderController extends ChangeNotifier {
     _autoTurnTimer = null;
   }
 
+  void restartAutoTurnAfterScroll() {
+    _restartAutoTurn();
+  }
+
   void _scheduleReaderPresentationSync() {
     if (_presentationSyncScheduled) return;
     _presentationSyncScheduled = true;
@@ -682,6 +691,8 @@ class ReaderController extends ChangeNotifier {
     if (changedPage) {
       _currentPageIndex = 0;
       _visibleImageIndex = 0;
+      _lastScheduledProgressPosition = null;
+      _visibleImageIndexUpdateScheduled = false;
       _isChapterControlsVisible = false;
       _disposePagedScrollControllers();
       _imageItemKeys.clear();
@@ -967,12 +978,12 @@ class ReaderController extends ChangeNotifier {
       return;
     }
     final double currentOffset = scrollController.offset;
-    if (_lastPersistedPosition?.isScroll == true &&
-        (currentOffset - _lastPersistedPosition!.offset).abs() < 48) {
-      return;
+    if (_shouldScheduleScrollProgress(currentOffset)) {
+      _lastScheduledProgressPosition = ReaderPosition.scroll(
+        offset: currentOffset,
+      );
+      _scheduleProgressPersistence();
     }
-    _scheduleProgressPersistence();
-    _restartAutoTurn();
     _scheduleVisibleImageIndexUpdate();
   }
 
@@ -997,20 +1008,39 @@ class ReaderController extends ChangeNotifier {
     if (pageIndex != _currentPageIndex) return;
     final ScrollController? controller = _pagedScrollControllers[pageIndex];
     if (controller == null || !controller.hasClients) return;
-    if (_lastPersistedPosition?.isPaged == true &&
-        _lastPersistedPosition!.pageIndex == pageIndex &&
-        (controller.offset - _lastPersistedPosition!.pageOffset).abs() < 32) {
-      return;
+    if (_shouldSchedulePagedProgress(pageIndex, controller.offset)) {
+      _lastScheduledProgressPosition = ReaderPosition.paged(
+        pageIndex: pageIndex,
+        pageOffset: controller.offset,
+      );
+      _scheduleProgressPersistence();
     }
-    _scheduleProgressPersistence();
-    _restartAutoTurn();
   }
 
   void _scheduleVisibleImageIndexUpdate() {
+    if (_visibleImageIndexUpdateScheduled) return;
+    _visibleImageIndexUpdateScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _visibleImageIndexUpdateScheduled = false;
       if (_disposed || preferences.isPaged) return;
       _updateVisibleImageIndex();
     });
+  }
+
+  bool _shouldScheduleScrollProgress(double offset) {
+    final ReaderPosition? last =
+        _lastScheduledProgressPosition ?? _lastPersistedPosition;
+    if (last == null || !last.isScroll) return true;
+    return (offset - last.offset).abs() >= _readerScrollProgressStep;
+  }
+
+  bool _shouldSchedulePagedProgress(int pageIndex, double pageOffset) {
+    final ReaderPosition? last =
+        _lastScheduledProgressPosition ?? _lastPersistedPosition;
+    if (last == null || !last.isPaged || last.pageIndex != pageIndex) {
+      return true;
+    }
+    return (pageOffset - last.pageOffset).abs() >= _readerPagedProgressStep;
   }
 
   void _updateVisibleImageIndex() {
@@ -1352,10 +1382,10 @@ class ReaderController extends ChangeNotifier {
 
   void _scheduleProgressPersistence() {
     _progressDebounce?.cancel();
-    _progressDebounce = Timer(
-      const Duration(milliseconds: 900),
-      () => unawaited(_persistCurrentProgress()),
-    );
+    _progressDebounce = Timer(const Duration(milliseconds: 900), () {
+      _progressDebounce = null;
+      unawaited(_persistCurrentProgress());
+    });
   }
 
   Future<void> _persistCurrentProgress() async {
@@ -1372,6 +1402,7 @@ class ReaderController extends ChangeNotifier {
             : 0,
       );
       _lastPersistedPosition = position;
+      _lastScheduledProgressPosition = position;
       await progressStore.writePosition(
         position,
         catalogHref: page.catalogHref,
@@ -1384,6 +1415,7 @@ class ReaderController extends ChangeNotifier {
       offset: scrollController.offset,
     );
     _lastPersistedPosition = position;
+    _lastScheduledProgressPosition = position;
     await progressStore.writePosition(
       position,
       catalogHref: page.catalogHref,

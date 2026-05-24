@@ -459,6 +459,9 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
           onThemePreferenceChanged: (AppThemePreference preference) {
             unawaited(_preferencesController.setThemePreference(preference));
           },
+          wallpaperPreferences:
+              _preferencesController.wallpaperPreferences,
+          wallpaperActions: _buildWallpaperActions(),
           versionLabel: _appVersionLabel,
           isCheckingForUpdates: _isCheckingForUpdates,
           onCheckForUpdates: () {
@@ -1621,5 +1624,91 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
         ),
       ),
     ];
+  }
+
+  WallpaperEditingActions _buildWallpaperActions() {
+    return WallpaperEditingActions(
+      pickImage: _pickAndApplyWallpaper,
+      clearImage: _clearWallpaper,
+      previewPreferences: (WallpaperPreferences value) {
+        unawaited(
+          _preferencesController.updateWallpaperPreferences(
+            (_) => value,
+            persist: false,
+          ),
+        );
+      },
+      commitPreferences: (WallpaperPreferences value) {
+        unawaited(
+          _preferencesController.updateWallpaperPreferences((_) => value),
+        );
+      },
+    );
+  }
+
+  Future<void> _pickAndApplyWallpaper() async {
+    final ImagePicker picker = ImagePicker();
+    XFile? picked;
+    try {
+      picked = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 92,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('选择图片失败：$error')),
+      );
+      return;
+    }
+    if (picked == null) {
+      return;
+    }
+    try {
+      final WallpaperPreferences previous =
+          _preferencesController.wallpaperPreferences;
+      await WallpaperStorage.instance.ensureReady();
+      final String savedFileName = await WallpaperStorage.instance.saveImage(
+        File(picked.path),
+      );
+      await _preferencesController.updateWallpaperPreferences(
+        (WallpaperPreferences current) => current.copyWith(
+          imageFileName: savedFileName,
+          enabled: true,
+        ),
+      );
+      unawaited(WallpaperStorage.instance.pruneExcept(savedFileName));
+      if (previous.imageFileName.isNotEmpty &&
+          previous.imageFileName != savedFileName) {
+        unawaited(
+          WallpaperStorage.instance.deleteFile(previous.imageFileName),
+        );
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('保存壁纸失败：$error')),
+      );
+    }
+  }
+
+  void _clearWallpaper() {
+    final WallpaperPreferences previous =
+        _preferencesController.wallpaperPreferences;
+    unawaited(
+      _preferencesController.updateWallpaperPreferences(
+        (WallpaperPreferences current) => current.copyWith(
+          imageFileName: '',
+          enabled: false,
+        ),
+      ),
+    );
+    if (previous.imageFileName.isNotEmpty) {
+      unawaited(WallpaperStorage.instance.deleteFile(previous.imageFileName));
+    }
   }
 }

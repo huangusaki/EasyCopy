@@ -65,6 +65,107 @@ int _primaryTabIndex(Object? rawValue) {
   return (parsed ?? 0).clamp(0, 3).toInt();
 }
 
+double _clampUnit(Object? rawValue, double fallback) {
+  if (rawValue is num) {
+    return rawValue.toDouble().clamp(0.0, 1.0);
+  }
+  if (rawValue is String) {
+    final double? parsed = double.tryParse(rawValue.trim());
+    if (parsed != null) {
+      return parsed.clamp(0.0, 1.0);
+    }
+  }
+  return fallback;
+}
+
+double _clampRange(Object? rawValue, double minValue, double maxValue, double fallback) {
+  if (rawValue is num) {
+    return rawValue.toDouble().clamp(minValue, maxValue);
+  }
+  if (rawValue is String) {
+    final double? parsed = double.tryParse(rawValue.trim());
+    if (parsed != null) {
+      return parsed.clamp(minValue, maxValue);
+    }
+  }
+  return fallback;
+}
+
+@immutable
+class WallpaperPreferences {
+  const WallpaperPreferences({
+    this.enabled = false,
+    this.imageFileName = '',
+    this.brightness = defaultBrightness,
+    this.blurSigma = defaultBlurSigma,
+  });
+
+  static const double defaultBrightness = 0.55;
+  static const double defaultBlurSigma = 12.0;
+  static const double maxBlurSigma = 40.0;
+
+  factory WallpaperPreferences.fromJson(Map<String, Object?> json) {
+    return WallpaperPreferences(
+      enabled: (json['enabled'] as bool?) ?? false,
+      imageFileName: ((json['imageFileName'] as String?) ?? '').trim(),
+      brightness: _clampUnit(json['brightness'], defaultBrightness),
+      blurSigma: _clampRange(
+        json['blurSigma'],
+        0.0,
+        maxBlurSigma,
+        defaultBlurSigma,
+      ),
+    );
+  }
+
+  final bool enabled;
+  final String imageFileName;
+  final double brightness;
+  final double blurSigma;
+
+  bool get hasImage => imageFileName.trim().isNotEmpty;
+
+  bool get isActive => enabled && hasImage;
+
+  WallpaperPreferences copyWith({
+    bool? enabled,
+    String? imageFileName,
+    double? brightness,
+    double? blurSigma,
+  }) {
+    return WallpaperPreferences(
+      enabled: enabled ?? this.enabled,
+      imageFileName: imageFileName ?? this.imageFileName,
+      brightness: brightness ?? this.brightness,
+      blurSigma: blurSigma ?? this.blurSigma,
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'enabled': enabled,
+      'imageFileName': imageFileName,
+      'brightness': brightness,
+      'blurSigma': blurSigma,
+    };
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    return other is WallpaperPreferences &&
+        other.enabled == enabled &&
+        other.imageFileName == imageFileName &&
+        other.brightness == brightness &&
+        other.blurSigma == blurSigma;
+  }
+
+  @override
+  int get hashCode => Object.hash(enabled, imageFileName, brightness, blurSigma);
+}
+
 @immutable
 class DownloadPreferences {
   const DownloadPreferences({
@@ -281,6 +382,7 @@ class AppPreferences {
     this.themePreference = AppThemePreference.system,
     this.readerPreferences = const ReaderPreferences(),
     this.downloadPreferences = const DownloadPreferences(),
+    this.wallpaperPreferences = const WallpaperPreferences(),
     this.lastPrimaryTabIndex = 0,
   });
 
@@ -296,6 +398,13 @@ class AppPreferences {
       ),
       downloadPreferences: DownloadPreferences.fromJson(
         ((json['downloadPreferences'] as Map<Object?, Object?>?) ??
+                const <Object?, Object?>{})
+            .map(
+              (Object? key, Object? value) => MapEntry(key.toString(), value),
+            ),
+      ),
+      wallpaperPreferences: WallpaperPreferences.fromJson(
+        ((json['wallpaperPreferences'] as Map<Object?, Object?>?) ??
                 const <Object?, Object?>{})
             .map(
               (Object? key, Object? value) => MapEntry(key.toString(), value),
@@ -323,6 +432,7 @@ class AppPreferences {
   final AppThemePreference themePreference;
   final ReaderPreferences readerPreferences;
   final DownloadPreferences downloadPreferences;
+  final WallpaperPreferences wallpaperPreferences;
   final int lastPrimaryTabIndex;
 
   ThemeMode get materialThemeMode {
@@ -384,12 +494,14 @@ class AppPreferences {
     AppThemePreference? themePreference,
     ReaderPreferences? readerPreferences,
     DownloadPreferences? downloadPreferences,
+    WallpaperPreferences? wallpaperPreferences,
     int? lastPrimaryTabIndex,
   }) {
     return AppPreferences(
       themePreference: themePreference ?? this.themePreference,
       readerPreferences: readerPreferences ?? this.readerPreferences,
       downloadPreferences: downloadPreferences ?? this.downloadPreferences,
+      wallpaperPreferences: wallpaperPreferences ?? this.wallpaperPreferences,
       lastPrimaryTabIndex: lastPrimaryTabIndex ?? this.lastPrimaryTabIndex,
     );
   }
@@ -399,6 +511,7 @@ class AppPreferences {
       'themePreference': _enumName(themePreference),
       'readerPreferences': readerPreferences.toJson(),
       'downloadPreferences': downloadPreferences.toJson(),
+      'wallpaperPreferences': wallpaperPreferences.toJson(),
       'lastPrimaryTabIndex': lastPrimaryTabIndex,
     };
   }

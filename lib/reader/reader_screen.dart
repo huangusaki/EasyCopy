@@ -754,6 +754,7 @@ class ReaderScreenState extends State<ReaderScreen> {
         : const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics());
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
+        _handleReaderScrollLifecycleNotification(notification);
         if (!_controller.isZoomGestureLocked) {
           _controller.handleChapterPullScrollNotification(
             notification,
@@ -816,6 +817,7 @@ class ReaderScreenState extends State<ReaderScreen> {
           );
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
+        _handleReaderScrollLifecycleNotification(notification);
         final bool isLastReaderPage =
             _controller.currentPageIndex >=
             _controller.readerPagedPageCount(page) - 1;
@@ -870,6 +872,7 @@ class ReaderScreenState extends State<ReaderScreen> {
                   ? pageBody
                   : NotificationListener<ScrollNotification>(
                       onNotification: (ScrollNotification notification) {
+                        _handleReaderScrollLifecycleNotification(notification);
                         if (_isUserDrivenScrollNotification(notification)) {
                           _controller.noteUserInteraction();
                         }
@@ -1767,6 +1770,21 @@ class ReaderScreenState extends State<ReaderScreen> {
         dragDetails != null,
       _ => false,
     };
+  }
+
+  void _handleReaderScrollLifecycleNotification(
+    ScrollNotification notification,
+  ) {
+    if (notification.depth != 0) return;
+    if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      _controller.cancelAutoTurn();
+      return;
+    }
+    if (notification is ScrollEndNotification &&
+        notification.dragDetails != null) {
+      _controller.restartAutoTurnAfterScroll();
+    }
   }
 
   @override

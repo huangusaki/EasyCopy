@@ -77,10 +77,19 @@ extension _EasyCopyScreenScrollRestore on _EasyCopyScreenState {
         !_standardScrollController.hasClients) {
       return;
     }
+    final double offset = _standardScrollController.offset;
+    if (_lastTrackedStandardScrollRouteKey == _currentEntry.routeKey &&
+        _lastTrackedStandardScrollOffset != null &&
+        (offset - _lastTrackedStandardScrollOffset!).abs() <
+            _standardScrollSessionStep) {
+      return;
+    }
+    _lastTrackedStandardScrollRouteKey = _currentEntry.routeKey;
+    _lastTrackedStandardScrollOffset = offset;
     _tabSessionStore.updateScroll(
       _selectedIndex,
       _currentEntry.routeKey,
-      _standardScrollController.offset,
+      offset,
     );
   }
 
@@ -195,6 +204,8 @@ extension _EasyCopyScreenScrollRestore on _EasyCopyScreenState {
 
     _standardScrollController.jumpTo(clampedOffset);
     _finishStandardScrollRestore(ticket);
+    _lastTrackedStandardScrollRouteKey = routeKey;
+    _lastTrackedStandardScrollOffset = clampedOffset;
     _tabSessionStore.updateScroll(tabIndex, routeKey, clampedOffset);
   }
 
@@ -208,6 +219,8 @@ extension _EasyCopyScreenScrollRestore on _EasyCopyScreenState {
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
     );
+    _lastTrackedStandardScrollRouteKey = _currentEntry.routeKey;
+    _lastTrackedStandardScrollOffset = 0;
     _tabSessionStore.updateScroll(_selectedIndex, _currentEntry.routeKey, 0);
   }
 }

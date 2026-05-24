@@ -40,6 +40,7 @@ import 'package:easy_copy/services/site_html_page_loader.dart';
 import 'package:easy_copy/services/site_session.dart';
 import 'package:easy_copy/services/standard_page_load_controller.dart';
 import 'package:easy_copy/services/tab_activation_policy.dart';
+import 'package:easy_copy/services/wallpaper_storage.dart';
 import 'package:easy_copy/theme/app_theme.dart';
 import 'package:easy_copy/webview/page_extractor_script.dart';
 import 'package:easy_copy/widgets/auth_webview_screen.dart';
@@ -53,6 +54,7 @@ import 'package:flutter/foundation.dart' show ValueListenable, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -74,6 +76,7 @@ part 'easy_copy_screen/standard_mode.dart';
 const Duration _pageFadeTransitionDuration = Duration(milliseconds: 320);
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
 const Duration _standardBodyFadeInDuration = Duration(milliseconds: 220);
+const double _standardScrollSessionStep = 96;
 const String _detailAllChapterTabKey = '__detail_all__';
 
 Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
@@ -244,6 +247,8 @@ class _EasyCopyScreenState extends State<EasyCopyScreen>
   bool _isUpdatingCollection = false;
   bool _isReaderExitTransitionActive = false;
   bool _suspendStandardScrollTracking = false;
+  double? _lastTrackedStandardScrollOffset;
+  String _lastTrackedStandardScrollRouteKey = '';
   String _selectedDetailChapterTabKey = _detailAllChapterTabKey;
   bool _isDetailChapterSortAscending = false;
   String _detailChapterStateRouteKey = '';

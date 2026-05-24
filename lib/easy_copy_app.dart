@@ -1,6 +1,11 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/easy_copy_screen.dart';
+import 'package:easy_copy/models/app_preferences.dart';
 import 'package:easy_copy/services/app_preferences_controller.dart';
+import 'package:easy_copy/services/wallpaper_storage.dart';
 import 'package:easy_copy/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,11 +23,18 @@ class EasyCopyApp extends StatelessWidget {
     return AnimatedBuilder(
       animation: controller,
       builder: (BuildContext context, Widget? _) {
+        final WallpaperPreferences wallpaper =
+            controller.preferences.wallpaperPreferences;
+        final bool wallpaperActive = wallpaper.isActive;
         return MaterialApp(
           title: AppConfig.appName,
           debugShowCheckedModeBanner: false,
-          theme: controller.preferences.buildLightTheme(),
-          darkTheme: controller.preferences.buildDarkTheme(),
+          theme: controller.preferences
+              .buildLightTheme()
+              .applyWallpaperOverlay(active: wallpaperActive),
+          darkTheme: controller.preferences
+              .buildDarkTheme()
+              .applyWallpaperOverlay(active: wallpaperActive),
           themeMode: controller.preferences.materialThemeMode,
           builder: (BuildContext context, Widget? child) {
             final ThemeData theme = Theme.of(context);
@@ -34,7 +46,12 @@ class EasyCopyApp extends StatelessWidget {
                 .extension<AppSemanticColors>()
                 ?.backgroundGradient;
             Widget body = child ?? const SizedBox.shrink();
-            if (backgroundGradient != null) {
+            if (wallpaperActive) {
+              body = AppWallpaperBackground(
+                wallpaper: wallpaper,
+                child: body,
+              );
+            } else if (backgroundGradient != null) {
               body = DecoratedBox(
                 decoration: BoxDecoration(gradient: backgroundGradient),
                 child: body,
@@ -56,6 +73,62 @@ class EasyCopyApp extends StatelessWidget {
           home: home ?? EasyCopyScreen(preferencesController: controller),
         );
       },
+    );
+  }
+}
+
+class AppWallpaperBackground extends StatelessWidget {
+  const AppWallpaperBackground({
+    required this.wallpaper,
+    required this.child,
+    super.key,
+  });
+
+  final WallpaperPreferences wallpaper;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final String? path = WallpaperStorage.instance.resolvePathSync(
+      wallpaper.imageFileName,
+    );
+    if (path == null) {
+      return child;
+    }
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final double scrimAlpha = (1.0 - wallpaper.brightness).clamp(0.0, 1.0);
+    final double blur = wallpaper.blurSigma.clamp(
+      0.0,
+      WallpaperPreferences.maxBlurSigma,
+    );
+    Widget image = Image.file(
+      File(path),
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
+      errorBuilder: (BuildContext context, Object error, StackTrace? stackTrace) =>
+          const SizedBox.shrink(),
+    );
+    if (blur > 0.01) {
+      image = ImageFiltered(
+        imageFilter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+        child: image,
+      );
+    }
+    return ColoredBox(
+      color: colorScheme.surface.withValues(alpha: 1.0),
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          Positioned.fill(child: image),
+          if (scrimAlpha > 0.001)
+            Positioned.fill(
+              child: ColoredBox(
+                color: colorScheme.surface.withValues(alpha: scrimAlpha),
+              ),
+            ),
+          Positioned.fill(child: child),
+        ],
+      ),
     );
   }
 }

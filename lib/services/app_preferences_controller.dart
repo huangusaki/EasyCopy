@@ -30,6 +30,9 @@ class AppPreferencesController extends ChangeNotifier {
   DownloadPreferences get downloadPreferences =>
       _preferences.downloadPreferences;
 
+  WallpaperPreferences get wallpaperPreferences =>
+      _preferences.wallpaperPreferences;
+
   Future<void> ensureInitialized() {
     return _initialization ??= _initialize();
   }
@@ -71,18 +74,39 @@ class AppPreferencesController extends ChangeNotifier {
     );
   }
 
+  Future<void> updateWallpaperPreferences(
+    WallpaperPreferences Function(WallpaperPreferences current) transform, {
+    bool persist = true,
+  }) {
+    return _replacePreferences(
+      _preferences.copyWith(
+        wallpaperPreferences: transform(_preferences.wallpaperPreferences),
+      ),
+      persist: persist,
+    );
+  }
+
   Future<void> _initialize() async {
     _preferences = await _store.read();
   }
 
-  Future<void> _replacePreferences(AppPreferences nextPreferences) async {
+  Future<void> _replacePreferences(
+    AppPreferences nextPreferences, {
+    bool persist = true,
+  }) async {
     await ensureInitialized();
     if (nextPreferences == _preferences) {
       return;
     }
     _preferences = nextPreferences;
     notifyListeners();
-    _persistChain = _persistChain.then((_) => _store.write(_preferences));
+    if (!persist) {
+      return;
+    }
+    final AppPreferences preferencesToPersist = nextPreferences;
+    _persistChain = _persistChain.then(
+      (_) => _store.write(preferencesToPersist),
+    );
     await _persistChain;
   }
 }

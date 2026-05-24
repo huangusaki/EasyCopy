@@ -38,6 +38,7 @@ dependencies:
   flutter_secure_storage: ^9.2.4
   html: ^0.15.6
   http: ^1.2.2
+  image_picker: ^1.1.2
   package_info_plus: ^8.1.2
   path_provider: ^2.1.5
   pointycastle: ^3.9.1
