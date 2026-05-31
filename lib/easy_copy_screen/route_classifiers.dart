@@ -13,17 +13,13 @@ extension _EasyCopyScreenRouteClassifiers on _EasyCopyScreenState {
     final EasyCopyPage? page = _page;
     if (page is ProfilePageData ||
         page is DetailPageData ||
-        _isProfileUri(_currentUri) ||
-        _isTopicUri(_currentUri)) {
+        _isProfileUri(_currentUri)) {
       return false;
     }
     return !_isDetailRoute;
   }
 
   bool get _isPrimaryTabContent {
-    if (_isTopicListUri(_currentUri)) {
-      return true;
-    }
     if (_shouldShowBackButton) {
       return false;
     }
@@ -79,18 +75,8 @@ extension _EasyCopyScreenRouteClassifiers on _EasyCopyScreenState {
     return path.startsWith('/comics') ||
         path.startsWith('/filter') ||
         path.startsWith('/search') ||
-        path.startsWith('/topic') ||
         path.startsWith('/recommend') ||
         path.startsWith('/newest');
-  }
-
-  bool _isTopicUri(Uri uri) {
-    return uri.path.toLowerCase().startsWith('/topic');
-  }
-
-  bool _isTopicListUri(Uri uri) {
-    final String path = uri.path.toLowerCase();
-    return path == '/topic' || path == '/topic/';
   }
 
   bool get _isSecondaryDiscoverRoute {
@@ -107,9 +93,6 @@ extension _EasyCopyScreenRouteClassifiers on _EasyCopyScreenState {
       return AppConfig.profileSubviewTitle(
         AppConfig.profileSubviewForUri(_currentUri),
       );
-    }
-    if (_isTopicListUri(_currentUri)) {
-      return '专题精选';
     }
     final EasyCopyPage? page = _page;
     if (page == null) {

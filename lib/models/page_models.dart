@@ -589,7 +589,6 @@ class HomePageData extends EasyCopyPage {
     required super.uri,
     required this.heroBanners,
     required this.sections,
-    this.feature,
   }) : super(type: EasyCopyPageType.home);
 
   factory HomePageData.fromJson(Map<String, Object?> json) {
@@ -606,15 +605,11 @@ class HomePageData extends EasyCopyPage {
         'sections',
         ComicSectionData.fromJson,
       ).where(_shouldRetainHomeSection).toList(growable: false),
-      feature: _mapValue(json['feature']).isEmpty
-          ? null
-          : HeroBannerData.fromJson(_mapValue(json['feature'])),
     );
   }
 
   final List<HeroBannerData> heroBanners;
   final List<ComicSectionData> sections;
-  final HeroBannerData? feature;
 
   @override
   Map<String, Object?> toJson() {
@@ -628,7 +623,6 @@ class HomePageData extends EasyCopyPage {
       'sections': sections
           .map((ComicSectionData section) => section.toJson())
           .toList(),
-      'feature': feature?.toJson(),
     };
   }
 }
@@ -770,7 +764,11 @@ class DetailPageData extends EasyCopyPage {
       coverUrl: _stringValue(json['coverUrl']),
       aliases: _stringValue(json['aliases']),
       authors: _stringValue(json['authors']),
-      authorLinks: _readList<LinkAction>(json, 'authorLinks', LinkAction.fromJson),
+      authorLinks: _readList<LinkAction>(
+        json,
+        'authorLinks',
+        LinkAction.fromJson,
+      ),
       heat: _stringValue(json['heat']),
       updatedAt: _stringValue(json['updatedAt']),
       status: _stringValue(json['status']),
@@ -865,7 +863,9 @@ class DetailPageData extends EasyCopyPage {
       'coverUrl': coverUrl,
       'aliases': aliases,
       'authors': authors,
-      'authorLinks': authorLinks.map((LinkAction item) => item.toJson()).toList(),
+      'authorLinks': authorLinks
+          .map((LinkAction item) => item.toJson())
+          .toList(),
       'heat': heat,
       'updatedAt': updatedAt,
       'status': status,
@@ -903,7 +903,11 @@ class CachedComicDetailSnapshot {
     return CachedComicDetailSnapshot(
       aliases: _stringValue(json['aliases']),
       authors: _stringValue(json['authors']),
-      authorLinks: _readList<LinkAction>(json, 'authorLinks', LinkAction.fromJson),
+      authorLinks: _readList<LinkAction>(
+        json,
+        'authorLinks',
+        LinkAction.fromJson,
+      ),
       heat: _stringValue(json['heat']),
       updatedAt: _stringValue(json['updatedAt']),
       status: _stringValue(json['status']),
@@ -967,7 +971,9 @@ class CachedComicDetailSnapshot {
     return <String, Object?>{
       'aliases': aliases,
       'authors': authors,
-      'authorLinks': authorLinks.map((LinkAction item) => item.toJson()).toList(),
+      'authorLinks': authorLinks
+          .map((LinkAction item) => item.toJson())
+          .toList(),
       'heat': heat,
       'updatedAt': updatedAt,
       'status': status,

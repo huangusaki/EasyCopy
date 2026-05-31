@@ -35,7 +35,6 @@ String standardPageTransitionScope(EasyCopyPage? page, Uri uri) {
   }
   if (normalizedUri.path.startsWith('/comics') ||
       normalizedUri.path.startsWith('/filter') ||
-      normalizedUri.path.startsWith('/topic') ||
       normalizedUri.path.startsWith('/recommend') ||
       normalizedUri.path.startsWith('/newest')) {
     return 'discover';

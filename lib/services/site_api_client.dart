@@ -96,6 +96,9 @@ class SiteApiClient {
     final ProfileSubview activeSubview = AppConfig.profileSubviewForUri(
       targetUri,
     );
+    final ProfileCollectionSort collectionSort = _serverCollectionSort(
+      AppConfig.profileCollectionSortForUri(targetUri),
+    );
     final int activePage = AppConfig.profilePageForUri(targetUri);
     if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
       return ProfilePageData.loggedOut(uri: targetUri.toString());
@@ -111,6 +114,7 @@ class SiteApiClient {
             const <String>['/api/v3/member/collect/comics'],
             view: ProfileSubview.collections,
             page: activeSubview == ProfileSubview.collections ? activePage : 1,
+            collectionSort: collectionSort,
           );
     final Future<_PagedProfileSection> historyFuture =
         activeSubview == ProfileSubview.collections
@@ -129,6 +133,7 @@ class SiteApiClient {
     await _session.bindUserId(user.userId);
     final List<ProfileLibraryItem> collections = _parseCollections(
       collectionsPayload.items,
+      sort: collectionSort,
     );
     final List<ProfileHistoryItem> history = _parseHistory(
       historyPayload.items,
@@ -164,17 +169,20 @@ class SiteApiClient {
 
   Future<(List<ProfileLibraryItem> items, int total)> loadCollectionsPage({
     int page = 1,
+    ProfileCollectionSort sort = AppConfig.defaultProfileCollectionSort,
   }) async {
     await _session.ensureInitialized();
     if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
       throw SiteApiException('请先登录后再操作。');
     }
+    final ProfileCollectionSort serverSort = _serverCollectionSort(sort);
     final _PagedProfileSection payload = await _getPagedListOrEmpty(
       const <String>['/api/v3/member/collect/comics'],
       view: ProfileSubview.collections,
       page: page,
+      collectionSort: serverSort,
     );
-    return (_parseCollections(payload.items), payload.total);
+    return (_parseCollections(payload.items, sort: serverSort), payload.total);
   }
 
   Future<(List<ProfileHistoryItem> items, int total)> loadHistoryPage({
@@ -635,11 +643,18 @@ class SiteApiClient {
     List<String> paths, {
     required ProfileSubview view,
     required int page,
+    ProfileCollectionSort collectionSort =
+        AppConfig.defaultProfileCollectionSort,
   }) async {
     Object? lastError;
     for (final String path in paths) {
       try {
-        return await _getPagedList(path, view: view, page: page);
+        return await _getPagedList(
+          path,
+          view: view,
+          page: page,
+          collectionSort: collectionSort,
+        );
       } catch (error) {
         lastError = error;
       }
@@ -647,13 +662,19 @@ class SiteApiClient {
     if (lastError is SiteApiException && lastError.message.contains('登录已失效')) {
       throw lastError;
     }
-    return _emptyPagedSection(view: view, page: page);
+    return _emptyPagedSection(
+      view: view,
+      page: page,
+      collectionSort: collectionSort,
+    );
   }
 
   Future<_PagedProfileSection> _getPagedList(
     String path, {
     required ProfileSubview view,
     required int page,
+    ProfileCollectionSort collectionSort =
+        AppConfig.defaultProfileCollectionSort,
   }) async {
     final int normalizedPage = page < 1 ? 1 : page;
     final int offset = (normalizedPage - 1) * _profilePageSize;
@@ -662,9 +683,9 @@ class SiteApiClient {
       'limit': '$_profilePageSize',
     };
     if (view == ProfileSubview.collections) {
-      queryParameters.addAll(const <String, String>{
+      queryParameters.addAll(<String, String>{
         'free_type': '1',
-        'ordering': '-datetime_updated',
+        'ordering': _collectionOrdering(collectionSort),
       });
     }
     final Map<String, Object?> payload = await _getJson(
@@ -700,6 +721,7 @@ class SiteApiClient {
         currentPage: clampedPage,
         totalPages: totalPages,
         totalItems: total,
+        collectionSort: collectionSort,
       ),
     );
   }
@@ -707,6 +729,8 @@ class SiteApiClient {
   _PagedProfileSection _emptyPagedSection({
     required ProfileSubview view,
     required int page,
+    ProfileCollectionSort collectionSort =
+        AppConfig.defaultProfileCollectionSort,
   }) {
     final int normalizedPage = page < 1 ? 1 : page;
     return _PagedProfileSection(
@@ -715,6 +739,7 @@ class SiteApiClient {
         currentPage: normalizedPage,
         totalPages: 1,
         totalItems: 0,
+        collectionSort: collectionSort,
       ),
     );
   }
@@ -724,6 +749,8 @@ class SiteApiClient {
     required int currentPage,
     required int totalPages,
     required int totalItems,
+    ProfileCollectionSort collectionSort =
+        AppConfig.defaultProfileCollectionSort,
   }) {
     final int normalizedCurrentPage = currentPage < 1 ? 1 : currentPage;
     final int normalizedTotalPages = totalPages < 1 ? 1 : totalPages;
@@ -739,12 +766,18 @@ class SiteApiClient {
           ? AppConfig.buildProfileUri(
               view: view,
               page: normalizedCurrentPage - 1,
+              collectionSort: view == ProfileSubview.collections
+                  ? collectionSort
+                  : null,
             ).toString()
           : '',
       nextHref: normalizedCurrentPage < normalizedTotalPages
           ? AppConfig.buildProfileUri(
               view: view,
               page: normalizedCurrentPage + 1,
+              collectionSort: view == ProfileSubview.collections
+                  ? collectionSort
+                  : null,
             ).toString()
           : '',
     );
@@ -787,7 +820,10 @@ class SiteApiClient {
     );
   }
 
-  List<ProfileLibraryItem> _parseCollections(Object? results) {
+  List<ProfileLibraryItem> _parseCollections(
+    Object? results, {
+    ProfileCollectionSort sort = AppConfig.defaultProfileCollectionSort,
+  }) {
     final List<ProfileLibraryItem> items = _extractList(results)
         .map((Map<String, Object?> item) {
           final Map<String, Object?> comic = _firstNonEmptyMap(item, <String>[
@@ -850,7 +886,14 @@ class SiteApiClient {
         })
         .where((ProfileLibraryItem item) => item.title.isNotEmpty)
         .toList(growable: false);
-    items.sort(_compareProfileLibraryItemByUpdatedAtDesc);
+    switch (sort) {
+      case ProfileCollectionSort.latestUpdate:
+        items.sort(_compareProfileLibraryItemByUpdatedAtDesc);
+        break;
+      case ProfileCollectionSort.readingTime:
+      case ProfileCollectionSort.alphabetical:
+        break;
+    }
     return items;
   }
 
@@ -1199,6 +1242,20 @@ class SiteApiClient {
     } catch (_) {
       return null;
     }
+  }
+
+  String _collectionOrdering(ProfileCollectionSort sort) {
+    return switch (sort) {
+      ProfileCollectionSort.readingTime => '-datetime_browse',
+      ProfileCollectionSort.latestUpdate => '-datetime_updated',
+      ProfileCollectionSort.alphabetical => '-datetime_updated',
+    };
+  }
+
+  ProfileCollectionSort _serverCollectionSort(ProfileCollectionSort sort) {
+    return sort == ProfileCollectionSort.alphabetical
+        ? AppConfig.defaultProfileCollectionSort
+        : sort;
   }
 
   int _compareProfileLibraryItemByUpdatedAtDesc(

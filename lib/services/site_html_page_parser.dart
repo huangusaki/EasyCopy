@@ -88,11 +88,8 @@ class SiteHtmlPageParser {
     }
     if (document.querySelector('.exemptComicList') != null ||
         document.querySelector('.correlationList .exemptComic_Item') != null ||
-        document.querySelector('.specialDetail') != null ||
-        document.querySelector('.specialContent') != null ||
         path.startsWith('/comics') ||
         path.startsWith('/filter') ||
-        path.startsWith('/topic') ||
         path.startsWith('/recommend') ||
         path.startsWith('/newest') ||
         path.startsWith('/author') ||
@@ -175,48 +172,22 @@ class SiteHtmlPageParser {
         .whereType<ComicSectionData>()
         .toList(growable: false);
 
-    final dom.Element? featureBlock = _querySelector(document, '.special');
-    final dom.Element? featureAnchor = featureBlock == null
-        ? null
-        : _parentElement(featureBlock);
-    final HeroBannerData? feature =
-        featureBlock == null || featureAnchor == null
-        ? null
-        : HeroBannerData(
-            title: _queryText(featureBlock, '.special-text-h4 p'),
-            subtitle: _queryText(featureBlock, '.special-time'),
-            imageUrl: _imageUrl(uri, _querySelector(featureBlock, 'img')),
-            href: _linkUrl(uri, featureAnchor),
-          );
-
     return HomePageData(
       title: '首页',
       uri: uri.toString(),
       heroBanners: const <HeroBannerData>[],
       sections: sections,
-      feature: feature == null || feature.title.isEmpty || feature.href.isEmpty
-          ? null
-          : feature,
     );
   }
 
   DiscoverPageData _buildDiscoverPage(Uri uri, dom.Document document) {
-    final String path = uri.path.toLowerCase();
-    final bool isTopicDetail =
-        path.startsWith('/topic/') ||
-        document.querySelector('.specialDetail') != null;
-    final bool isTopicRoute = path.startsWith('/topic');
-    List<ComicCardData> items = isTopicDetail
-        ? _collectTopicDetailComicCards(document, uri)
-        : isTopicRoute
-        ? _collectTopicListCards(document, uri)
-        : _collectComicCards(
-            document,
-            uri,
-            '.exemptComic-box a[href*="/comic/"], '
-            '.correlationList a[href*="/comic/"]',
-          );
-    if (items.isEmpty && !isTopicRoute) {
+    List<ComicCardData> items = _collectComicCards(
+      document,
+      uri,
+      '.exemptComic-box a[href*="/comic/"], '
+      '.correlationList a[href*="/comic/"]',
+    );
+    if (items.isEmpty) {
       items = _discoverItemsFromInlineList(uri, document);
     }
     final dom.Element? pager = document.querySelector('.page-all');
@@ -227,9 +198,7 @@ class SiteHtmlPageParser {
     return DiscoverPageData(
       title: _pageTitle(document),
       uri: uri.toString(),
-      filters: isTopicRoute
-          ? const <FilterGroupData>[]
-          : _collectFilterGroups(document, uri),
+      filters: _collectFilterGroups(document, uri),
       items: items,
       pager: PagerData(
         currentLabel: _queryText(pager, '.page-all-item.active a'),
@@ -245,13 +214,11 @@ class SiteHtmlPageParser {
               _querySelector(pager, '.next-all a'),
         ),
       ),
-      spotlight: isTopicRoute
-          ? const <ComicCardData>[]
-          : _collectComicCards(
-              document,
-              uri,
-              '.dailyRecommendation-box a[href*="/comic/"]',
-            ),
+      spotlight: _collectComicCards(
+        document,
+        uri,
+        '.dailyRecommendation-box a[href*="/comic/"]',
+      ),
     );
   }
 
@@ -869,99 +836,9 @@ class SiteHtmlPageParser {
           : _queryText(container, '.dailyRecommendation-span').isNotEmpty
           ? _queryText(container, '.dailyRecommendation-span')
           : _queryText(container, '.oneLines'),
-      secondaryText: _queryText(container, '.update span').isNotEmpty
-          ? _queryText(container, '.update span')
-          : _queryText(container, '.special-time'),
+      secondaryText: _queryText(container, '.update span'),
       coverUrl: _imageUrl(uri, _querySelector(container, 'img')),
       href: href,
-      badge: _queryText(container, '.special-text span'),
-    );
-  }
-
-  List<ComicCardData> _collectTopicListCards(Object root, Uri uri) {
-    return _uniqueBy<ComicCardData>(
-      _querySelectorAll(root, '.specialContent').map((dom.Element card) {
-        final dom.Element? anchor =
-            _querySelector(card, '.specialContentImage a[href]') ??
-            _querySelector(card, '.specialContentButton a[href]');
-        final String href = _linkUrl(uri, anchor);
-        final String title =
-            _queryText(card, '.specialContentImageSpan').isNotEmpty
-            ? _queryText(card, '.specialContentImageSpan')
-            : _queryText(card, '.specialContentTextTitle').isNotEmpty
-            ? _queryText(card, '.specialContentTextTitle')
-            : _text(anchor);
-        if (title.isEmpty || href.isEmpty) {
-          return null;
-        }
-        return ComicCardData(
-          title: title,
-          subtitle: _queryText(card, '.specialContentTextContent'),
-          secondaryText: _queryText(card, '.specialContentButtonTime'),
-          coverUrl: _imageUrl(
-            uri,
-            _querySelector(card, '.specialContentImage img'),
-          ),
-          href: href,
-          badge: '专题',
-        );
-      }).whereType<ComicCardData>(),
-      (ComicCardData item) => item.href,
-    );
-  }
-
-  List<ComicCardData> _collectTopicDetailComicCards(Object root, Uri uri) {
-    return _uniqueBy<ComicCardData>(
-      _querySelectorAll(root, '.specialDetailItem').map((dom.Element card) {
-        final dom.Element? titleAnchor =
-            _querySelector(
-              card,
-              '.specialDetailItemHeaderContentName a[href]',
-            ) ??
-            _querySelector(card, '.specialDetailItemHeaderImage a[href]');
-        final String href = _linkUrl(uri, titleAnchor);
-        final String title = _text(titleAnchor);
-        if (title.isEmpty || href.isEmpty) {
-          return null;
-        }
-
-        final List<String> authorLabels = _uniqueStrings(
-          _querySelectorAll(
-            card,
-            '.specialDetailItemHeaderContentText a[href*="/author/"]',
-          ).map(_text),
-        );
-        final List<String> infoLines =
-            _querySelectorAll(card, '.specialDetailItemHeaderContentText')
-                .map(_text)
-                .where((String item) => item.isNotEmpty)
-                .toList(growable: false);
-        final String heatLine = infoLines.firstWhere(
-          (String value) => value.contains('熱度') || value.contains('热度'),
-          orElse: () => '',
-        );
-        final List<String> tagLabels = _uniqueStrings(
-          _querySelectorAll(card, '.specialDetailItemHeaderContentLabel a').map(
-            (dom.Element anchor) =>
-                _text(anchor).replaceFirst(RegExp(r'^#'), ''),
-          ),
-        );
-
-        return ComicCardData(
-          title: title,
-          subtitle: authorLabels.isEmpty
-              ? ''
-              : '作者：${authorLabels.join(' / ')}',
-          secondaryText: heatLine,
-          coverUrl: _imageUrl(
-            uri,
-            _querySelector(card, '.specialDetailItemHeaderImage img'),
-          ),
-          href: href,
-          badge: tagLabels.isEmpty ? '' : tagLabels.first,
-        );
-      }).whereType<ComicCardData>(),
-      (ComicCardData item) => item.href,
     );
   }
 

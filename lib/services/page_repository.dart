@@ -410,7 +410,6 @@ class PageRepository {
     return path == '/' ||
         path.startsWith('/comics') ||
         path.startsWith('/filter') ||
-        path.startsWith('/topic') ||
         path.startsWith('/recommend') ||
         path.startsWith('/newest') ||
         path.startsWith('/rank') ||

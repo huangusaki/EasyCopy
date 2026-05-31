@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 enum ProfileSubview { root, collections, history, cached }
 
+enum ProfileCollectionSort { readingTime, latestUpdate, alphabetical }
+
 class AppConfig {
   AppConfig._();
 
@@ -12,6 +14,8 @@ class AppConfig {
       'Hide the original desktop page and render a mobile-first reading UI.';
   static const String profilePath = '/person/home';
   static const String profileRouteKey = '__profile__';
+  static const ProfileCollectionSort defaultProfileCollectionSort =
+      ProfileCollectionSort.latestUpdate;
 
   static const String debugStartUri = String.fromEnvironment(
     'EASY_COPY_DEBUG_START_URI',
@@ -48,14 +52,19 @@ class AppConfig {
   static Uri buildProfileUri({
     ProfileSubview view = ProfileSubview.root,
     int page = 1,
+    ProfileCollectionSort? collectionSort,
   }) {
     final Uri uri = resolvePath(profilePath);
     final String? queryValue = _profileSubviewQueryValue(view);
     final int normalizedPage = page < 1 ? 1 : page;
+    final ProfileCollectionSort effectiveSort =
+        collectionSort ?? defaultProfileCollectionSort;
     final Map<String, String> queryParameters = <String, String>{
       if (queryValue != null) 'view': queryValue,
       if (normalizedPage > 1 && view != ProfileSubview.root)
         'page': '$normalizedPage',
+      if (view == ProfileSubview.collections)
+        'sort': profileCollectionSortQueryValue(effectiveSort),
     };
     return uri.replace(
       queryParameters: queryParameters.isEmpty ? null : queryParameters,
@@ -101,6 +110,30 @@ class AppConfig {
       return 1;
     }
     return parsed;
+  }
+
+  static ProfileCollectionSort profileCollectionSortForUri(Uri uri) {
+    final Uri normalizedUri = rewriteToCurrentHost(uri);
+    if (!normalizedUri.path.startsWith(profilePath)) {
+      return defaultProfileCollectionSort;
+    }
+    switch (normalizedUri.queryParameters['sort']?.trim().toLowerCase()) {
+      case 'updated':
+      case 'update':
+      case 'latest':
+        return ProfileCollectionSort.latestUpdate;
+      case 'read':
+      case 'reading':
+      case 'reading_time':
+        return ProfileCollectionSort.readingTime;
+      case 'az':
+      case 'a-z':
+      case 'alpha':
+      case 'alphabetical':
+        return ProfileCollectionSort.alphabetical;
+      default:
+        return defaultProfileCollectionSort;
+    }
   }
 
   static List<AppDestination> buildDestinations() {
@@ -206,6 +239,14 @@ class AppConfig {
     }
   }
 
+  static String profileCollectionSortQueryValue(ProfileCollectionSort sort) {
+    return switch (sort) {
+      ProfileCollectionSort.readingTime => 'read',
+      ProfileCollectionSort.latestUpdate => 'updated',
+      ProfileCollectionSort.alphabetical => 'az',
+    };
+  }
+
   static Uri _replaceSortedQuery(Uri uri, Map<String, String> queryParameters) {
     final List<MapEntry<String, String>> sortedQuery =
         queryParameters.entries.toList(growable: false)..sort((
@@ -290,10 +331,6 @@ int tabIndexForUri(Uri? uri) {
 
   if (path.startsWith('/web/login') || path.startsWith('/person')) {
     return 3;
-  }
-
-  if (path.startsWith('/topic')) {
-    return 0;
   }
 
   if (path.startsWith('/comics') ||

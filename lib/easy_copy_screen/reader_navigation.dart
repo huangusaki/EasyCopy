@@ -359,10 +359,6 @@ extension _EasyCopyScreenReaderNavigation on _EasyCopyScreenState {
       );
       return;
     }
-    if (_isTopicUri(_currentUri)) {
-      await _loadHome();
-      return;
-    }
     if (_selectedIndex != 0) {
       await _loadHome();
       return;

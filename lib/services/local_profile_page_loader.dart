@@ -49,6 +49,8 @@ class LocalProfilePageLoader {
 
     final ProfileSubview view = AppConfig.profileSubviewForUri(uri);
     final int activePage = AppConfig.profilePageForUri(uri);
+    final ProfileCollectionSort collectionSort =
+        AppConfig.profileCollectionSortForUri(uri);
 
     final bool isLoggedIn = authScope != LocalLibraryStore.guestScope;
     final String guestScope = LocalLibraryStore.guestScope;
@@ -92,6 +94,7 @@ class LocalProfilePageLoader {
       localScope,
       page: view == ProfileSubview.collections ? activePage : 1,
       pageSize: 20,
+      sort: collectionSort,
     );
     final (
       List<ProfileHistoryItem> historyPreview,
@@ -115,6 +118,7 @@ class LocalProfilePageLoader {
             currentPage: activePage,
             totalItems: collectionsTotal,
             pageSize: 20,
+            collectionSort: collectionSort,
           ),
           collectionsTotal: collectionsTotal,
           history: const <ProfileHistoryItem>[],
@@ -160,6 +164,8 @@ class LocalProfilePageLoader {
     required int currentPage,
     required int totalItems,
     required int pageSize,
+    ProfileCollectionSort collectionSort =
+        AppConfig.defaultProfileCollectionSort,
   }) {
     final int normalizedPage = currentPage < 1 ? 1 : currentPage;
     final int normalizedTotalItems = totalItems < 0 ? 0 : totalItems;
@@ -179,12 +185,18 @@ class LocalProfilePageLoader {
           ? AppConfig.buildProfileUri(
               view: view,
               page: normalizedPage - 1,
+              collectionSort: view == ProfileSubview.collections
+                  ? collectionSort
+                  : null,
             ).toString()
           : '',
       nextHref: normalizedPage < totalPages
           ? AppConfig.buildProfileUri(
               view: view,
               page: normalizedPage + 1,
+              collectionSort: view == ProfileSubview.collections
+                  ? collectionSort
+                  : null,
             ).toString()
           : '',
     );

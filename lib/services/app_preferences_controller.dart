@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/app_preferences.dart';
 import 'package:easy_copy/services/app_preferences_store.dart';
 import 'package:flutter/foundation.dart';
@@ -33,6 +34,9 @@ class AppPreferencesController extends ChangeNotifier {
   WallpaperPreferences get wallpaperPreferences =>
       _preferences.wallpaperPreferences;
 
+  ProfileCollectionSort get profileCollectionSort =>
+      _preferences.profileCollectionSort;
+
   Future<void> ensureInitialized() {
     return _initialization ??= _initialize();
   }
@@ -51,6 +55,12 @@ class AppPreferencesController extends ChangeNotifier {
     }
     return _replacePreferences(
       _preferences.copyWith(lastPrimaryTabIndex: normalizedIndex),
+    );
+  }
+
+  Future<void> setProfileCollectionSort(ProfileCollectionSort sort) {
+    return _replacePreferences(
+      _preferences.copyWith(profileCollectionSort: sort),
     );
   }
 

@@ -43,12 +43,70 @@ extension _EasyCopyScreenTabNavigation on _EasyCopyScreenState {
     );
   }
 
-  void _openProfileSubview(ProfileSubview view, {int page = 1}) {
+  ProfileCollectionSort _effectiveProfileCollectionSort(
+    ProfileCollectionSort sort,
+  ) {
+    final EasyCopyPage? page = _page;
+    final bool isLoggedIn = page is ProfilePageData
+        ? page.isLoggedIn
+        : _session.isAuthenticated;
+    if (isLoggedIn && sort == ProfileCollectionSort.alphabetical) {
+      return AppConfig.defaultProfileCollectionSort;
+    }
+    return sort;
+  }
+
+  ProfileCollectionSort _preferredProfileCollectionSort() {
+    return _effectiveProfileCollectionSort(
+      _preferencesController.profileCollectionSort,
+    );
+  }
+
+  Uri _profileUriWithPreferredCollectionSort(Uri uri) {
+    final Uri normalizedUri = AppConfig.rewriteToCurrentHost(uri);
+    final ProfileSubview view = AppConfig.profileSubviewForUri(normalizedUri);
+    if (view != ProfileSubview.root && view != ProfileSubview.collections) {
+      return normalizedUri;
+    }
+    final Map<String, String> queryParameters = Map<String, String>.from(
+      normalizedUri.queryParameters,
+    );
+    final ProfileCollectionSort sort = queryParameters.containsKey('sort')
+        ? _effectiveProfileCollectionSort(
+            AppConfig.profileCollectionSortForUri(normalizedUri),
+          )
+        : _preferredProfileCollectionSort();
+    queryParameters['sort'] = AppConfig.profileCollectionSortQueryValue(sort);
+    if (view == ProfileSubview.root) {
+      queryParameters.remove('view');
+      queryParameters.remove('page');
+    }
+    return normalizedUri.replace(
+      queryParameters: queryParameters.isEmpty ? null : queryParameters,
+    );
+  }
+
+  void _openProfileSubview(
+    ProfileSubview view, {
+    int page = 1,
+    ProfileCollectionSort? collectionSort,
+    NavigationIntent historyMode = NavigationIntent.push,
+  }) {
+    final ProfileCollectionSort? effectiveCollectionSort =
+        view == ProfileSubview.collections
+        ? _effectiveProfileCollectionSort(
+            collectionSort ?? _preferencesController.profileCollectionSort,
+          )
+        : null;
     unawaited(
       _loadProfilePage(
-        targetUri: AppConfig.buildProfileUri(view: view, page: page),
+        targetUri: AppConfig.buildProfileUri(
+          view: view,
+          page: page,
+          collectionSort: effectiveCollectionSort,
+        ),
         preserveVisiblePage: _page is ProfilePageData,
-        historyMode: NavigationIntent.push,
+        historyMode: historyMode,
       ),
     );
   }
@@ -197,6 +255,7 @@ extension _EasyCopyScreenTabNavigation on _EasyCopyScreenState {
               href: page.uri.trim(),
               subtitle: page.authors.trim(),
               secondaryText: secondaryText,
+              updatedAt: page.updatedAt.trim(),
             ),
           );
         } else {

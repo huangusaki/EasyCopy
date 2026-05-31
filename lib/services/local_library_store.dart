@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/models/page_models.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
@@ -79,15 +80,11 @@ class LocalLibraryStore {
     if (normalizedScope.isEmpty || normalizedKey.isEmpty) {
       return;
     }
-    await _database!.insert(
-      _metaTable,
-      <String, Object?>{
-        'scope': normalizedScope,
-        'key': normalizedKey,
-        'value': '1',
-      },
-      conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
-    );
+    await _database!.insert(_metaTable, <String, Object?>{
+      'scope': normalizedScope,
+      'key': normalizedKey,
+      'value': '1',
+    }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
   }
 
   Future<void> importCollections(
@@ -110,21 +107,18 @@ class LocalLibraryStore {
         continue;
       }
       final String id = _entryId(normalizedScope, comicPathKey);
-      batch.insert(
-        _collectionsTable,
-        <String, Object?>{
-          'id': id,
-          'scope': normalizedScope,
-          'comic_path_key': comicPathKey,
-          'title': item.title.trim(),
-          'cover_url': item.coverUrl.trim(),
-          'href': href,
-          'subtitle': item.subtitle.trim(),
-          'secondary_text': item.secondaryText.trim(),
-          'added_at_ms': baseMs - index,
-        },
-        conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
-      );
+      batch.insert(_collectionsTable, <String, Object?>{
+        'id': id,
+        'scope': normalizedScope,
+        'comic_path_key': comicPathKey,
+        'title': item.title.trim(),
+        'cover_url': item.coverUrl.trim(),
+        'href': href,
+        'subtitle': item.subtitle.trim(),
+        'secondary_text': item.secondaryText.trim(),
+        'updated_at': item.updatedAt.trim(),
+        'added_at_ms': baseMs - index,
+      }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
       index += 1;
     }
     await batch.commit(noResult: true);
@@ -157,21 +151,17 @@ class LocalLibraryStore {
       final String id = _entryId(normalizedScope, comicPathKey);
       final int visitedAtMs =
           _parseTimestamp(item.visitedAt) ?? (baseMs - index);
-      batch.insert(
-        _historyTable,
-        <String, Object?>{
-          'id': id,
-          'scope': normalizedScope,
-          'comic_path_key': comicPathKey,
-          'title': item.title.trim(),
-          'cover_url': item.coverUrl.trim(),
-          'comic_href': comicHref,
-          'chapter_label': item.chapterLabel.trim(),
-          'chapter_href': item.chapterHref.trim(),
-          'visited_at_ms': visitedAtMs,
-        },
-        conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
-      );
+      batch.insert(_historyTable, <String, Object?>{
+        'id': id,
+        'scope': normalizedScope,
+        'comic_path_key': comicPathKey,
+        'title': item.title.trim(),
+        'cover_url': item.coverUrl.trim(),
+        'comic_href': comicHref,
+        'chapter_label': item.chapterLabel.trim(),
+        'chapter_href': item.chapterHref.trim(),
+        'visited_at_ms': visitedAtMs,
+      }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
       index += 1;
     }
     await batch.commit(noResult: true);
@@ -206,21 +196,18 @@ class LocalLibraryStore {
     }
     final String id = _entryId(normalizedScope, comicPathKey);
     final DateTime now = _now();
-    await _database!.insert(
-      _collectionsTable,
-      <String, Object?>{
-        'id': id,
-        'scope': normalizedScope,
-        'comic_path_key': comicPathKey,
-        'title': item.title.trim(),
-        'cover_url': item.coverUrl.trim(),
-        'href': href,
-        'subtitle': item.subtitle.trim(),
-        'secondary_text': item.secondaryText.trim(),
-        'added_at_ms': now.millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
-    );
+    await _database!.insert(_collectionsTable, <String, Object?>{
+      'id': id,
+      'scope': normalizedScope,
+      'comic_path_key': comicPathKey,
+      'title': item.title.trim(),
+      'cover_url': item.coverUrl.trim(),
+      'href': href,
+      'subtitle': item.subtitle.trim(),
+      'secondary_text': item.secondaryText.trim(),
+      'updated_at': item.updatedAt.trim(),
+      'added_at_ms': now.millisecondsSinceEpoch,
+    }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
   }
 
   Future<void> removeCollection(String scope, String comicHref) async {
@@ -237,10 +224,25 @@ class LocalLibraryStore {
     );
   }
 
+  Future<void> removeHistory(String scope, String comicHref) async {
+    await ensureInitialized();
+    final String normalizedScope = scope.trim();
+    final String comicPathKey = _pathKeyForHref(comicHref);
+    if (normalizedScope.isEmpty || comicPathKey.isEmpty) {
+      return;
+    }
+    await _database!.delete(
+      _historyTable,
+      where: 'id = ?',
+      whereArgs: <Object>[_entryId(normalizedScope, comicPathKey)],
+    );
+  }
+
   Future<(List<ProfileLibraryItem> items, int total)> readCollectionsPage(
     String scope, {
     required int page,
     int pageSize = 20,
+    ProfileCollectionSort sort = AppConfig.defaultProfileCollectionSort,
   }) async {
     await ensureInitialized();
     final String normalizedScope = scope.trim();
@@ -251,7 +253,8 @@ class LocalLibraryStore {
     final int normalizedPageSize = pageSize.clamp(1, 100);
     final int offset = (normalizedPage - 1) * normalizedPageSize;
 
-    final int total = sqflite.Sqflite.firstIntValue(
+    final int total =
+        sqflite.Sqflite.firstIntValue(
           await _database!.rawQuery(
             'SELECT COUNT(*) FROM $_collectionsTable WHERE scope = ?',
             <Object>[normalizedScope],
@@ -259,11 +262,9 @@ class LocalLibraryStore {
         ) ??
         0;
 
-    final List<Map<String, Object?>> rows = await _database!.query(
-      _collectionsTable,
-      where: 'scope = ?',
-      whereArgs: <Object>[normalizedScope],
-      orderBy: 'added_at_ms DESC',
+    final List<Map<String, Object?>> rows = await _readCollectionRows(
+      normalizedScope,
+      sort: sort,
       limit: normalizedPageSize,
       offset: offset,
     );
@@ -276,6 +277,7 @@ class LocalLibraryStore {
             href: (row['href'] as String?)?.trim() ?? '',
             subtitle: (row['subtitle'] as String?)?.trim() ?? '',
             secondaryText: (row['secondary_text'] as String?)?.trim() ?? '',
+            updatedAt: (row['updated_at'] as String?)?.trim() ?? '',
           );
         })
         .where((ProfileLibraryItem item) => item.title.isNotEmpty)
@@ -284,7 +286,52 @@ class LocalLibraryStore {
     return (items, total);
   }
 
-  Future<void> recordHistoryFromDetail(String scope, DetailPageData page) async {
+  Future<List<Map<String, Object?>>> _readCollectionRows(
+    String scope, {
+    required ProfileCollectionSort sort,
+    required int limit,
+    required int offset,
+  }) {
+    switch (sort) {
+      case ProfileCollectionSort.readingTime:
+        return _database!.rawQuery(
+          '''
+          SELECT c.*
+          FROM $_collectionsTable c
+          LEFT JOIN $_historyTable h
+            ON h.scope = ? AND h.comic_path_key = c.comic_path_key
+          WHERE c.scope = ?
+          ORDER BY COALESCE(h.visited_at_ms, c.added_at_ms) DESC,
+                   c.added_at_ms DESC
+          LIMIT ? OFFSET ?
+        ''',
+          <Object>[scope, scope, limit, offset],
+        );
+      case ProfileCollectionSort.latestUpdate:
+        return _database!.query(
+          _collectionsTable,
+          where: 'scope = ?',
+          whereArgs: <Object>[scope],
+          orderBy: 'updated_at DESC, added_at_ms DESC',
+          limit: limit,
+          offset: offset,
+        );
+      case ProfileCollectionSort.alphabetical:
+        return _database!.query(
+          _collectionsTable,
+          where: 'scope = ?',
+          whereArgs: <Object>[scope],
+          orderBy: 'title COLLATE NOCASE ASC, added_at_ms DESC',
+          limit: limit,
+          offset: offset,
+        );
+    }
+  }
+
+  Future<void> recordHistoryFromDetail(
+    String scope,
+    DetailPageData page,
+  ) async {
     await ensureInitialized();
     final String normalizedScope = scope.trim();
     final String href = page.uri.trim();
@@ -308,23 +355,19 @@ class LocalLibraryStore {
         ? href
         : (existing['comic_href'] as String?)?.trim() ?? '';
 
-    await _database!.insert(
-      _historyTable,
-      <String, Object?>{
-        'id': id,
-        'scope': normalizedScope,
-        'comic_path_key': comicPathKey,
-        'title': title,
-        'cover_url': coverUrl,
-        'comic_href': comicHref,
-        // Preserve the last opened chapter so a detail view doesn't wipe
-        // the continue-reading state.
-        'chapter_label': existingChapterLabel,
-        'chapter_href': existingChapterHref,
-        'visited_at_ms': _now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
-    );
+    await _database!.insert(_historyTable, <String, Object?>{
+      'id': id,
+      'scope': normalizedScope,
+      'comic_path_key': comicPathKey,
+      'title': title,
+      'cover_url': coverUrl,
+      'comic_href': comicHref,
+      // Preserve the last opened chapter so a detail view doesn't wipe
+      // the continue-reading state.
+      'chapter_label': existingChapterLabel,
+      'chapter_href': existingChapterHref,
+      'visited_at_ms': _now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
     await _trimHistory(normalizedScope);
   }
 
@@ -351,21 +394,17 @@ class LocalLibraryStore {
     final String comicHref = catalogHref.isNotEmpty
         ? catalogHref
         : (existing['comic_href'] as String?)?.trim() ?? '';
-    await _database!.insert(
-      _historyTable,
-      <String, Object?>{
-        'id': id,
-        'scope': normalizedScope,
-        'comic_path_key': comicPathKey,
-        'title': title,
-        'cover_url': resolvedCoverUrl,
-        'comic_href': comicHref,
-        'chapter_label': page.chapterTitle.trim(),
-        'chapter_href': page.uri.trim(),
-        'visited_at_ms': _now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
-    );
+    await _database!.insert(_historyTable, <String, Object?>{
+      'id': id,
+      'scope': normalizedScope,
+      'comic_path_key': comicPathKey,
+      'title': title,
+      'cover_url': resolvedCoverUrl,
+      'comic_href': comicHref,
+      'chapter_label': page.chapterTitle.trim(),
+      'chapter_href': page.uri.trim(),
+      'visited_at_ms': _now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
     await _trimHistory(normalizedScope);
   }
 
@@ -383,7 +422,8 @@ class LocalLibraryStore {
     final int normalizedPageSize = pageSize.clamp(1, 100);
     final int offset = (normalizedPage - 1) * normalizedPageSize;
 
-    final int total = sqflite.Sqflite.firstIntValue(
+    final int total =
+        sqflite.Sqflite.firstIntValue(
           await _database!.rawQuery(
             'SELECT COUNT(*) FROM $_historyTable WHERE scope = ?',
             <Object>[normalizedScope],
@@ -448,14 +488,14 @@ class LocalLibraryStore {
 
   Future<void> _initialize() async {
     final Directory directory = await _directoryProvider();
-    final String path = '${directory.path}${Platform.pathSeparator}$_databaseName';
+    final String path =
+        '${directory.path}${Platform.pathSeparator}$_databaseName';
     _database = await _databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
-        version: 2,
+        version: 4,
         onCreate: (sqflite.Database db, int version) async {
-          await db.execute(
-            '''
+          await db.execute('''
             CREATE TABLE IF NOT EXISTS $_collectionsTable (
               id TEXT PRIMARY KEY,
               scope TEXT NOT NULL,
@@ -465,18 +505,23 @@ class LocalLibraryStore {
               href TEXT NOT NULL,
               subtitle TEXT NOT NULL,
               secondary_text TEXT NOT NULL,
+              updated_at TEXT NOT NULL DEFAULT '',
               added_at_ms INTEGER NOT NULL
             )
-          ''',
-          );
-          await db.execute(
-            '''
+          ''');
+          await db.execute('''
             CREATE INDEX IF NOT EXISTS idx_collections_scope_added_at
             ON $_collectionsTable(scope, added_at_ms)
-          ''',
-          );
-          await db.execute(
-            '''
+          ''');
+          await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_collections_scope_updated_at
+            ON $_collectionsTable(scope, updated_at)
+          ''');
+          await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_collections_scope_title
+            ON $_collectionsTable(scope, title COLLATE NOCASE)
+          ''');
+          await db.execute('''
             CREATE TABLE IF NOT EXISTS $_historyTable (
               id TEXT PRIMARY KEY,
               scope TEXT NOT NULL,
@@ -488,37 +533,46 @@ class LocalLibraryStore {
               chapter_href TEXT NOT NULL,
               visited_at_ms INTEGER NOT NULL
             )
-          ''',
-          );
-          await db.execute(
-            '''
+          ''');
+          await db.execute('''
             CREATE INDEX IF NOT EXISTS idx_history_scope_visited_at
             ON $_historyTable(scope, visited_at_ms)
-          ''',
-          );
-          await db.execute(
-            '''
+          ''');
+          await db.execute('''
             CREATE TABLE IF NOT EXISTS $_metaTable (
               scope TEXT NOT NULL,
               key TEXT NOT NULL,
               value TEXT NOT NULL,
               PRIMARY KEY(scope, key)
             )
-          ''',
-          );
+          ''');
         },
         onUpgrade: (sqflite.Database db, int oldVersion, int newVersion) async {
           if (oldVersion < 2) {
-            await db.execute(
-              '''
+            await db.execute('''
               CREATE TABLE IF NOT EXISTS $_metaTable (
                 scope TEXT NOT NULL,
                 key TEXT NOT NULL,
                 value TEXT NOT NULL,
                 PRIMARY KEY(scope, key)
               )
-            ''',
-            );
+            ''');
+          }
+          if (oldVersion < 3) {
+            await db.execute('''
+              ALTER TABLE $_collectionsTable
+              ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''
+            ''');
+            await db.execute('''
+              CREATE INDEX IF NOT EXISTS idx_collections_scope_updated_at
+              ON $_collectionsTable(scope, updated_at)
+            ''');
+          }
+          if (oldVersion < 4) {
+            await db.execute('''
+              CREATE INDEX IF NOT EXISTS idx_collections_scope_title
+              ON $_collectionsTable(scope, title COLLATE NOCASE)
+            ''');
           }
         },
       ),

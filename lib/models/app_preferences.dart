@@ -1,3 +1,4 @@
+import 'package:easy_copy/config/app_config.dart';
 import 'package:easy_copy/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
@@ -78,7 +79,12 @@ double _clampUnit(Object? rawValue, double fallback) {
   return fallback;
 }
 
-double _clampRange(Object? rawValue, double minValue, double maxValue, double fallback) {
+double _clampRange(
+  Object? rawValue,
+  double minValue,
+  double maxValue,
+  double fallback,
+) {
   if (rawValue is num) {
     return rawValue.toDouble().clamp(minValue, maxValue);
   }
@@ -163,7 +169,8 @@ class WallpaperPreferences {
   }
 
   @override
-  int get hashCode => Object.hash(enabled, imageFileName, brightness, blurSigma);
+  int get hashCode =>
+      Object.hash(enabled, imageFileName, brightness, blurSigma);
 }
 
 @immutable
@@ -383,6 +390,7 @@ class AppPreferences {
     this.readerPreferences = const ReaderPreferences(),
     this.downloadPreferences = const DownloadPreferences(),
     this.wallpaperPreferences = const WallpaperPreferences(),
+    this.profileCollectionSort = AppConfig.defaultProfileCollectionSort,
     this.lastPrimaryTabIndex = 0,
   });
 
@@ -410,6 +418,11 @@ class AppPreferences {
               (Object? key, Object? value) => MapEntry(key.toString(), value),
             ),
       ),
+      profileCollectionSort: _enumValue<ProfileCollectionSort>(
+        ProfileCollectionSort.values,
+        json['profileCollectionSort'],
+        AppConfig.defaultProfileCollectionSort,
+      ),
       lastPrimaryTabIndex: _primaryTabIndex(json['lastPrimaryTabIndex']),
     );
   }
@@ -433,6 +446,7 @@ class AppPreferences {
   final ReaderPreferences readerPreferences;
   final DownloadPreferences downloadPreferences;
   final WallpaperPreferences wallpaperPreferences;
+  final ProfileCollectionSort profileCollectionSort;
   final int lastPrimaryTabIndex;
 
   ThemeMode get materialThemeMode {
@@ -495,6 +509,7 @@ class AppPreferences {
     ReaderPreferences? readerPreferences,
     DownloadPreferences? downloadPreferences,
     WallpaperPreferences? wallpaperPreferences,
+    ProfileCollectionSort? profileCollectionSort,
     int? lastPrimaryTabIndex,
   }) {
     return AppPreferences(
@@ -502,6 +517,8 @@ class AppPreferences {
       readerPreferences: readerPreferences ?? this.readerPreferences,
       downloadPreferences: downloadPreferences ?? this.downloadPreferences,
       wallpaperPreferences: wallpaperPreferences ?? this.wallpaperPreferences,
+      profileCollectionSort:
+          profileCollectionSort ?? this.profileCollectionSort,
       lastPrimaryTabIndex: lastPrimaryTabIndex ?? this.lastPrimaryTabIndex,
     );
   }
@@ -512,6 +529,7 @@ class AppPreferences {
       'readerPreferences': readerPreferences.toJson(),
       'downloadPreferences': downloadPreferences.toJson(),
       'wallpaperPreferences': wallpaperPreferences.toJson(),
+      'profileCollectionSort': _enumName(profileCollectionSort),
       'lastPrimaryTabIndex': lastPrimaryTabIndex,
     };
   }

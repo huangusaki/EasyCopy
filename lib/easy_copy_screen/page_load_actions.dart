@@ -633,7 +633,7 @@ extension _EasyCopyScreenPageLoadActions on _EasyCopyScreenState {
     if (!preserveVisiblePage) {
       _resetStandardScrollPosition();
     }
-    final Uri resolvedTargetUri = AppConfig.rewriteToCurrentHost(
+    final Uri resolvedTargetUri = _profileUriWithPreferredCollectionSort(
       targetUri ?? AppConfig.profileUri,
     );
     const int profileTabIndex = 3;
@@ -649,17 +649,48 @@ extension _EasyCopyScreenPageLoadActions on _EasyCopyScreenState {
       resolvedTargetUri,
     );
 
+    if (activeSubview == ProfileSubview.cached) {
+      try {
+        final ProfilePageData localProfilePage = await _localProfilePageLoader
+            .loadLocalProfile(resolvedTargetUri, authScope: key.authScope);
+        if (!_canCommitRequest(requestContext)) {
+          _recordDiscardedNavigationMutation(
+            requestContext,
+            phase: 'profile-cached-local',
+          );
+          return;
+        }
+        _applyLoadedPage(
+          localProfilePage,
+          requestContext: requestContext,
+          switchToTab: _shouldActivateAsyncResultTab(
+            requestContext.targetTabIndex,
+          ),
+          visibleUri: resolvedTargetUri,
+        );
+      } catch (error) {
+        await _handlePageLoadFailure(error, requestContext: requestContext);
+      }
+      return;
+    }
+
     try {
-      final EasyCopyPage profilePage = activeSubview == ProfileSubview.cached
-          ? await _localProfilePageLoader.loadLocalProfile(
-              resolvedTargetUri,
-              authScope: key.authScope,
-            )
-          : await _pageRepository.loadFresh(
-              resolvedTargetUri,
-              authScope: key.authScope,
-              requestContext: requestContext,
-            );
+      if (!forceRefresh) {
+        final bool appliedCachedOrLocal = await _applyFastProfilePage(
+          resolvedTargetUri,
+          key: key,
+          requestContext: requestContext,
+        );
+        if (appliedCachedOrLocal) {
+          return;
+        }
+      }
+
+      final EasyCopyPage profilePage = await _pageRepository.loadFresh(
+        resolvedTargetUri,
+        authScope: key.authScope,
+        requestContext: requestContext,
+      );
       if (!_canCommitRequest(requestContext)) {
         _recordDiscardedNavigationMutation(
           requestContext,
@@ -685,6 +716,118 @@ extension _EasyCopyScreenPageLoadActions on _EasyCopyScreenState {
         authScope: key.authScope,
         requestContext: requestContext,
         showFailureNotice: forceRefresh,
+      );
+    }
+  }
+
+  Future<bool> _applyFastProfilePage(
+    Uri targetUri, {
+    required PageQueryKey key,
+    required NavigationRequestContext requestContext,
+  }) async {
+    final CachedPageHit? cachedHit = await _pageRepository.readCached(key);
+    if (!_canCommitRequest(requestContext)) {
+      _recordDiscardedNavigationMutation(
+        requestContext,
+        phase: 'profile-cached-read',
+      );
+      return true;
+    }
+    if (cachedHit != null && cachedHit.page is ProfilePageData) {
+      _applyLoadedPage(
+        cachedHit.page,
+        requestContext: requestContext,
+        switchToTab: _shouldActivateAsyncResultTab(
+          requestContext.targetTabIndex,
+        ),
+        visibleUri: targetUri,
+      );
+      if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
+        return true;
+      }
+      _markTabEntryLoading(requestContext, preservePage: true);
+      unawaited(
+        _revalidateCachedPage(
+          targetUri,
+          key: key,
+          cachedEntry: cachedHit.envelope,
+          requestContext: requestContext.copyWith(
+            sourceKind: NavigationRequestSourceKind.revalidate,
+          ),
+          visibleUri: targetUri,
+        ),
+      );
+      return true;
+    }
+
+    final ProfilePageData localProfilePage = await _localProfilePageLoader
+        .loadLocalProfile(targetUri, authScope: key.authScope);
+    if (!_canCommitRequest(requestContext)) {
+      _recordDiscardedNavigationMutation(
+        requestContext,
+        phase: 'profile-local-read',
+      );
+      return true;
+    }
+    _applyLoadedPage(
+      localProfilePage,
+      requestContext: requestContext,
+      switchToTab: _shouldActivateAsyncResultTab(requestContext.targetTabIndex),
+      visibleUri: targetUri,
+    );
+    if (!localProfilePage.isLoggedIn) {
+      return true;
+    }
+    _markTabEntryLoading(requestContext, preservePage: true);
+    unawaited(
+      _refreshProfilePage(
+        targetUri,
+        key: key,
+        requestContext: requestContext.copyWith(
+          sourceKind: NavigationRequestSourceKind.revalidate,
+        ),
+      ),
+    );
+    return true;
+  }
+
+  Future<void> _refreshProfilePage(
+    Uri targetUri, {
+    required PageQueryKey key,
+    required NavigationRequestContext requestContext,
+  }) async {
+    try {
+      final EasyCopyPage profilePage = await _pageRepository.loadFresh(
+        targetUri,
+        authScope: key.authScope,
+        requestContext: requestContext,
+      );
+      if (!_canCommitRequest(requestContext)) {
+        _recordDiscardedNavigationMutation(
+          requestContext,
+          phase: 'profile-refresh',
+        );
+        return;
+      }
+      if (profilePage is! ProfilePageData) {
+        _finishMatchingRouteLoading(requestContext);
+        return;
+      }
+      _applyLoadedPage(
+        profilePage,
+        requestContext: requestContext,
+        switchToTab: _shouldActivateAsyncResultTab(
+          requestContext.targetTabIndex,
+        ),
+        visibleUri: targetUri,
+      );
+    } catch (error) {
+      await _loadLocalProfilePageAfterFreshFailure(
+        targetUri,
+        error,
+        authScope: key.authScope,
+        requestContext: requestContext,
+        showFailureNotice: false,
       );
     }
   }

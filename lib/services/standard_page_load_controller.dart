@@ -85,7 +85,7 @@ class StandardPageLoadHandle<T> {
     if (_isSameContentRedirect(anchorUri, candidateUri)) {
       return true;
     }
-    return _isAllowedPlaceholderRedirect(anchorUri, candidateUri);
+    return false;
   }
 }
 
@@ -95,20 +95,6 @@ bool _isSameContentRedirect(Uri from, Uri to) {
   }
   final String path = from.path.toLowerCase();
   return _isDetailRoute(path) || path.contains('/chapter/');
-}
-
-bool _isAllowedPlaceholderRedirect(Uri from, Uri to) {
-  final String fromPath = from.path.toLowerCase();
-  final String toPath = to.path.toLowerCase();
-  if (fromPath.startsWith('/topic/')) {
-    return toPath.startsWith('/comics') ||
-        toPath.startsWith('/recommend') ||
-        toPath.startsWith('/newest') ||
-        toPath.startsWith('/filter') ||
-        toPath.startsWith('/search') ||
-        toPath.startsWith('/topic/');
-  }
-  return false;
 }
 
 bool _isDetailRoute(String path) {

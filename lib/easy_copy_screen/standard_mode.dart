@@ -6,6 +6,8 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       key: const ValueKey<String>('standard-scaffold'),
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       extendBody: true,
+      floatingActionButton: _buildStandardFloatingActionButton(context),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: RepaintBoundary(
         child: ClipRect(
           child: BackdropFilter(
@@ -27,6 +29,143 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       ),
       body: SafeArea(bottom: false, child: _buildStandardBody(context)),
     );
+  }
+
+  Widget? _buildStandardFloatingActionButton(BuildContext context) {
+    if (AppConfig.profileSubviewForUri(_currentUri) !=
+        ProfileSubview.collections) {
+      return null;
+    }
+    final EasyCopyPage? page = _page;
+    if (page is! ProfilePageData && !_isLoading) {
+      return null;
+    }
+
+    final ProfileCollectionSort sort =
+        _currentUri.queryParameters.containsKey('sort')
+        ? AppConfig.profileCollectionSortForUri(_currentUri)
+        : _preferencesController.profileCollectionSort;
+    final bool isLoggedIn = page is ProfilePageData
+        ? page.isLoggedIn
+        : _session.isAuthenticated;
+    final bool supportsAlphabetical = !isLoggedIn;
+    final ProfileCollectionSort effectiveSort = _effectiveProfileCollectionSort(
+      sort,
+    );
+    final ProfileCollectionSort nextSort = _nextProfileCollectionSort(
+      effectiveSort,
+      supportsAlphabetical: supportsAlphabetical,
+    );
+
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+
+    return FloatingActionButton.small(
+      heroTag: 'profile-collection-sort',
+      tooltip: _profileCollectionSortLabel(effectiveSort),
+      elevation: 2,
+      hoverElevation: 4,
+      focusElevation: 2,
+      highlightElevation: 6,
+      backgroundColor: colorScheme.surfaceContainerHigh,
+      foregroundColor: colorScheme.primary,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: colorScheme.primary.withValues(alpha: 0.15),
+          width: 1.2,
+        ),
+      ),
+      onPressed: _isLoading
+          ? null
+          : () {
+              unawaited(
+                _preferencesController.setProfileCollectionSort(nextSort),
+              );
+              _showNotice('已切换为${_profileCollectionSortLabel(nextSort)}排序');
+              _openProfileSubview(
+                ProfileSubview.collections,
+                collectionSort: nextSort,
+                historyMode: NavigationIntent.preserve,
+              );
+            },
+      child: _isLoading
+          ? SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(colorScheme.primary),
+              ),
+            )
+          : AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              transitionBuilder: (Widget child, Animation<double> animation) {
+                return ScaleTransition(
+                  scale: animation,
+                  child: FadeTransition(opacity: animation, child: child),
+                );
+              },
+              child: _buildSortIconWidget(context, effectiveSort),
+            ),
+    );
+  }
+
+  ProfileCollectionSort _nextProfileCollectionSort(
+    ProfileCollectionSort sort, {
+    required bool supportsAlphabetical,
+  }) {
+    return switch (sort) {
+      ProfileCollectionSort.latestUpdate => ProfileCollectionSort.readingTime,
+      ProfileCollectionSort.readingTime =>
+        supportsAlphabetical
+            ? ProfileCollectionSort.alphabetical
+            : ProfileCollectionSort.latestUpdate,
+      ProfileCollectionSort.alphabetical => ProfileCollectionSort.latestUpdate,
+    };
+  }
+
+  Widget _buildSortIconWidget(
+    BuildContext context,
+    ProfileCollectionSort sort,
+  ) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    switch (sort) {
+      case ProfileCollectionSort.latestUpdate:
+        return Icon(
+          Icons.auto_awesome_rounded,
+          key: const ValueKey<ProfileCollectionSort>(
+            ProfileCollectionSort.latestUpdate,
+          ),
+          size: 20,
+          color: colorScheme.primary,
+        );
+      case ProfileCollectionSort.readingTime:
+        return Icon(
+          Icons.history_rounded,
+          key: const ValueKey<ProfileCollectionSort>(
+            ProfileCollectionSort.readingTime,
+          ),
+          size: 20,
+          color: colorScheme.primary,
+        );
+      case ProfileCollectionSort.alphabetical:
+        return Icon(
+          Icons.sort_by_alpha_rounded,
+          key: const ValueKey<ProfileCollectionSort>(
+            ProfileCollectionSort.alphabetical,
+          ),
+          size: 20,
+          color: colorScheme.primary,
+        );
+    }
+  }
+
+  String _profileCollectionSortLabel(ProfileCollectionSort sort) {
+    return switch (sort) {
+      ProfileCollectionSort.latestUpdate => '最近更新',
+      ProfileCollectionSort.readingTime => '阅读时间',
+      ProfileCollectionSort.alphabetical => 'A-Z',
+    };
   }
 
   Widget _buildStandardBody(BuildContext context) {
@@ -446,6 +585,10 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
               _openProfileSubview(ProfileSubview.collections, page: page),
           onOpenHistoryPageNumber: (int page) =>
               _openProfileSubview(ProfileSubview.history, page: page),
+          isCollectionLoading:
+              _isLoading &&
+              AppConfig.profileSubviewForUri(_currentUri) ==
+                  ProfileSubview.collections,
           currentHost: _hostManager.currentHost,
           knownHosts: _hostManager.knownHosts,
           candidateHosts: _hostManager.candidateHosts,
@@ -459,8 +602,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
           onThemePreferenceChanged: (AppThemePreference preference) {
             unawaited(_preferencesController.setThemePreference(preference));
           },
-          wallpaperPreferences:
-              _preferencesController.wallpaperPreferences,
+          wallpaperPreferences: _preferencesController.wallpaperPreferences,
           wallpaperActions: _buildWallpaperActions(),
           versionLabel: _appVersionLabel,
           isCheckingForUpdates: _isCheckingForUpdates,
@@ -475,6 +617,7 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
           activeSubview: AppConfig.profileSubviewForUri(_currentUri),
           onOpenCachedComic: _openCachedComicFromProfile,
           onDeleteCachedComic: _deleteCachedComicFromProfile,
+          onDeleteHistory: _deleteLocalHistoryFromProfile,
         ),
       ),
     ];
@@ -667,6 +810,92 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       return;
     }
     unawaited(_confirmDeleteCachedComic(item));
+  }
+
+  void _deleteLocalHistoryFromProfile(String comicHref) {
+    unawaited(_confirmDeleteLocalHistory(comicHref));
+  }
+
+  Future<void> _confirmDeleteLocalHistory(String comicHref) async {
+    final String normalizedHref = comicHref.trim();
+    if (normalizedHref.isEmpty) {
+      return;
+    }
+    final EasyCopyPage? currentPageData = _page;
+    final ProfilePageData? profilePage = currentPageData is ProfilePageData
+        ? currentPageData
+        : null;
+    if (profilePage == null ||
+        profilePage.isLoggedIn ||
+        _session.isAuthenticated) {
+      _showNotice('登录账号的浏览历史暂不支持删除');
+      return;
+    }
+    ProfileHistoryItem? targetItem;
+    for (final ProfileHistoryItem item in profilePage.history) {
+      if (item.comicHref.trim() == normalizedHref) {
+        targetItem = item;
+        break;
+      }
+    }
+    final String title = targetItem?.title.trim() ?? '';
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('删除浏览记录'),
+          content: Text(title.isEmpty ? '确认删除这条浏览记录吗？' : '确认删除《$title》的浏览记录吗？'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    try {
+      await _localLibraryStore.removeHistory(
+        LocalLibraryStore.guestScope,
+        normalizedHref,
+      );
+      if (!mounted) {
+        return;
+      }
+      _showNotice('已删除浏览记录');
+      final ProfileSubview activeSubview = AppConfig.profileSubviewForUri(
+        _currentUri,
+      );
+      final int activePage = AppConfig.profilePageForUri(_currentUri);
+      final bool shouldStepBack =
+          activeSubview == ProfileSubview.history &&
+          activePage > 1 &&
+          profilePage.history.length <= 1;
+      final Uri targetUri = shouldStepBack
+          ? AppConfig.buildProfileUri(
+              view: ProfileSubview.history,
+              page: activePage - 1,
+            )
+          : _currentUri;
+      await _loadProfilePage(
+        targetUri: targetUri,
+        forceRefresh: true,
+        preserveVisiblePage: true,
+        historyMode: NavigationIntent.preserve,
+      );
+    } catch (_) {
+      if (mounted) {
+        _showNotice('删除失败，请稍后重试');
+      }
+    }
   }
 
   Future<void> _refreshCachedComicDetailInBackground(
@@ -1104,16 +1333,6 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
     );
   }
 
-  String _discoverListContentKey(DiscoverPageData page) {
-    return <String>[
-      AppConfig.routeKeyForUri(Uri.parse(page.uri)),
-      page.pager.currentLabel,
-      '${page.items.length}',
-      page.items.isEmpty ? '' : page.items.first.href,
-      page.items.isEmpty ? '' : page.items.last.href,
-    ].join('::');
-  }
-
   String _rankListContentKey(RankPageData page) {
     return <String>[
       AppConfig.routeKeyForUri(Uri.parse(page.uri)),
@@ -1125,19 +1344,6 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
 
   List<Widget> _buildHomeSections(HomePageData page) {
     final List<Widget> sections = <Widget>[];
-
-    if (page.feature != null) {
-      sections.add(
-        _hPaddedBox(
-          FeatureBannerCard(
-            banner: page.feature!,
-            onTap: () =>
-                _navigateToHref(AppConfig.resolvePath('/topic').toString()),
-          ),
-        ),
-      );
-      sections.add(_hPaddedBox(const SizedBox(height: 18)));
-    }
 
     for (final ComicSectionData section in page.sections) {
       sections.add(
@@ -1182,10 +1388,6 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
   }
 
   List<Widget> _buildDiscoverSections(DiscoverPageData page) {
-    if (_isTopicListUri(_currentUri)) {
-      return _buildTopicListSections(page);
-    }
-
     final List<Widget> sections = <Widget>[];
     final bool hasPager =
         page.pager.hasPrev ||
@@ -1338,66 +1540,6 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
                     : null,
                 onJumpToPage: (int targetPage) {
                   unawaited(_jumpDiscoverToPage(page, targetPage));
-                },
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return sections;
-  }
-
-  List<Widget> _buildTopicListSections(DiscoverPageData page) {
-    final List<Widget> sections = <Widget>[];
-    final bool hasPager =
-        page.pager.hasPrev ||
-        page.pager.hasNext ||
-        page.pager.currentLabel.isNotEmpty ||
-        page.pager.totalLabel.isNotEmpty;
-
-    if (_isLoading) {
-      sections.add(_hPaddedBox(_buildInlineSectionLoadingIndicator()));
-      sections.add(_hPaddedBox(const SizedBox(height: 14)));
-    }
-
-    sections.add(
-      SliverToBoxAdapter(
-        child: SizedBox(key: _discoverListAnchorKey(page), height: 1),
-      ),
-    );
-    sections.add(
-      _hPaddedBox(
-        _buildAnimatedSectionContent(
-          contentKey: _discoverListContentKey(page),
-          child: TopicIssueList(items: page.items, onTap: _navigateToHref),
-        ),
-      ),
-    );
-
-    if (hasPager) {
-      sections.add(_hPaddedBox(const SizedBox(height: 18)));
-      sections.add(
-        _hPaddedBox(
-          IgnorePointer(
-            ignoring: _isLoading,
-            child: Opacity(
-              opacity: _isLoading ? 0.72 : 1,
-              child: PagerCard(
-                pager: page.pager,
-                onPrev: page.pager.hasPrev
-                    ? () {
-                        unawaited(_openDiscoverPagerHref(page.pager.prevHref));
-                      }
-                    : null,
-                onNext: page.pager.hasNext
-                    ? () {
-                        unawaited(_openDiscoverPagerHref(page.pager.nextHref));
-                      }
-                    : null,
-                onJumpToPage: (int value) {
-                  unawaited(_jumpDiscoverToPage(page, value));
                 },
               ),
             ),
@@ -1658,9 +1800,9 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('选择图片失败：$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('选择图片失败：$error')));
       return;
     }
     if (picked == null) {
@@ -1674,25 +1816,21 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
         File(picked.path),
       );
       await _preferencesController.updateWallpaperPreferences(
-        (WallpaperPreferences current) => current.copyWith(
-          imageFileName: savedFileName,
-          enabled: true,
-        ),
+        (WallpaperPreferences current) =>
+            current.copyWith(imageFileName: savedFileName, enabled: true),
       );
       unawaited(WallpaperStorage.instance.pruneExcept(savedFileName));
       if (previous.imageFileName.isNotEmpty &&
           previous.imageFileName != savedFileName) {
-        unawaited(
-          WallpaperStorage.instance.deleteFile(previous.imageFileName),
-        );
+        unawaited(WallpaperStorage.instance.deleteFile(previous.imageFileName));
       }
     } catch (error) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存壁纸失败：$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('保存壁纸失败：$error')));
     }
   }
 
@@ -1701,10 +1839,8 @@ extension _EasyCopyScreenStandardMode on _EasyCopyScreenState {
         _preferencesController.wallpaperPreferences;
     unawaited(
       _preferencesController.updateWallpaperPreferences(
-        (WallpaperPreferences current) => current.copyWith(
-          imageFileName: '',
-          enabled: false,
-        ),
+        (WallpaperPreferences current) =>
+            current.copyWith(imageFileName: '', enabled: false),
       ),
     );
     if (previous.imageFileName.isNotEmpty) {

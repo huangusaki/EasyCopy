@@ -43,6 +43,8 @@ class ProfilePageView extends StatelessWidget {
     this.onOpenHistoryPageNumber,
     this.onOpenCachedComic,
     this.onDeleteCachedComic,
+    this.onDeleteHistory,
+    this.isCollectionLoading = false,
     this.versionLabel = '--',
     this.isCheckingForUpdates = false,
     this.onCheckForUpdates,
@@ -78,6 +80,8 @@ class ProfilePageView extends StatelessWidget {
   final ValueChanged<int>? onOpenHistoryPageNumber;
   final ValueChanged<String>? onOpenCachedComic;
   final ValueChanged<String>? onDeleteCachedComic;
+  final ValueChanged<String>? onDeleteHistory;
+  final bool isCollectionLoading;
   final String versionLabel;
   final bool isCheckingForUpdates;
   final VoidCallback? onCheckForUpdates;
@@ -120,6 +124,9 @@ class ProfilePageView extends StatelessWidget {
     final int historyTotal = page.historyTotal > 0
         ? page.historyTotal
         : historyCards.length;
+    final ValueChanged<String>? localHistoryDelete = page.isLoggedIn
+        ? null
+        : onDeleteHistory;
 
     if (activeSubview == ProfileSubview.cached) {
       return _buildComicCollectionSection(
@@ -136,6 +143,7 @@ class ProfilePageView extends StatelessWidget {
           items: collectionCards,
           emptyMessage: '还没有收藏的漫画。',
           onTap: onOpenComic,
+          isLoading: isCollectionLoading,
           pager: page.collectionsPager,
           onOpenPage: onOpenCollectionsPage,
         );
@@ -144,6 +152,7 @@ class ProfilePageView extends StatelessWidget {
           items: historyCards,
           emptyMessage: '还没有浏览历史。',
           onTap: onOpenComic,
+          onLongPress: localHistoryDelete,
           pager: page.historyPager,
           onOpenPage: onOpenHistoryPageNumber,
         );
@@ -274,6 +283,9 @@ class ProfilePageView extends StatelessWidget {
                       child: _LibraryCard(
                         item: item,
                         onTap: () => onOpenComic(item.href),
+                        onLongPress: localHistoryDelete == null
+                            ? null
+                            : () => localHistoryDelete(item.href),
                       ),
                     );
                   },
@@ -359,6 +371,7 @@ class ProfilePageView extends StatelessWidget {
     required String emptyMessage,
     required ValueChanged<String> onTap,
     ValueChanged<String>? onLongPress,
+    bool isLoading = false,
     PagerData pager = const PagerData(),
     ValueChanged<int>? onOpenPage,
   }) {
@@ -366,14 +379,22 @@ class ProfilePageView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         AppSurfaceCard(
-          child: ComicGrid(
-            items: items,
-            onTap: onTap,
-            onLongPress: onLongPress,
-            emptyMessage: emptyMessage,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              if (isLoading)
+                const _ComicCollectionLoadingIndicator()
+              else
+                ComicGrid(
+                  items: items,
+                  onTap: onTap,
+                  onLongPress: onLongPress,
+                  emptyMessage: emptyMessage,
+                ),
+            ],
           ),
         ),
-        if (_shouldShowPager(pager)) ...<Widget>[
+        if (!isLoading && _shouldShowPager(pager)) ...<Widget>[
           const SizedBox(height: 16),
           _ProfilePagerBar(pager: pager, onOpenPage: onOpenPage),
         ],
@@ -452,6 +473,18 @@ class ProfilePageView extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ComicCollectionLoadingIndicator extends StatelessWidget {
+  const _ComicCollectionLoadingIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: 260,
+      child: Center(child: CircularProgressIndicator()),
     );
   }
 }
