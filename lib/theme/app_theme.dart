@@ -475,7 +475,7 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         height: 64,
-        indicatorColor: colorScheme.secondary.withValues(alpha: 0.22),
+        indicatorColor: colorScheme.secondaryContainer.withValues(alpha: 0.78),
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         labelTextStyle: WidgetStatePropertyAll<TextStyle>(
           TextStyle(

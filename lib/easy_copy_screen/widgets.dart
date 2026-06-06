@@ -387,13 +387,13 @@ class LinkChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final Color backgroundColor = active
-        ? colorScheme.primaryContainer.withValues(alpha: 0.76)
+        ? colorScheme.secondaryContainer
         : colorScheme.surfaceContainerLow;
     final Color borderColor = active
-        ? colorScheme.primary.withValues(alpha: 0.82)
+        ? colorScheme.outline.withValues(alpha: 0.82)
         : colorScheme.outlineVariant;
     final Color textColor = active
-        ? colorScheme.onPrimaryContainer
+        ? colorScheme.onSecondaryContainer
         : colorScheme.onSurface;
 
     return InkWell(
@@ -993,13 +993,13 @@ class RankCard extends StatelessWidget {
               height: 42,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: colorScheme.secondary,
+                color: colorScheme.secondaryContainer,
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Text(
                 item.rankLabel,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: colorScheme.onSecondaryContainer,
                   fontWeight: FontWeight.w900,
                 ),
               ),
