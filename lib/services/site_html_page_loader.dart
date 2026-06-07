@@ -1,13 +1,13 @@
 import 'dart:convert';
 
-import 'package:easy_copy/config/app_config.dart';
-import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/services/debug_trace.dart';
-import 'package:easy_copy/services/host_manager.dart';
-import 'package:easy_copy/services/network_client.dart';
-import 'package:easy_copy/services/site_html_page_parser.dart';
-import 'package:easy_copy/services/site_session.dart';
 import 'package:http/http.dart' as http;
+import 'package:reader/config/app_config.dart';
+import 'package:reader/models/page_models.dart';
+import 'package:reader/services/debug_trace.dart';
+import 'package:reader/services/host_manager.dart';
+import 'package:reader/services/network_client.dart';
+import 'package:reader/services/site_html_page_parser.dart';
+import 'package:reader/services/site_session.dart';
 
 class SiteHtmlPageLoadException implements Exception {
   SiteHtmlPageLoadException(this.message);
@@ -42,7 +42,7 @@ class SiteHtmlPageLoader {
   final SiteHtmlPageParser _parser;
   final String _userAgent;
 
-  Future<EasyCopyPage> loadPage(Uri uri, {required String authScope}) async {
+  Future<SitePage> loadPage(Uri uri, {required String authScope}) async {
     await _hostManager.ensureInitialized();
     await _session.ensureInitialized();
 
@@ -100,18 +100,17 @@ class SiteHtmlPageLoader {
       redirectCount += 1
     ) {
       final Stopwatch stopwatch = Stopwatch()..start();
-      final NetworkResponseBytes response =
-          await EasyCopyNetworkClient.sendForBytes(
-            _client,
-            () => http.Request('GET', currentUri)
-              ..followRedirects = false
-              ..maxRedirects = 1
-              ..headers.addAll(headers),
-            uri: currentUri,
-            timeout: _requestTimeout,
-            maxRetries: 1,
-            label: 'html.get',
-          );
+      final NetworkResponseBytes response = await NetworkClient.sendForBytes(
+        _client,
+        () => http.Request('GET', currentUri)
+          ..followRedirects = false
+          ..maxRedirects = 1
+          ..headers.addAll(headers),
+        uri: currentUri,
+        timeout: _requestTimeout,
+        maxRetries: 1,
+        label: 'html.get',
+      );
       if (currentUri.path.toLowerCase().contains('/chapter/')) {
         DebugTrace.log('reader.html_request_complete', <String, Object?>{
           'uri': currentUri.toString(),

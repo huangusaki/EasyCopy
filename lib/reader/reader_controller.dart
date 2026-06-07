@@ -1,28 +1,28 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:easy_copy/models/app_preferences.dart';
-import 'package:easy_copy/models/chapter_comment.dart';
-import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/reader/internal/reader_environment.dart';
-import 'package:easy_copy/reader/internal/reader_restore_target.dart';
-import 'package:easy_copy/services/app_preferences_controller.dart';
-import 'package:easy_copy/services/deferred_viewport_coordinator.dart';
-import 'package:easy_copy/services/image_cache.dart';
-import 'package:easy_copy/services/local_library_store.dart';
-import 'package:easy_copy/services/reader_comment_utils.dart';
-import 'package:easy_copy/services/reader_history_recorder.dart';
-import 'package:easy_copy/services/reader_platform_bridge.dart';
-import 'package:easy_copy/services/reader_progress_store.dart';
-import 'package:easy_copy/services/site_api_client.dart';
-import 'package:easy_copy/services/site_session.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
+import 'package:reader/models/app_preferences.dart';
+import 'package:reader/models/chapter_comment.dart';
+import 'package:reader/models/page_models.dart';
+import 'package:reader/reader/internal/reader_environment.dart';
+import 'package:reader/reader/internal/reader_restore_target.dart';
+import 'package:reader/reader/reader_controller/chapter_boundary.dart';
+import 'package:reader/reader/reader_controller/comments.dart';
+import 'package:reader/reader/reader_controller/zoom_state.dart';
+import 'package:reader/services/app_preferences_controller.dart';
+import 'package:reader/services/deferred_viewport_coordinator.dart';
+import 'package:reader/services/image_cache.dart';
+import 'package:reader/services/local_library_store.dart';
+import 'package:reader/services/reader_history_recorder.dart';
+import 'package:reader/services/reader_platform_bridge.dart';
+import 'package:reader/services/reader_progress_store.dart';
+import 'package:reader/services/site_api_client.dart';
+import 'package:reader/services/site_session.dart';
 
-const double _readerNextChapterPullTriggerDistance = 266;
-const double _readerNextChapterPagedTriggerDistance = 152;
-const double _readerNextChapterPullActivationExtent = 100;
+const double _pullTriggerDistance = 266;
+const double _pagedTriggerDistance = 152;
 const double _readerScrollProgressStep = 96;
 const double _readerPagedProgressStep = 48;
 
@@ -57,7 +57,33 @@ class ReaderController extends ChangeNotifier {
     required this.onRequestAuth,
     required this.onLogoutForExpiredSession,
     required this.onShowMessage,
-  });
+  }) {
+    _comments = ReaderCommentsController(
+      apiClient: apiClient,
+      session: session,
+      preferences: () => preferences,
+      currentPage: () => _page,
+      chapterIdForPage: readerChapterIdForPage,
+      isDisposed: () => _disposed,
+      notify: _notifyControllerListeners,
+      onRequestAuth: onRequestAuth,
+      onLogoutForExpiredSession: onLogoutForExpiredSession,
+      onShowMessage: onShowMessage,
+    );
+    _zoom = ReaderZoomController();
+    _chapterBoundary = ReaderChapterBoundaryController(
+      triggerDistance: () => _nextChapterTriggerDistance,
+      readingDirection: () => preferences.readingDirection,
+      isZoomLocked: () => isZoomGestureLocked,
+      flushProgress: flushProgressPersistence,
+      onRequestChapterNavigation: onRequestChapterNavigation,
+      notify: () {
+        if (!_disposed) {
+          _notifyControllerListeners();
+        }
+      },
+    );
+  }
 
   final AppPreferencesController preferencesController;
   final ReaderProgressStore progressStore;
@@ -73,16 +99,16 @@ class ReaderController extends ChangeNotifier {
 
   PageController pageController = PageController();
   final ScrollController scrollController = ScrollController();
-  final TextEditingController commentController = TextEditingController();
-  final ScrollController commentScrollController = ScrollController();
   final GlobalKey viewportKey = GlobalKey();
   final Map<int, ScrollController> _pagedScrollControllers =
       <int, ScrollController>{};
   final Map<int, GlobalKey> _imageItemKeys = <int, GlobalKey>{};
   final Map<String, double> _imageAspectRatios = <String, double>{};
-  final Set<String> _zoomedImageKeys = <String>{};
   final DeferredViewportCoordinator restoreCoordinator =
       DeferredViewportCoordinator();
+  late final ReaderCommentsController _comments;
+  late final ReaderZoomController _zoom;
+  late final ReaderChapterBoundaryController _chapterBoundary;
 
   StreamSubscription<int>? _batterySubscription;
   StreamSubscription<ReaderVolumeKeyAction>? _volumeKeySubscription;
@@ -99,30 +125,10 @@ class ReaderController extends ChangeNotifier {
   AppliedReaderEnvironment? _appliedEnvironment;
   ReaderPreferences? _lastObservedPreferences;
   bool _presentationSyncScheduled = false;
-  bool _visibleImageIndexUpdateScheduled = false;
+  bool _visibleIndexUpdateQueued = false;
 
   bool _isSettingsOpen = false;
   bool _isChapterControlsVisible = false;
-  bool _isNextChapterLoading = false;
-  bool _isScaleGestureActive = false;
-
-  double _zoomScale = 1.0;
-  double _zoomBaseScale = 1.0;
-  double _panOffsetX = 0;
-  double _panOffsetY = 0;
-
-  double _previousChapterPullDistance = 0;
-  double _nextChapterPullDistance = 0;
-
-  List<ChapterComment> _chapterComments = const <ChapterComment>[];
-  String _commentsChapterId = '';
-  String _commentsError = '';
-  int _commentsTotal = 0;
-  int _commentsLoadedStartOffset = 0;
-  bool _isCommentsLoading = false;
-  bool _isCommentsLoadingMore = false;
-  bool _isCommentSubmitting = false;
-
   int? _batteryLevel;
 
   ReaderPageData? get page => _page;
@@ -141,46 +147,46 @@ class ReaderController extends ChangeNotifier {
 
   bool get isChapterControlsVisible => _isChapterControlsVisible;
 
-  bool get isNextChapterLoading => _isNextChapterLoading;
+  TextEditingController get commentController => _comments.textController;
 
-  bool get isScaleGestureActive => _isScaleGestureActive;
+  ScrollController get commentScrollController => _comments.scrollController;
 
-  bool get isZoomGestureLocked =>
-      _isScaleGestureActive || _zoomedImageKeys.isNotEmpty;
+  bool get isNextChapterLoading => _chapterBoundary.isLoading;
 
-  double get zoomScale => _zoomScale;
+  bool get isScaleGestureActive => _zoom.isScaleGestureActive;
 
-  double get panOffsetX => _panOffsetX;
+  bool get isZoomGestureLocked => _zoom.isLocked;
 
-  double get panOffsetY => _panOffsetY;
+  double get zoomScale => _zoom.scale;
 
-  double get previousChapterPullDistance => _previousChapterPullDistance;
+  double get panOffsetX => _zoom.panOffsetX;
 
-  double get nextChapterPullDistance => _nextChapterPullDistance;
+  double get panOffsetY => _zoom.panOffsetY;
 
-  bool get previousChapterPullReady =>
-      _previousChapterPullDistance >= _nextChapterTriggerDistance;
+  double get previousChapterPullDistance => _chapterBoundary.previousDistance;
 
-  bool get nextChapterPullReady =>
-      _nextChapterPullDistance >= _nextChapterTriggerDistance;
+  double get nextChapterPullDistance => _chapterBoundary.nextDistance;
 
-  double get _nextChapterTriggerDistance => preferences.isPaged
-      ? _readerNextChapterPagedTriggerDistance
-      : _readerNextChapterPullTriggerDistance;
+  bool get previousChapterPullReady => _chapterBoundary.previousReady;
 
-  List<ChapterComment> get chapterComments => _chapterComments;
+  bool get nextChapterPullReady => _chapterBoundary.nextReady;
 
-  String get commentsChapterId => _commentsChapterId;
+  double get _nextChapterTriggerDistance =>
+      preferences.isPaged ? _pagedTriggerDistance : _pullTriggerDistance;
 
-  String get commentsError => _commentsError;
+  List<ChapterComment> get chapterComments => _comments.items;
 
-  int get commentsTotal => _commentsTotal;
+  String get commentsChapterId => _comments.chapterId;
 
-  bool get isCommentsLoading => _isCommentsLoading;
+  String get commentsError => _comments.error;
 
-  bool get isCommentsLoadingMore => _isCommentsLoadingMore;
+  int get commentsTotal => _comments.total;
 
-  bool get isCommentSubmitting => _isCommentSubmitting;
+  bool get isCommentsLoading => _comments.isLoading;
+
+  bool get isCommentsLoadingMore => _comments.isLoadingMore;
+
+  bool get isCommentSubmitting => _comments.isSubmitting;
 
   int? get batteryLevel => _batteryLevel;
 
@@ -314,8 +320,7 @@ class ReaderController extends ChangeNotifier {
     }
     pageController.dispose();
     scrollController.dispose();
-    commentController.dispose();
-    commentScrollController.dispose();
+    _comments.dispose();
     super.dispose();
   }
 
@@ -340,124 +345,6 @@ class ReaderController extends ChangeNotifier {
 
   void noteUserInteraction() {
     restoreCoordinator.noteUserInteraction();
-  }
-
-  void handlePinchZoomStart() {
-    _zoomBaseScale = _zoomScale;
-    _setScaleGestureActive(true);
-  }
-
-  void handlePinchZoomUpdate(double relativeScale) {
-    final double newScale = (_zoomBaseScale * relativeScale).clamp(1.0, 4.0);
-    if ((newScale - _zoomScale).abs() < 0.005) return;
-    if (_disposed) {
-      _zoomScale = newScale;
-      return;
-    }
-    _zoomScale = newScale;
-    notifyListeners();
-  }
-
-  void handlePinchZoomEnd() {
-    _setScaleGestureActive(false);
-    if (_zoomScale <= 1.02) {
-      final bool wasLocked = isZoomGestureLocked;
-      _zoomScale = 1.0;
-      _panOffsetX = 0;
-      _panOffsetY = 0;
-      _zoomedImageKeys.remove('__viewport_zoom__');
-      if (!_disposed) notifyListeners();
-      _handleZoomLockChanged(wasLocked);
-    } else {
-      _setImageZoomed('__viewport_zoom__', true);
-    }
-  }
-
-  void updatePanOffset({required double x, required double y}) {
-    if (_disposed) {
-      _panOffsetX = x;
-      _panOffsetY = y;
-      return;
-    }
-    _panOffsetX = x;
-    _panOffsetY = y;
-    notifyListeners();
-  }
-
-  void _setScaleGestureActive(bool value) {
-    if (_isScaleGestureActive == value) return;
-    final bool wasLocked = isZoomGestureLocked;
-    _isScaleGestureActive = value;
-    if (!_disposed) notifyListeners();
-    _handleZoomLockChanged(wasLocked);
-  }
-
-  void _setImageZoomed(String imageKey, bool isZoomed) {
-    final bool alreadyZoomed = _zoomedImageKeys.contains(imageKey);
-    if (alreadyZoomed == isZoomed) return;
-    final bool wasLocked = isZoomGestureLocked;
-    if (isZoomed) {
-      _zoomedImageKeys.add(imageKey);
-    } else {
-      _zoomedImageKeys.remove(imageKey);
-    }
-    if (!_disposed) notifyListeners();
-    _handleZoomLockChanged(wasLocked);
-  }
-
-  void _resetZoomState() {
-    if (!_isScaleGestureActive &&
-        _zoomedImageKeys.isEmpty &&
-        _zoomScale <= 1.01) {
-      return;
-    }
-    final bool wasLocked = isZoomGestureLocked;
-    _isScaleGestureActive = false;
-    _zoomedImageKeys.clear();
-    _zoomScale = 1.0;
-    _panOffsetX = 0;
-    _panOffsetY = 0;
-    if (!_disposed) notifyListeners();
-    _handleZoomLockChanged(wasLocked);
-  }
-
-  void _handleZoomLockChanged(bool wasLocked) {
-    final bool isLocked = isZoomGestureLocked;
-    if (wasLocked == isLocked) return;
-    if (isLocked) {
-      _autoTurnTimer?.cancel();
-      _resetChapterBoundaryState();
-      hideChapterControls();
-      return;
-    }
-    _restartAutoTurn();
-  }
-
-  void handleZoomedOverscroll(ReaderPageData page, double overscrollDy) {
-    final bool hasPreviousChapter = page.prevHref.trim().isNotEmpty;
-    final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
-    if (overscrollDy < -0.5 && hasNextChapter) {
-      _clearPreviousChapterPullState();
-      _updateNextChapterPullDistance(
-        _nextChapterPullDistance + overscrollDy.abs(),
-      );
-    } else if (overscrollDy > 0.5 && hasPreviousChapter) {
-      _clearNextChapterPullState();
-      _updatePreviousChapterPullDistance(
-        _previousChapterPullDistance + overscrollDy.abs(),
-      );
-    }
-  }
-
-  void handleZoomedPanEnd(ReaderPageData page) {
-    if (previousChapterPullReady) {
-      unawaited(triggerPreviousChapter(page));
-    } else if (nextChapterPullReady) {
-      unawaited(triggerNextChapter(page));
-    } else {
-      _clearPreviousChapterPullState();
-      _clearNextChapterPullState();
-    }
   }
 
   Future<void> stepForward() async {
@@ -680,19 +567,19 @@ class ReaderController extends ChangeNotifier {
         })
         .toList(growable: false);
     unawaited(
-      EasyCopyImageCaches.prefetchReaderImages(remoteImages, referer: page.uri),
+      AppImageCaches.prefetchReaderImages(remoteImages, referer: page.uri),
     );
     unawaited(_markChapterVisited(page));
     final bool changedPage = previousUri != page.uri;
     if (changedPage || forceRestore) {
-      _resetChapterBoundaryState();
+      _chapterBoundary.reset();
       _resetZoomState();
     }
     if (changedPage) {
       _currentPageIndex = 0;
       _visibleImageIndex = 0;
       _lastScheduledProgressPosition = null;
-      _visibleImageIndexUpdateScheduled = false;
+      _visibleIndexUpdateQueued = false;
       _isChapterControlsVisible = false;
       _disposePagedScrollControllers();
       _imageItemKeys.clear();
@@ -701,7 +588,7 @@ class ReaderController extends ChangeNotifier {
         scrollController.jumpTo(0);
       }
     }
-    _prepareComments(page, resetForNewChapter: changedPage);
+    _comments.prepare(page, resetForNewChapter: changedPage);
     _scheduleReaderPresentationSync();
     if (changedPage || forceRestore) {
       unawaited(
@@ -803,7 +690,7 @@ class ReaderController extends ChangeNotifier {
       } else {
         _jumpToOffset(page.uri, savedOffset ?? 0, attempts: 10, ticket: ticket);
       }
-      _scheduleVisibleImageIndexUpdate();
+      _scheduleVisibleIndexUpdate();
     });
   }
 
@@ -984,7 +871,7 @@ class ReaderController extends ChangeNotifier {
       );
       _scheduleProgressPersistence();
     }
-    _scheduleVisibleImageIndexUpdate();
+    _scheduleVisibleIndexUpdate();
   }
 
   void handlePageChanged(int index) {
@@ -996,7 +883,7 @@ class ReaderController extends ChangeNotifier {
               ? currentPage.imageUrls.length - 1
               : index)
         : index;
-    _resetChapterBoundaryState();
+    _chapterBoundary.reset();
     _currentPageIndex = index;
     _visibleImageIndex = visibleImageIndex;
     if (!_disposed) notifyListeners();
@@ -1017,11 +904,11 @@ class ReaderController extends ChangeNotifier {
     }
   }
 
-  void _scheduleVisibleImageIndexUpdate() {
-    if (_visibleImageIndexUpdateScheduled) return;
-    _visibleImageIndexUpdateScheduled = true;
+  void _scheduleVisibleIndexUpdate() {
+    if (_visibleIndexUpdateQueued) return;
+    _visibleIndexUpdateQueued = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _visibleImageIndexUpdateScheduled = false;
+      _visibleIndexUpdateQueued = false;
       if (_disposed || preferences.isPaged) return;
       _updateVisibleImageIndex();
     });
@@ -1081,8 +968,113 @@ class ReaderController extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  void setImageZoomed(String imageKey, bool isZoomed) =>
-      _setImageZoomed(imageKey, isZoomed);
+  void setImageZoomed(String imageKey, bool isZoomed) {
+    _setImageZoomed(imageKey, isZoomed);
+  }
+
+  void handlePinchZoomStart() {
+    _mutateZoom(_zoom.startPinch);
+  }
+
+  void handlePinchZoomUpdate(double relativeScale) {
+    _mutateZoom(() => _zoom.updatePinch(relativeScale));
+  }
+
+  void handlePinchZoomEnd() {
+    _mutateZoom(_zoom.endPinch);
+  }
+
+  void updatePanOffset({required double x, required double y}) {
+    _mutateZoom(() => _zoom.updatePanOffset(x: x, y: y));
+  }
+
+  void handleZoomedOverscroll(ReaderPageData page, double overscrollDy) {
+    final bool hasPreviousChapter = page.prevHref.trim().isNotEmpty;
+    final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
+    if (overscrollDy < -0.5 && hasNextChapter) {
+      _chapterBoundary.clearPrevious();
+      _chapterBoundary.addNextDistance(overscrollDy.abs());
+    } else if (overscrollDy > 0.5 && hasPreviousChapter) {
+      _chapterBoundary.clearNext();
+      _chapterBoundary.addPreviousDistance(overscrollDy.abs());
+    }
+  }
+
+  void handleZoomedPanEnd(ReaderPageData page) {
+    if (previousChapterPullReady) {
+      unawaited(triggerPreviousChapter(page));
+    } else if (nextChapterPullReady) {
+      unawaited(triggerNextChapter(page));
+    } else {
+      _chapterBoundary.clearPrevious();
+      _chapterBoundary.clearNext();
+    }
+  }
+
+  Future<void> triggerPreviousChapter(ReaderPageData page) {
+    return _chapterBoundary.triggerPrevious(page);
+  }
+
+  Future<void> triggerNextChapter(ReaderPageData page) {
+    return _chapterBoundary.triggerNext(page);
+  }
+
+  void handleChapterPull(
+    ScrollNotification notification, {
+    required ReaderPageData page,
+    required ScrollController controller,
+    Axis axis = Axis.vertical,
+  }) {
+    _chapterBoundary.handlePull(
+      notification,
+      page: page,
+      controller: controller,
+      controllerAtTop: _scrollControllerAtTop,
+      controllerAtBottom: _scrollControllerAtBottom,
+      axis: axis,
+    );
+  }
+
+  Future<void> loadComments(ReaderPageData page, {bool append = false}) {
+    return _comments.load(page, append: append);
+  }
+
+  Future<void> submitComment(ReaderPageData page) {
+    return _comments.submit(page);
+  }
+
+  void _handleCommentScroll() {
+    _comments.handleScroll();
+  }
+
+  void _setImageZoomed(String imageKey, bool isZoomed) {
+    _mutateZoom(() => _zoom.setImageZoomed(imageKey, isZoomed));
+  }
+
+  void _resetZoomState() {
+    _mutateZoom(_zoom.reset);
+  }
+
+  void _mutateZoom(bool Function() mutation) {
+    final bool wasLocked = _zoom.isLocked;
+    final bool changed = mutation();
+    if (changed && !_disposed) {
+      notifyListeners();
+    }
+    _handleZoomLockChanged(wasLocked);
+  }
+
+  void _handleZoomLockChanged(bool wasLocked) {
+    final bool isLocked = isZoomGestureLocked;
+    if (wasLocked == isLocked) return;
+    if (isLocked) {
+      _autoTurnTimer?.cancel();
+      _chapterBoundary.reset();
+      hideChapterControls();
+      return;
+    }
+    _restartAutoTurn();
+  }
 
   bool _scrollControllerAtBottom(
     ScrollController controller, {
@@ -1100,270 +1092,6 @@ class ReaderController extends ChangeNotifier {
     if (!controller.hasClients) return false;
     return controller.position.pixels - controller.position.minScrollExtent <=
         tolerance;
-  }
-
-  bool _metricsNearChapterStart(
-    ScrollMetrics metrics, {
-    required Axis axis,
-    double threshold = _readerNextChapterPullActivationExtent,
-  }) {
-    return metrics.axis == axis && metrics.extentBefore <= threshold;
-  }
-
-  bool _metricsNearChapterEnd(
-    ScrollMetrics metrics, {
-    required Axis axis,
-    double threshold = _readerNextChapterPullActivationExtent,
-  }) {
-    return metrics.axis == axis && metrics.extentAfter <= threshold;
-  }
-
-  bool _isNextChapterForwardDrag(double dragDelta, {required Axis axis}) {
-    if (axis == Axis.vertical) return dragDelta < 0;
-    return switch (preferences.readingDirection) {
-      ReaderReadingDirection.leftToRight => dragDelta < 0,
-      ReaderReadingDirection.rightToLeft => dragDelta > 0,
-      ReaderReadingDirection.topToBottom => false,
-    };
-  }
-
-  bool _isNextChapterBackwardDrag(double dragDelta, {required Axis axis}) {
-    if (axis == Axis.vertical) return dragDelta > 0;
-    return switch (preferences.readingDirection) {
-      ReaderReadingDirection.leftToRight => dragDelta > 0,
-      ReaderReadingDirection.rightToLeft => dragDelta < 0,
-      ReaderReadingDirection.topToBottom => false,
-    };
-  }
-
-  void _updateNextChapterPullDistance(double distance) {
-    final double triggerDistance = _nextChapterTriggerDistance;
-    final double clampedDistance = distance
-        .clamp(0, triggerDistance * 1.6)
-        .toDouble();
-    final bool nextReady = clampedDistance >= triggerDistance;
-    if ((_nextChapterPullDistance - clampedDistance).abs() < 0.5 &&
-        nextChapterPullReady == nextReady) {
-      return;
-    }
-    _nextChapterPullDistance = clampedDistance;
-    if (!_disposed) notifyListeners();
-  }
-
-  void _updatePreviousChapterPullDistance(double distance) {
-    final double triggerDistance = _nextChapterTriggerDistance;
-    final double clampedDistance = distance
-        .clamp(0, triggerDistance * 1.6)
-        .toDouble();
-    final bool nextReady = clampedDistance >= triggerDistance;
-    if ((_previousChapterPullDistance - clampedDistance).abs() < 0.5 &&
-        previousChapterPullReady == nextReady) {
-      return;
-    }
-    _previousChapterPullDistance = clampedDistance;
-    if (!_disposed) notifyListeners();
-  }
-
-  void _clearPreviousChapterPullState() {
-    if (_previousChapterPullDistance <= 0) return;
-    _previousChapterPullDistance = 0;
-    if (!_disposed) notifyListeners();
-  }
-
-  void _clearNextChapterPullState() {
-    if (_nextChapterPullDistance <= 0) return;
-    _nextChapterPullDistance = 0;
-    if (!_disposed) notifyListeners();
-  }
-
-  void _resetChapterBoundaryState() {
-    if (_previousChapterPullDistance <= 0 &&
-        _nextChapterPullDistance <= 0 &&
-        !_isNextChapterLoading) {
-      return;
-    }
-    _previousChapterPullDistance = 0;
-    _nextChapterPullDistance = 0;
-    _isNextChapterLoading = false;
-    if (!_disposed) notifyListeners();
-  }
-
-  Future<void> triggerPreviousChapter(ReaderPageData page) async {
-    final String prevHref = page.prevHref.trim();
-    if (prevHref.isEmpty || _isNextChapterLoading) {
-      _clearPreviousChapterPullState();
-      return;
-    }
-    _isNextChapterLoading = true;
-    if (!_disposed) notifyListeners();
-    try {
-      await flushProgressPersistence();
-      await onRequestChapterNavigation(
-        prevHref,
-        nextHref: page.uri,
-        catalogHref: page.catalogHref,
-      );
-    } finally {
-      _resetChapterBoundaryState();
-    }
-  }
-
-  Future<void> triggerNextChapter(ReaderPageData page) async {
-    final String nextHref = page.nextHref.trim();
-    if (nextHref.isEmpty || _isNextChapterLoading) {
-      _clearNextChapterPullState();
-      return;
-    }
-    _isNextChapterLoading = true;
-    if (!_disposed) notifyListeners();
-    try {
-      await flushProgressPersistence();
-      await onRequestChapterNavigation(
-        nextHref,
-        prevHref: page.uri,
-        catalogHref: page.catalogHref,
-      );
-    } finally {
-      _resetChapterBoundaryState();
-    }
-  }
-
-  void handleChapterPullScrollNotification(
-    ScrollNotification notification, {
-    required ReaderPageData page,
-    required ScrollController controller,
-    Axis axis = Axis.vertical,
-  }) {
-    final bool hasPreviousChapter = page.prevHref.trim().isNotEmpty;
-    final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
-    if ((!hasPreviousChapter && !hasNextChapter) ||
-        isZoomGestureLocked ||
-        notification.depth != 0 ||
-        notification.metrics.axis != axis ||
-        _isNextChapterLoading) {
-      if (!_isNextChapterLoading) {
-        _clearPreviousChapterPullState();
-        _clearNextChapterPullState();
-      }
-      return;
-    }
-
-    final bool nearChapterStart =
-        hasPreviousChapter &&
-        (_metricsNearChapterStart(notification.metrics, axis: axis) ||
-            _scrollControllerAtTop(
-              controller,
-              tolerance: _readerNextChapterPullActivationExtent,
-            ));
-    final bool nearChapterEnd =
-        hasNextChapter &&
-        (_metricsNearChapterEnd(notification.metrics, axis: axis) ||
-            _scrollControllerAtBottom(
-              controller,
-              tolerance: _readerNextChapterPullActivationExtent,
-            ));
-
-    if (notification is OverscrollNotification) {
-      final double dragDelta = notification.dragDetails?.primaryDelta ?? 0;
-      if (_isNextChapterForwardDrag(dragDelta, axis: axis) && nearChapterEnd) {
-        _clearPreviousChapterPullState();
-        _updateNextChapterPullDistance(
-          _nextChapterPullDistance + dragDelta.abs(),
-        );
-        return;
-      }
-      if (_isNextChapterBackwardDrag(dragDelta, axis: axis) &&
-          nearChapterStart) {
-        _clearNextChapterPullState();
-        _updatePreviousChapterPullDistance(
-          _previousChapterPullDistance + dragDelta.abs(),
-        );
-        return;
-      }
-      if (_isNextChapterBackwardDrag(dragDelta, axis: axis) &&
-          _nextChapterPullDistance > 0) {
-        _updateNextChapterPullDistance(
-          _nextChapterPullDistance - dragDelta.abs(),
-        );
-      } else if (_isNextChapterForwardDrag(dragDelta, axis: axis) &&
-          _previousChapterPullDistance > 0) {
-        _updatePreviousChapterPullDistance(
-          _previousChapterPullDistance - dragDelta.abs(),
-        );
-      } else {
-        if (!nearChapterStart) _clearPreviousChapterPullState();
-        if (!nearChapterEnd) _clearNextChapterPullState();
-      }
-      return;
-    }
-
-    if (notification is ScrollUpdateNotification) {
-      final DragUpdateDetails? dragDetails = notification.dragDetails;
-      if (dragDetails == null) {
-        if (!_scrollControllerAtTop(controller)) {
-          _clearPreviousChapterPullState();
-        }
-        if (!_scrollControllerAtBottom(controller)) {
-          _clearNextChapterPullState();
-        }
-        return;
-      }
-      final double dragDelta = dragDetails.primaryDelta ?? 0;
-      if (_isNextChapterForwardDrag(dragDelta, axis: axis) && nearChapterEnd) {
-        _clearPreviousChapterPullState();
-        _updateNextChapterPullDistance(
-          _nextChapterPullDistance + dragDelta.abs(),
-        );
-      } else if (_isNextChapterBackwardDrag(dragDelta, axis: axis) &&
-          nearChapterStart) {
-        _clearNextChapterPullState();
-        _updatePreviousChapterPullDistance(
-          _previousChapterPullDistance + dragDelta.abs(),
-        );
-      } else if (_isNextChapterBackwardDrag(dragDelta, axis: axis) &&
-          _nextChapterPullDistance > 0) {
-        _updateNextChapterPullDistance(
-          _nextChapterPullDistance - dragDelta.abs(),
-        );
-      } else if (_isNextChapterForwardDrag(dragDelta, axis: axis) &&
-          _previousChapterPullDistance > 0) {
-        _updatePreviousChapterPullDistance(
-          _previousChapterPullDistance - dragDelta.abs(),
-        );
-      } else {
-        if (!nearChapterStart) _clearPreviousChapterPullState();
-        if (!nearChapterEnd) _clearNextChapterPullState();
-      }
-      return;
-    }
-
-    if (notification is ScrollEndNotification) {
-      if (previousChapterPullReady) {
-        unawaited(triggerPreviousChapter(page));
-      } else if (nextChapterPullReady) {
-        unawaited(triggerNextChapter(page));
-      } else {
-        _clearPreviousChapterPullState();
-        _clearNextChapterPullState();
-      }
-      return;
-    }
-
-    if (notification is UserScrollNotification &&
-        notification.direction == ScrollDirection.idle) {
-      if (previousChapterPullReady) {
-        unawaited(triggerPreviousChapter(page));
-      } else if (nextChapterPullReady) {
-        unawaited(triggerNextChapter(page));
-      } else {
-        _clearPreviousChapterPullState();
-        _clearNextChapterPullState();
-      }
-      return;
-    }
-
-    if (!nearChapterStart) _clearPreviousChapterPullState();
-    if (!nearChapterEnd) _clearNextChapterPullState();
   }
 
   void _handleVolumeKeyAction(ReaderVolumeKeyAction action) {
@@ -1423,271 +1151,7 @@ class ReaderController extends ChangeNotifier {
     );
   }
 
-  void _prepareComments(
-    ReaderPageData page, {
-    required bool resetForNewChapter,
-  }) {
-    final String chapterId = readerChapterIdForPage(page);
-    if (!preferences.showChapterComments || chapterId.isEmpty) {
-      _commentsChapterId = '';
-      _commentsError = '';
-      _chapterComments = const <ChapterComment>[];
-      _commentsTotal = 0;
-      _commentsLoadedStartOffset = 0;
-      _isCommentsLoading = false;
-      _isCommentsLoadingMore = false;
-      if (resetForNewChapter) {
-        commentController.clear();
-      }
-      if (!_disposed) notifyListeners();
-      return;
-    }
-
-    final bool shouldRefresh =
-        resetForNewChapter ||
-        _commentsChapterId != chapterId ||
-        (_chapterComments.isEmpty && _commentsError.isEmpty);
-    if (!shouldRefresh ||
-        (_isCommentsLoading && _commentsChapterId == chapterId)) {
-      return;
-    }
-    if (resetForNewChapter) {
-      commentController.clear();
-      if (commentScrollController.hasClients) {
-        commentScrollController.jumpTo(0);
-      }
-    }
-    unawaited(loadComments(page));
-  }
-
-  Future<void> loadComments(ReaderPageData page, {bool append = false}) async {
-    final String chapterId = readerChapterIdForPage(page);
-    if (chapterId.isEmpty || !preferences.showChapterComments) return;
-    if (!_disposed) {
-      final ReaderPageData? currentPage = _page;
-      if (currentPage == null ||
-          readerChapterIdForPage(currentPage) != chapterId) {
-        return;
-      }
-    }
-
-    final List<ChapterComment> existingComments =
-        append && _commentsChapterId == chapterId
-        ? _chapterComments
-        : const <ChapterComment>[];
-    ReaderCommentPageWindow? appendWindow;
-    if (append) {
-      if (_isCommentsLoading || _isCommentsLoadingMore) return;
-      appendWindow = nextReaderCommentAscendingWindow(
-        loadedStartOffset: _commentsLoadedStartOffset,
-      );
-      if (appendWindow.isEmpty) return;
-    }
-
-    if (!append) {
-      _commentsChapterId = chapterId;
-      _commentsError = '';
-      _chapterComments = const <ChapterComment>[];
-      _commentsTotal = 0;
-      _commentsLoadedStartOffset = 0;
-      _isCommentsLoading = true;
-      _isCommentsLoadingMore = false;
-      if (!_disposed) notifyListeners();
-    } else {
-      _isCommentsLoadingMore = true;
-      if (!_disposed) notifyListeners();
-    }
-
-    try {
-      final (
-        ChapterCommentFeed feed,
-        int loadedStartOffset,
-        int resolvedTotal,
-      ) = append
-          ? await _loadCommentsAscendingPage(
-              chapterId: chapterId,
-              window: appendWindow!,
-              fallbackTotal: _commentsTotal,
-            )
-          : await _loadInitialCommentsAscendingPage(chapterId);
-      if (_disposed) return;
-      final ReaderPageData? currentPage = _page;
-      if (currentPage == null ||
-          readerChapterIdForPage(currentPage) != chapterId) {
-        if (_commentsChapterId == chapterId) {
-          _isCommentsLoading = false;
-          _isCommentsLoadingMore = false;
-          if (!_disposed) notifyListeners();
-        }
-        return;
-      }
-      _commentsChapterId = chapterId;
-      _chapterComments = append
-          ? mergeReaderCommentsByIdentity(existingComments, feed.comments)
-          : mergeReaderCommentsByIdentity(
-              const <ChapterComment>[],
-              feed.comments,
-            );
-      _commentsTotal = resolvedTotal > 0
-          ? resolvedTotal
-          : _chapterComments.length;
-      _commentsLoadedStartOffset = loadedStartOffset;
-      _commentsError = '';
-      _isCommentsLoading = false;
-      _isCommentsLoadingMore = false;
-      if (!_disposed) notifyListeners();
-    } catch (error) {
-      if (_disposed) return;
-      final ReaderPageData? currentPage = _page;
-      if (currentPage == null ||
-          readerChapterIdForPage(currentPage) != chapterId) {
-        if (_commentsChapterId == chapterId) {
-          _isCommentsLoading = false;
-          _isCommentsLoadingMore = false;
-          if (!_disposed) notifyListeners();
-        }
-        return;
-      }
-      final String message = error is SiteApiException
-          ? error.message
-          : '评论加载失败，请稍后重试。';
-      if (append && existingComments.isNotEmpty) {
-        _isCommentsLoading = false;
-        _isCommentsLoadingMore = false;
-        if (!_disposed) notifyListeners();
-        return;
-      }
-      _commentsChapterId = chapterId;
-      _commentsError = message;
-      _chapterComments = const <ChapterComment>[];
-      _commentsTotal = 0;
-      _commentsLoadedStartOffset = 0;
-      _isCommentsLoading = false;
-      _isCommentsLoadingMore = false;
-      if (!_disposed) notifyListeners();
-    }
-  }
-
-  Future<(ChapterCommentFeed, int, int)> _loadInitialCommentsAscendingPage(
-    String chapterId,
-  ) async {
-    final ChapterCommentFeed probe = await apiClient.loadChapterComments(
-      chapterId: chapterId,
-      limit: 1,
-      offset: 0,
-    );
-    final int probeTotal = probe.total > 0
-        ? probe.total
-        : probe.comments.length;
-    if (probeTotal <= 0) {
-      return (probe, 0, 0);
-    }
-
-    final ReaderCommentPageWindow window = probeTotal <= 1
-        ? const ReaderCommentPageWindow(offset: 0, limit: readerCommentPageSize)
-        : initialReaderCommentAscendingWindow(total: probeTotal);
-    final ChapterCommentFeed rawFeed = await apiClient.loadChapterComments(
-      chapterId: chapterId,
-      limit: window.limit,
-      offset: window.offset,
-    );
-    final int resolvedTotal = rawFeed.total > 0
-        ? rawFeed.total
-        : math.max(probeTotal, rawFeed.comments.length);
-    return (
-      ChapterCommentFeed(
-        total: resolvedTotal,
-        comments: normalizeReaderCommentAscendingPage(rawFeed.comments),
-      ),
-      window.offset,
-      resolvedTotal,
-    );
-  }
-
-  Future<(ChapterCommentFeed, int, int)> _loadCommentsAscendingPage({
-    required String chapterId,
-    required ReaderCommentPageWindow window,
-    required int fallbackTotal,
-  }) async {
-    final ChapterCommentFeed rawFeed = await apiClient.loadChapterComments(
-      chapterId: chapterId,
-      limit: window.limit,
-      offset: window.offset,
-    );
-    final int resolvedTotal = rawFeed.total > 0 ? rawFeed.total : fallbackTotal;
-    return (
-      ChapterCommentFeed(
-        total: resolvedTotal,
-        comments: normalizeReaderCommentAscendingPage(rawFeed.comments),
-      ),
-      window.offset,
-      resolvedTotal,
-    );
-  }
-
-  void _handleCommentScroll() {
-    if (!commentScrollController.hasClients ||
-        _isCommentsLoading ||
-        _isCommentsLoadingMore) {
-      return;
-    }
-    final ReaderPageData? currentPage = _page;
-    if (currentPage == null || !shouldShowCommentTailPage(currentPage)) {
-      return;
-    }
-    final ScrollPosition position = commentScrollController.position;
-    if (position.maxScrollExtent <= 0) return;
-    if (position.maxScrollExtent - position.pixels > 180) return;
-    unawaited(loadComments(currentPage, append: true));
-  }
-
-  Future<void> submitComment(ReaderPageData page) async {
-    if (_isCommentSubmitting) return;
-    final String chapterId = readerChapterIdForPage(page);
-    if (chapterId.isEmpty) {
-      onShowMessage('章节评论信息缺失，请刷新后重试。');
-      return;
-    }
-    final String content = commentController.text.trim();
-    if (content.isEmpty) {
-      onShowMessage('请输入评论内容。');
-      return;
-    }
-
-    if (!session.isAuthenticated || (session.token ?? '').isEmpty) {
-      await onRequestAuth();
-      if (!session.isAuthenticated || (session.token ?? '').isEmpty) {
-        return;
-      }
-    }
-
-    if (_disposed) return;
-    _isCommentSubmitting = true;
-    if (!_disposed) notifyListeners();
-
-    try {
-      await apiClient.postChapterComment(
-        chapterId: chapterId,
-        content: content,
-      );
-      commentController.clear();
-      onShowMessage('已发送评论');
-      await loadComments(page);
-    } catch (error) {
-      final String message = error is SiteApiException
-          ? error.message
-          : '评论发送失败，请稍后重试。';
-      if (message.contains('登录已失效')) {
-        await onLogoutForExpiredSession();
-      }
-      if (!_disposed) {
-        onShowMessage(message);
-      }
-    } finally {
-      _isCommentSubmitting = false;
-      if (!_disposed) notifyListeners();
-    }
-  }
+  void _notifyControllerListeners() => notifyListeners();
 
   void _handlePreferencesChanged() {
     final ReaderPreferences previousPreferences =

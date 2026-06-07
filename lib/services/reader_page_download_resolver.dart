@@ -1,4 +1,4 @@
-import 'package:easy_copy/models/page_models.dart';
+import 'package:reader/models/page_models.dart';
 
 typedef ReaderPageMaybeLoader = Future<ReaderPageData?> Function(Uri uri);
 typedef ReaderPageLoader = Future<ReaderPageData> Function(Uri uri);

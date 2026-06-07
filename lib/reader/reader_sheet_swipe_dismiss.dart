@@ -14,11 +14,10 @@ class ReaderSheetSwipeDismissRegion extends StatefulWidget {
 
   @override
   State<ReaderSheetSwipeDismissRegion> createState() =>
-      _ReaderSheetSwipeDismissRegionState();
+      _SheetSwipeDismissState();
 }
 
-class _ReaderSheetSwipeDismissRegionState
-    extends State<ReaderSheetSwipeDismissRegion> {
+class _SheetSwipeDismissState extends State<ReaderSheetSwipeDismissRegion> {
   Offset? _pointerDownPosition;
   bool _dismissTriggered = false;
 

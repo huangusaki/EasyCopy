@@ -1,5 +1,5 @@
-import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/services/reader_progress_store.dart';
+import 'package:reader/models/page_models.dart';
+import 'package:reader/services/reader_progress_store.dart';
 
 class ReaderRestoreTarget {
   const ReaderRestoreTarget({this.position, this.visibleImageIndex});

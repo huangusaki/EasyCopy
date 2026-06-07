@@ -1,12 +1,15 @@
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:easy_copy/config/app_config.dart';
-import 'package:easy_copy/models/chapter_comment.dart';
-import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/services/network_client.dart';
-import 'package:easy_copy/services/site_session.dart';
 import 'package:http/http.dart' as http;
+import 'package:reader/config/app_config.dart';
+import 'package:reader/models/chapter_comment.dart';
+import 'package:reader/models/page_models.dart';
+import 'package:reader/services/network_client.dart';
+import 'package:reader/services/site_json_utils.dart';
+import 'package:reader/services/site_session.dart';
+
+part 'site_api_client/parsing.dart';
 
 class SiteApiException implements Exception {
   SiteApiException(this.message);
@@ -214,7 +217,7 @@ class SiteApiClient {
       throw SiteApiException('漫画收藏信息缺失，请刷新详情页后重试。');
     }
 
-    final http.Response response = await EasyCopyNetworkClient.post(
+    final http.Response response = await NetworkClient.post(
       _client,
       AppConfig.resolvePath('/api/v2/web/collect'),
       headers: <String, String>{
@@ -276,13 +279,13 @@ class SiteApiClient {
       throw SiteApiException((payload['message'] as String?) ?? '评论加载失败：$code');
     }
 
-    final Map<String, Object?> results = _asMap(payload['results']);
+    final Map<String, Object?> results = asStringKeyMap(payload['results']);
     final List<ChapterComment> comments = _extractList(results)
         .map(_parseChapterComment)
         .where((ChapterComment comment) => comment.message.isNotEmpty)
         .toList(growable: false);
     return ChapterCommentFeed(
-      total: _pickInt(results, const <String>[
+      total: pickInt(results, const <String>[
         'total',
         'count',
         'total_count',
@@ -353,7 +356,7 @@ class SiteApiClient {
       page: normalizedPage,
       qType: normalizedQueryType,
     );
-    final Map<String, Object?> results = _asMap(payload['results']);
+    final Map<String, Object?> results = asStringKeyMap(payload['results']);
     final List<Map<String, Object?>> list = _extractList(results);
     final int total =
         (results['total'] as num?)?.toInt() ??
@@ -412,7 +415,7 @@ class SiteApiClient {
               ...queryParameters,
             },
           );
-    final http.Response response = await EasyCopyNetworkClient.get(
+    final http.Response response = await NetworkClient.get(
       _client,
       uri,
       headers: <String, String>{
@@ -453,7 +456,7 @@ class SiteApiClient {
     for (final String host in _chapterCommentApiHosts()) {
       final Uri uri = Uri.https(host, path, queryParameters);
       try {
-        final http.Response response = await EasyCopyNetworkClient.get(
+        final http.Response response = await NetworkClient.get(
           _client,
           uri,
           headers: _buildRequestHeaders(includeSiteContext: true),
@@ -489,7 +492,7 @@ class SiteApiClient {
     for (final String host in _chapterCommentApiHosts()) {
       final Uri uri = Uri.https(host, path);
       try {
-        final http.Response response = await EasyCopyNetworkClient.post(
+        final http.Response response = await NetworkClient.post(
           _client,
           uri,
           headers: headers,
@@ -540,7 +543,7 @@ class SiteApiClient {
             'q_type': qType,
           },
         );
-        final http.Response response = await EasyCopyNetworkClient.get(
+        final http.Response response = await NetworkClient.get(
           _client,
           uri,
           headers: <String, String>{
@@ -585,7 +588,7 @@ class SiteApiClient {
   }) async {
     final int salt = 100000 + Random().nextInt(900000);
     final Uri uri = AppConfig.resolvePath(path);
-    final http.Response response = await EasyCopyNetworkClient.post(
+    final http.Response response = await NetworkClient.post(
       _client,
       uri,
       headers: <String, String>{
@@ -617,8 +620,8 @@ class SiteApiClient {
       throw SiteApiException((payload['message'] as String?) ?? '登录失败：$code');
     }
 
-    final Map<String, Object?> results = _asMap(payload['results']);
-    final String token = _pickString(results, <String>['token']);
+    final Map<String, Object?> results = asStringKeyMap(payload['results']);
+    final String token = pickString(results, <String>['token']);
     if (token.isEmpty) {
       throw SiteApiException('登录成功，但未拿到有效凭证。');
     }
@@ -627,14 +630,14 @@ class SiteApiClient {
       token: token,
       cookies: <String, String>{
         'token': token,
-        if (_pickString(results, <String>['username']).isNotEmpty)
-          'name': _pickString(results, <String>['username']),
-        if (_pickString(results, <String>['user_id']).isNotEmpty)
-          'user_id': _pickString(results, <String>['user_id']),
-        if (_pickString(results, <String>['avatar']).isNotEmpty)
-          'avatar': _pickString(results, <String>['avatar']),
-        if (_pickString(results, <String>['datetime_created']).isNotEmpty)
-          'create': _pickString(results, <String>['datetime_created']),
+        if (pickString(results, <String>['username']).isNotEmpty)
+          'name': pickString(results, <String>['username']),
+        if (pickString(results, <String>['user_id']).isNotEmpty)
+          'user_id': pickString(results, <String>['user_id']),
+        if (pickString(results, <String>['avatar']).isNotEmpty)
+          'avatar': pickString(results, <String>['avatar']),
+        if (pickString(results, <String>['datetime_created']).isNotEmpty)
+          'create': pickString(results, <String>['datetime_created']),
       },
     );
   }
@@ -692,16 +695,16 @@ class SiteApiClient {
       path,
       queryParameters: queryParameters,
     );
-    final Map<String, Object?> results = _asMap(payload['results']);
+    final Map<String, Object?> results = asStringKeyMap(payload['results']);
     final List<Map<String, Object?>> items = <Map<String, Object?>>[
       ..._extractList(results),
     ];
-    final int total = _pickInt(results, const <String>[
+    final int total = pickInt(results, const <String>[
       'total',
       'count',
       'total_count',
     ], fallback: items.length);
-    final int limit = _pickInt(results, const <String>[
+    final int limit = pickInt(results, const <String>[
       'limit',
       'page_size',
       'pageSize',
@@ -783,415 +786,6 @@ class SiteApiClient {
     );
   }
 
-  ProfileUserData _parseUser(Map<String, Object?> payload) {
-    final Map<String, Object?> results = _asMap(payload['results']);
-    final String userId = _pickString(results, <String>[
-      'user_id',
-      'id',
-      'uuid',
-    ]);
-    final String username = _pickString(results, <String>[
-      'username',
-      'mobile',
-      'email',
-    ]);
-    final String nickname = _pickString(results, <String>['nickname', 'name']);
-    final String avatarUrl = _pickString(results, <String>[
-      'avatar',
-      'avatar_url',
-    ]);
-    final String createdAt = _pickString(results, <String>[
-      'createDate',
-      'datetime_created',
-      'created_at',
-    ]);
-    final List<String> memberships = <String>[
-      if (_pickBool(results, 'vip')) 'VIP',
-      if (_pickBool(results, 'comic_vip')) '漫画会员',
-      if (_pickBool(results, 'cartoon_vip')) '动画会员',
-    ];
-    return ProfileUserData(
-      userId: userId,
-      username: username.isEmpty ? '未命名用户' : username,
-      nickname: nickname,
-      avatarUrl: avatarUrl,
-      createdAt: createdAt,
-      membershipLabel: memberships.isEmpty ? '普通会员' : memberships.join(' / '),
-    );
-  }
-
-  List<ProfileLibraryItem> _parseCollections(
-    Object? results, {
-    ProfileCollectionSort sort = AppConfig.defaultProfileCollectionSort,
-  }) {
-    final List<ProfileLibraryItem> items = _extractList(results)
-        .map((Map<String, Object?> item) {
-          final Map<String, Object?> comic = _firstNonEmptyMap(item, <String>[
-            'comic',
-            'comic_info',
-            'cartoon',
-            'results',
-          ]);
-          final Map<String, Object?> source = comic.isEmpty ? item : comic;
-          final String pathWord = _pickString(source, <String>[
-            'path_word',
-            'pathWord',
-            'slug',
-          ]);
-          final String updatedAt =
-              _pickString(source, <String>[
-                'datetime_updated',
-                'updated_at',
-                'updatedAt',
-                'last_update_time',
-                'last_update_at',
-                'update_time',
-              ]).isNotEmpty
-              ? _pickString(source, <String>[
-                  'datetime_updated',
-                  'updated_at',
-                  'updatedAt',
-                  'last_update_time',
-                  'last_update_at',
-                  'update_time',
-                ])
-              : _pickString(item, <String>[
-                  'datetime_updated',
-                  'updated_at',
-                  'updatedAt',
-                  'last_update_time',
-                  'last_update_at',
-                  'update_time',
-                ]);
-          return ProfileLibraryItem(
-            title: _pickString(source, <String>['name', 'title']),
-            coverUrl: _pickString(source, <String>[
-              'cover',
-              'cover_url',
-              'image',
-            ]),
-            href: _buildComicHref(pathWord, source, item),
-            subtitle: _pickString(source, <String>[
-              'author_name',
-              'author',
-              'subtitle',
-            ]),
-            secondaryText: _pickString(source, <String>[
-              'last_chapter_name',
-              'datetime_updated',
-              'status',
-            ]),
-            updatedAt: updatedAt,
-          );
-        })
-        .where((ProfileLibraryItem item) => item.title.isNotEmpty)
-        .toList(growable: false);
-    switch (sort) {
-      case ProfileCollectionSort.latestUpdate:
-        items.sort(_compareProfileLibraryItemByUpdatedAtDesc);
-        break;
-      case ProfileCollectionSort.readingTime:
-      case ProfileCollectionSort.alphabetical:
-        break;
-    }
-    return items;
-  }
-
-  List<ProfileHistoryItem> _parseHistory(Object? results) {
-    return _extractList(results)
-        .map((Map<String, Object?> item) {
-          final Map<String, Object?> comic = _firstNonEmptyMap(item, <String>[
-            'comic',
-            'comic_info',
-            'cartoon',
-          ]);
-          final Map<String, Object?> chapter = _firstNonEmptyMap(item, <String>[
-            'chapter',
-            'last_chapter',
-            'browse',
-          ]);
-          final Map<String, Object?> browse = _firstNonEmptyMap(item, <String>[
-            'browse',
-            'last_browse',
-          ]);
-          final Map<String, Object?> source = comic.isEmpty ? item : comic;
-          final String pathWord = _pickString(source, <String>[
-            'path_word',
-            'pathWord',
-            'slug',
-          ]);
-          final String chapterUuid =
-              _pickString(chapter, <String>[
-                'uuid',
-                'chapter_uuid',
-                'id',
-              ]).isNotEmpty
-              ? _pickString(chapter, <String>['uuid', 'chapter_uuid', 'id'])
-              : _pickString(item, <String>['last_chapter_id']);
-          final String chapterLabel =
-              _pickString(chapter, <String>[
-                'name',
-                'title',
-                'chapter_name',
-              ]).isNotEmpty
-              ? _pickString(chapter, <String>['name', 'title', 'chapter_name'])
-              : _pickString(item, <String>['last_chapter_name']);
-          return ProfileHistoryItem(
-            title: _pickString(source, <String>['name', 'title']),
-            coverUrl: _pickString(source, <String>[
-              'cover',
-              'cover_url',
-              'image',
-            ]),
-            comicHref: _buildComicHref(pathWord, source, item),
-            chapterLabel: chapterLabel,
-            chapterHref: _buildChapterHref(pathWord, chapterUuid),
-            visitedAt: _pickFirstString(
-              <Map<String, Object?>>[item, browse],
-              const <String>[
-                'datetime_created',
-                'datetime_updated',
-                'created_at',
-                'updated_at',
-                'browse_at',
-                'browse_time',
-                'read_at',
-                'read_time',
-              ],
-            ),
-          );
-        })
-        .where((ProfileHistoryItem item) => item.title.isNotEmpty)
-        .toList(growable: false);
-  }
-
-  ComicCardData _parseSearchComic(Map<String, Object?> item) {
-    final Map<String, Object?> source =
-        _firstNonEmptyMap(item, <String>[
-          'comic',
-          'comic_info',
-          'cartoon',
-          'results',
-        ]).isNotEmpty
-        ? _firstNonEmptyMap(item, <String>[
-            'comic',
-            'comic_info',
-            'cartoon',
-            'results',
-          ])
-        : item;
-    final String pathWord = _pickString(source, <String>[
-      'path_word',
-      'pathWord',
-      'slug',
-    ]);
-    final String authorText = _searchAuthorLabel(source);
-    return ComicCardData(
-      title: _pickString(source, <String>['name', 'title']),
-      subtitle: authorText.isEmpty ? '作者：--' : '作者：$authorText',
-      secondaryText: _pickString(source, <String>[
-        'datetime_updated',
-        'status',
-        'brief',
-      ]),
-      coverUrl: _pickString(source, <String>['cover', 'cover_url', 'image']),
-      href: _buildComicHref(pathWord, source, item),
-    );
-  }
-
-  ChapterComment _parseChapterComment(Map<String, Object?> item) {
-    final Map<String, Object?> user = _firstNonEmptyMap(item, const <String>[
-      'user',
-      'member',
-      'author',
-    ]);
-    final int commentId = _pickInt(item, const <String>['id'], fallback: 0);
-    return ChapterComment(
-      id: commentId > 0
-          ? '$commentId'
-          : _pickString(item, const <String>['uuid', 'comment_id', 'roast_id']),
-      message: _pickString(item, const <String>[
-        'comment',
-        'roast',
-        'content',
-        'text',
-      ]),
-      avatarUrl:
-          _pickString(item, const <String>[
-            'user_avatar',
-            'avatar',
-            'avatar_url',
-          ]).isNotEmpty
-          ? _pickString(item, const <String>[
-              'user_avatar',
-              'avatar',
-              'avatar_url',
-            ])
-          : _pickString(user, const <String>[
-              'avatar',
-              'avatar_url',
-              'user_avatar',
-            ]),
-    );
-  }
-
-  List<Map<String, Object?>> _extractList(Object? source) {
-    if (source is List) {
-      return source.whereType<Map>().map(_asMap).toList(growable: false);
-    }
-    if (source is Map) {
-      final Map<String, Object?> map = _asMap(source);
-      for (final String key in <String>[
-        'list',
-        'items',
-        'comics',
-        'results',
-        'records',
-        'browse',
-        'browses',
-      ]) {
-        final Object? nested = map[key];
-        if (nested is List) {
-          return nested.whereType<Map>().map(_asMap).toList(growable: false);
-        }
-      }
-    }
-    return const <Map<String, Object?>>[];
-  }
-
-  Map<String, Object?> _firstNonEmptyMap(
-    Map<String, Object?> source,
-    List<String> keys,
-  ) {
-    for (final String key in keys) {
-      final Map<String, Object?> value = _asMap(source[key]);
-      if (value.isNotEmpty) {
-        return value;
-      }
-    }
-    return const <String, Object?>{};
-  }
-
-  String _buildComicHref(
-    String pathWord,
-    Map<String, Object?> primary,
-    Map<String, Object?> fallback,
-  ) {
-    if (pathWord.isNotEmpty) {
-      return AppConfig.resolvePath('/comic/$pathWord').toString();
-    }
-    final String directHref = _pickString(primary, <String>['href', 'url']);
-    if (directHref.isNotEmpty) {
-      return AppConfig.resolveNavigationUri(directHref).toString();
-    }
-    final String fallbackHref = _pickString(fallback, <String>['href', 'url']);
-    if (fallbackHref.isNotEmpty) {
-      return AppConfig.resolveNavigationUri(fallbackHref).toString();
-    }
-    return '';
-  }
-
-  String _buildChapterHref(String pathWord, String chapterUuid) {
-    if (pathWord.isEmpty || chapterUuid.isEmpty) {
-      return '';
-    }
-    return AppConfig.resolvePath(
-      '/comic/$pathWord/chapter/$chapterUuid',
-    ).toString();
-  }
-
-  String _searchAuthorLabel(Map<String, Object?> source) {
-    final Object? authorValue = source['author'];
-    if (authorValue is List) {
-      final List<String> labels = authorValue
-          .whereType<Map>()
-          .map(
-            (Map value) => _pickString(
-              value.map(
-                (Object? key, Object? nested) =>
-                    MapEntry(key.toString(), nested),
-              ),
-              const <String>['name', 'author_name', 'title'],
-            ),
-          )
-          .where((String value) => value.isNotEmpty)
-          .toList(growable: false);
-      if (labels.isNotEmpty) {
-        return labels.join(' / ');
-      }
-    }
-    return _pickString(source, const <String>['author_name', 'author']);
-  }
-
-  Map<String, Object?> _asMap(Object? value) {
-    if (value is Map<String, Object?>) {
-      return value;
-    }
-    if (value is Map) {
-      return value.map(
-        (Object? key, Object? nested) => MapEntry(key.toString(), nested),
-      );
-    }
-    return const <String, Object?>{};
-  }
-
-  String _pickString(Map<String, Object?> source, List<String> keys) {
-    for (final String key in keys) {
-      final Object? value = source[key];
-      if (value is String && value.trim().isNotEmpty) {
-        return value.trim();
-      }
-    }
-    return '';
-  }
-
-  String _pickFirstString(
-    List<Map<String, Object?>> sources,
-    List<String> keys,
-  ) {
-    for (final Map<String, Object?> source in sources) {
-      final String value = _pickString(source, keys);
-      if (value.isNotEmpty) {
-        return value;
-      }
-    }
-    return '';
-  }
-
-  int _pickInt(
-    Map<String, Object?> source,
-    List<String> keys, {
-    int fallback = 0,
-  }) {
-    for (final String key in keys) {
-      final Object? value = source[key];
-      if (value is num) {
-        return value.toInt();
-      }
-      if (value is String) {
-        final int? parsed = int.tryParse(value.trim());
-        if (parsed != null) {
-          return parsed;
-        }
-      }
-    }
-    return fallback;
-  }
-
-  bool _pickBool(Map<String, Object?> source, String key) {
-    final Object? value = source[key];
-    if (value is bool) {
-      return value;
-    }
-    if (value is num) {
-      return value != 0;
-    }
-    if (value is String) {
-      return value == '1' || value.toLowerCase() == 'true';
-    }
-    return false;
-  }
-
   Map<String, String> _buildRequestHeaders({
     bool includeAuth = false,
     String accept = 'application/json',
@@ -1258,10 +852,7 @@ class SiteApiClient {
         : sort;
   }
 
-  int _compareProfileLibraryItemByUpdatedAtDesc(
-    ProfileLibraryItem left,
-    ProfileLibraryItem right,
-  ) {
+  int _compareByUpdatedDesc(ProfileLibraryItem left, ProfileLibraryItem right) {
     final DateTime? leftUpdatedAt = _tryParseSortDateTime(left.updatedAt);
     final DateTime? rightUpdatedAt = _tryParseSortDateTime(right.updatedAt);
     if (leftUpdatedAt != null && rightUpdatedAt != null) {

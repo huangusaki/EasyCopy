@@ -1,7 +1,7 @@
-import 'package:easy_copy/config/app_config.dart';
-import 'package:easy_copy/models/page_models.dart';
+import 'package:reader/config/app_config.dart';
+import 'package:reader/models/page_models.dart';
 
-DiscoverPageData applyOptimisticDiscoverFilterSelection(
+DiscoverPageData applyDiscoverFilterSelection(
   DiscoverPageData page, {
   required Uri currentUri,
   required Uri targetUri,

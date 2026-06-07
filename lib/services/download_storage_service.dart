@@ -1,15 +1,15 @@
 import 'dart:io';
 
-import 'package:easy_copy/models/app_preferences.dart';
-import 'package:easy_copy/services/android_document_tree_bridge.dart';
-import 'package:easy_copy/services/app_preferences_controller.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:reader/models/app_preferences.dart';
+import 'package:reader/services/android_document_tree_bridge.dart';
+import 'package:reader/services/app_preferences_controller.dart';
 
 typedef DownloadPreferencesProvider = Future<DownloadPreferences> Function();
 typedef DownloadBaseDirectoryProvider = Future<Directory> Function();
 typedef DownloadBaseDirectoriesProvider = Future<List<Directory>?> Function();
-typedef DownloadExternalStorageDirectoriesProvider =
+typedef StorageDirsProvider =
     Future<List<Directory>?> Function(StorageDirectory? type);
 
 @immutable
@@ -65,9 +65,8 @@ class DownloadStorageService {
     DownloadPreferencesProvider? preferencesProvider,
     DownloadBaseDirectoryProvider? defaultBaseDirectoryProvider,
     DownloadBaseDirectoriesProvider? customBaseDirectoriesProvider,
-    DownloadExternalStorageDirectoriesProvider?
-    androidExternalStorageDirectoriesProvider,
-    DownloadBaseDirectoriesProvider? androidExternalCacheDirectoriesProvider,
+    StorageDirsProvider? storageDirsProvider,
+    DownloadBaseDirectoriesProvider? cacheDirsProvider,
     AndroidDocumentTreeBridge? documentTreeBridge,
   }) : _preferencesController =
            preferencesController ?? AppPreferencesController.instance,
@@ -75,19 +74,15 @@ class DownloadStorageService {
        _defaultBaseDirectoryProvider =
            defaultBaseDirectoryProvider ?? _defaultBaseDirectory,
        _customBaseDirectoriesProvider = customBaseDirectoriesProvider,
-       _androidExternalStorageDirectoriesProvider =
-           androidExternalStorageDirectoriesProvider ??
-           _defaultAndroidExternalStorageDirectories,
-       _androidExternalCacheDirectoriesProvider =
-           androidExternalCacheDirectoriesProvider ??
-           _defaultAndroidExternalCacheDirectories,
+       _storageDirsProvider = storageDirsProvider ?? _defaultStorageDirs,
+       _cacheDirsProvider = cacheDirsProvider ?? _defaultCacheDirs,
        _documentTreeBridge =
            documentTreeBridge ?? AndroidDocumentTreeBridge.instance,
-       _supportsCustomDirectorySelection =
+       _supportsCustomDirs =
            Platform.isAndroid ||
            customBaseDirectoriesProvider != null ||
-           androidExternalStorageDirectoriesProvider != null ||
-           androidExternalCacheDirectoriesProvider != null;
+           storageDirsProvider != null ||
+           cacheDirsProvider != null;
 
   static final DownloadStorageService instance = DownloadStorageService();
   static const String downloadsDirectoryName = 'EasyCopyDownloads';
@@ -96,15 +91,12 @@ class DownloadStorageService {
   final DownloadPreferencesProvider? _preferencesProvider;
   final DownloadBaseDirectoryProvider _defaultBaseDirectoryProvider;
   final DownloadBaseDirectoriesProvider? _customBaseDirectoriesProvider;
-  final DownloadExternalStorageDirectoriesProvider
-  _androidExternalStorageDirectoriesProvider;
-  final DownloadBaseDirectoriesProvider
-  _androidExternalCacheDirectoriesProvider;
+  final StorageDirsProvider _storageDirsProvider;
+  final DownloadBaseDirectoriesProvider _cacheDirsProvider;
   final AndroidDocumentTreeBridge _documentTreeBridge;
-  final bool _supportsCustomDirectorySelection;
+  final bool _supportsCustomDirs;
 
-  bool get supportsCustomDirectorySelection =>
-      _supportsCustomDirectorySelection;
+  bool get supportsCustomDirs => _supportsCustomDirs;
 
   Future<DownloadStorageState> resolveState({
     DownloadPreferences? preferences,
@@ -195,7 +187,7 @@ class DownloadStorageService {
   }
 
   Future<List<DownloadStorageState>> loadCustomDirectoryCandidates() async {
-    if (!supportsCustomDirectorySelection) {
+    if (!supportsCustomDirs) {
       return const <DownloadStorageState>[];
     }
 
@@ -364,15 +356,12 @@ class DownloadStorageService {
     if (customProvider != null) {
       return (await customProvider()) ?? const <Directory>[];
     }
-    if (!Platform.isAndroid &&
-        !_supportsCustomDirectorySelectionForInjectedAndroidProviders) {
+    if (!Platform.isAndroid && !_supportsInjectedAndroidPickers) {
       return const <Directory>[];
     }
     return _defaultCustomBaseDirectories(
-      externalStorageDirectoriesProvider:
-          _androidExternalStorageDirectoriesProvider,
-      externalCacheDirectoriesProvider:
-          _androidExternalCacheDirectoriesProvider,
+      storageDirsProvider: _storageDirsProvider,
+      cacheDirsProvider: _cacheDirsProvider,
     );
   }
 
@@ -422,16 +411,13 @@ class DownloadStorageService {
     return await getApplicationDocumentsDirectory();
   }
 
-  bool get _supportsCustomDirectorySelectionForInjectedAndroidProviders =>
-      _androidExternalStorageDirectoriesProvider !=
-          _defaultAndroidExternalStorageDirectories ||
-      _androidExternalCacheDirectoriesProvider !=
-          _defaultAndroidExternalCacheDirectories;
+  bool get _supportsInjectedAndroidPickers =>
+      _storageDirsProvider != _defaultStorageDirs ||
+      _cacheDirsProvider != _defaultCacheDirs;
 
   static Future<List<Directory>> _defaultCustomBaseDirectories({
-    required DownloadExternalStorageDirectoriesProvider
-    externalStorageDirectoriesProvider,
-    required DownloadBaseDirectoriesProvider externalCacheDirectoriesProvider,
+    required StorageDirsProvider storageDirsProvider,
+    required DownloadBaseDirectoriesProvider cacheDirsProvider,
   }) async {
     final Set<String> seenPaths = <String>{};
     final List<Directory> directories = <Directory>[];
@@ -446,8 +432,8 @@ class DownloadStorageService {
       }
     }
 
-    addAll(await externalStorageDirectoriesProvider(null));
-    addAll(await externalCacheDirectoriesProvider());
+    addAll(await storageDirsProvider(null));
+    addAll(await cacheDirsProvider());
     for (final StorageDirectory type in const <StorageDirectory>[
       StorageDirectory.downloads,
       StorageDirectory.documents,
@@ -455,18 +441,16 @@ class DownloadStorageService {
       StorageDirectory.movies,
       StorageDirectory.dcim,
     ]) {
-      addAll(await externalStorageDirectoriesProvider(type));
+      addAll(await storageDirsProvider(type));
     }
     return directories;
   }
 
-  static Future<List<Directory>?> _defaultAndroidExternalStorageDirectories(
-    StorageDirectory? type,
-  ) {
+  static Future<List<Directory>?> _defaultStorageDirs(StorageDirectory? type) {
     return getExternalStorageDirectories(type: type);
   }
 
-  static Future<List<Directory>?> _defaultAndroidExternalCacheDirectories() {
+  static Future<List<Directory>?> _defaultCacheDirs() {
     return getExternalCacheDirectories();
   }
 

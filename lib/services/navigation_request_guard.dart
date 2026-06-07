@@ -1,5 +1,5 @@
-import 'package:easy_copy/services/primary_tab_session_store.dart';
 import 'package:flutter/foundation.dart';
+import 'package:reader/services/primary_tab_session_store.dart';
 
 enum NavigationRequestSourceKind {
   navigation,

@@ -58,3 +58,4 @@ release/
 /android/app/debug
 /android/app/profile
 /android/app/release
+logs_anr_*/

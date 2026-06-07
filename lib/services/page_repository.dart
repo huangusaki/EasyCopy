@@ -1,16 +1,17 @@
+import 'dart:async';
 import 'dart:collection';
 
-import 'package:easy_copy/config/app_config.dart';
-import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/services/debug_trace.dart';
-import 'package:easy_copy/services/network_diagnostics.dart';
-import 'package:easy_copy/services/navigation_request_guard.dart';
-import 'package:easy_copy/services/page_cache_store.dart';
-import 'package:easy_copy/services/site_api_client.dart';
 import 'package:flutter/foundation.dart';
+import 'package:reader/config/app_config.dart';
+import 'package:reader/models/page_models.dart';
+import 'package:reader/services/debug_trace.dart';
+import 'package:reader/services/navigation_request_guard.dart';
+import 'package:reader/services/network_diagnostics.dart';
+import 'package:reader/services/page_cache_store.dart';
+import 'package:reader/services/site_api_client.dart';
 
 typedef StandardPageFreshLoader =
-    Future<EasyCopyPage> Function(
+    Future<SitePage> Function(
       Uri uri, {
       required String authScope,
       NavigationRequestContext? requestContext,
@@ -20,7 +21,7 @@ typedef ProfilePageFreshLoader =
     Future<ProfilePageData> Function(Uri uri, {required String authScope});
 
 typedef HtmlPageFreshLoader =
-    Future<EasyCopyPage> Function(Uri uri, {required String authScope});
+    Future<SitePage> Function(Uri uri, {required String authScope});
 
 @immutable
 class PageQueryKey {
@@ -58,13 +59,13 @@ class CachedPageHit {
   });
 
   final PageQueryKey key;
-  final EasyCopyPage page;
+  final SitePage page;
   final CachedPageEnvelope envelope;
   final bool fromMemory;
 
   CachedPageHit copyWith({
     PageQueryKey? key,
-    EasyCopyPage? page,
+    SitePage? page,
     CachedPageEnvelope? envelope,
     bool? fromMemory,
   }) {
@@ -108,8 +109,8 @@ class PageRepository {
 
   final LinkedHashMap<PageQueryKey, CachedPageHit> _memoryCache =
       LinkedHashMap<PageQueryKey, CachedPageHit>();
-  final Map<PageQueryKey, Future<EasyCopyPage>> _inFlightLoads =
-      <PageQueryKey, Future<EasyCopyPage>>{};
+  final Map<PageQueryKey, Future<SitePage>> _inFlightLoads =
+      <PageQueryKey, Future<SitePage>>{};
   final Map<PageQueryKey, Future<void>> _inFlightRevalidations =
       <PageQueryKey, Future<void>>{};
 
@@ -137,7 +138,7 @@ class PageRepository {
     return hit;
   }
 
-  Future<EasyCopyPage> loadFresh(
+  Future<SitePage> loadFresh(
     Uri uri, {
     required String authScope,
     NavigationRequestContext? requestContext,
@@ -147,12 +148,12 @@ class PageRepository {
       targetUri,
       authScope: authScope,
     );
-    final Future<EasyCopyPage>? existing = _inFlightLoads[requestedKey];
+    final Future<SitePage>? existing = _inFlightLoads[requestedKey];
     if (existing != null) {
       return existing;
     }
 
-    final Future<EasyCopyPage> future = _loadFreshInternal(
+    final Future<SitePage> future = _loadFreshInternal(
       targetUri,
       requestedKey: requestedKey,
       requestContext: requestContext,
@@ -162,7 +163,10 @@ class PageRepository {
     try {
       return await future;
     } finally {
-      _inFlightLoads.remove(requestedKey);
+      final Future<SitePage>? removed = _inFlightLoads.remove(requestedKey);
+      if (removed != null) {
+        unawaited(removed);
+      }
     }
   }
 
@@ -188,7 +192,10 @@ class PageRepository {
     try {
       await future;
     } finally {
-      _inFlightRevalidations.remove(key);
+      final Future<void>? removed = _inFlightRevalidations.remove(key);
+      if (removed != null) {
+        unawaited(removed);
+      }
     }
   }
 
@@ -207,7 +214,7 @@ class PageRepository {
   }
 
   Future<void> writeCachedPage(
-    EasyCopyPage page, {
+    SitePage page, {
     required String authScope,
   }) async {
     final Uri pageUri = AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
@@ -226,12 +233,12 @@ class PageRepository {
     _memoryCache.clear();
   }
 
-  Future<EasyCopyPage> _loadFreshInternal(
+  Future<SitePage> _loadFreshInternal(
     Uri uri, {
     required PageQueryKey requestedKey,
     NavigationRequestContext? requestContext,
   }) async {
-    final EasyCopyPage page = _isProfileUri(uri)
+    final SitePage page = _isProfileUri(uri)
         ? await _profilePageLoader(uri, authScope: requestedKey.authScope)
         : _isSearchUri(uri)
         ? await _apiClient.loadSearchResults(
@@ -277,7 +284,7 @@ class PageRepository {
     return page;
   }
 
-  Future<EasyCopyPage> _loadReaderPageWithFallback(
+  Future<SitePage> _loadReaderPageWithFallback(
     Uri uri, {
     required PageQueryKey requestedKey,
     NavigationRequestContext? requestContext,
@@ -286,15 +293,17 @@ class PageRepository {
       DebugTrace.log('reader.html_loader_start', <String, Object?>{
         'uri': uri.toString(),
       });
-      final EasyCopyPage page = await _htmlPageLoader(
+      final SitePage page = await _htmlPageLoader(
         uri,
         authScope: requestedKey.authScope,
       );
       if (page is ReaderPageData && page.imageUrls.isNotEmpty) {
-        NetworkDiagnostics.probeImageVariants(
-          page.imageUrls.first,
-          referer: page.uri,
-          label: 'reader.first_image',
+        unawaited(
+          NetworkDiagnostics.probeImageVariants(
+            page.imageUrls.first,
+            referer: page.uri,
+            label: 'reader.first_image',
+          ),
         );
       }
       return page;
@@ -307,16 +316,18 @@ class PageRepository {
         'Reader HTML loader failed for ${uri.path}; '
         'falling back to standard loader. $error',
       );
-      final EasyCopyPage page = await _standardPageLoader(
+      final SitePage page = await _standardPageLoader(
         uri,
         authScope: requestedKey.authScope,
         requestContext: requestContext,
       );
       if (page is ReaderPageData && page.imageUrls.isNotEmpty) {
-        NetworkDiagnostics.probeImageVariants(
-          page.imageUrls.first,
-          referer: page.uri,
-          label: 'reader.first_image_fallback',
+        unawaited(
+          NetworkDiagnostics.probeImageVariants(
+            page.imageUrls.first,
+            referer: page.uri,
+            label: 'reader.first_image_fallback',
+          ),
         );
       }
       return page;
@@ -339,7 +350,7 @@ class PageRepository {
     }
 
     // Use a single fresh request instead of probe + follow-up fetch.
-    final EasyCopyPage page = await loadFresh(
+    final SitePage page = await loadFresh(
       uri,
       authScope: key.authScope,
       requestContext: requestContext,
@@ -359,8 +370,7 @@ class PageRepository {
   }) {
     // Reader content is effectively immutable after publish; avoid reloading
     // large chapter payloads on soft-expiry and just refresh local validation.
-    return envelope.pageType == EasyCopyPageType.reader &&
-        _isReaderChapterUri(uri);
+    return envelope.pageType == SitePageType.reader && _isReaderChapterUri(uri);
   }
 
   void _refreshMemoryValidation(PageQueryKey key) {
@@ -416,14 +426,14 @@ class PageRepository {
         _isDetailUri(uri);
   }
 
-  String _authScopeForPage(EasyCopyPage page, String requestedAuthScope) {
+  String _authScopeForPage(SitePage page, String requestedAuthScope) {
     if (page is ProfilePageData && !page.isLoggedIn) {
       return 'guest';
     }
     return requestedAuthScope;
   }
 
-  String _fingerprintForPage(EasyCopyPage page) {
+  String _fingerprintForPage(SitePage page) {
     switch (page) {
       case HomePageData homePage:
         final List<ComicCardData> cards = homePage.sections

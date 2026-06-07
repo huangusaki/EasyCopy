@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:easy_copy/services/debug_trace.dart';
 import 'package:http/http.dart' as http;
+import 'package:reader/services/debug_trace.dart';
 
 class NetworkResponseBytes {
   const NetworkResponseBytes({
@@ -16,8 +16,8 @@ class NetworkResponseBytes {
   final List<int> bytes;
 }
 
-class EasyCopyNetworkClient {
-  EasyCopyNetworkClient._();
+class NetworkClient {
+  NetworkClient._();
 
   static const Duration apiTimeout = Duration(seconds: 10);
   static const Duration htmlTimeout = Duration(seconds: 12);

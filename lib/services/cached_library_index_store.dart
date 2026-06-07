@@ -4,16 +4,15 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 
-typedef CachedLibraryIndexDirectoryProvider = Future<Directory> Function();
+typedef IndexDirProvider = Future<Directory> Function();
 
 class CachedLibraryIndexStore {
-  CachedLibraryIndexStore({
-    CachedLibraryIndexDirectoryProvider? directoryProvider,
-  }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
+  CachedLibraryIndexStore({IndexDirProvider? directoryProvider})
+    : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
 
   static final CachedLibraryIndexStore instance = CachedLibraryIndexStore();
 
-  final CachedLibraryIndexDirectoryProvider _directoryProvider;
+  final IndexDirProvider _directoryProvider;
 
   Future<void>? _initialization;
   Directory? _directory;

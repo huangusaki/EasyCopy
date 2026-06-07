@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
-import 'package:easy_copy/services/key_value_store.dart';
+import 'package:reader/services/key_value_store.dart';
 
 typedef SessionNowProvider = DateTime Function();
 

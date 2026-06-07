@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:easy_copy/services/key_value_store.dart';
+import 'package:reader/services/key_value_store.dart';
 
 class SavedLoginCredentials {
   const SavedLoginCredentials({required this.username, required this.password});

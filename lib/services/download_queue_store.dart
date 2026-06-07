@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:easy_copy/models/page_models.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:reader/models/page_models.dart';
 
 enum DownloadQueueTaskStatus { queued, parsing, downloading, paused, failed }
 

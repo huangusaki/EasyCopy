@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:collection';
 
-import 'package:easy_copy/config/app_config.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:reader/config/app_config.dart';
 
-class EasyCopyImageCaches {
-  EasyCopyImageCaches._();
+class AppImageCaches {
+  AppImageCaches._();
 
   static const int _readerPrefetchLimit = 8;
   static const int _readerPrefetchConcurrency = 2;

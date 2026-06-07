@@ -1,6 +1,6 @@
-import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/services/host_manager.dart';
 import 'package:flutter/material.dart';
+import 'package:reader/models/page_models.dart';
+import 'package:reader/services/host_manager.dart';
 
 enum ProfileSubview { root, collections, history, cached }
 

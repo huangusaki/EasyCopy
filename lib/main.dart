@@ -1,8 +1,8 @@
-import 'package:easy_copy/easy_copy_app.dart';
-import 'package:easy_copy/services/app_preferences_controller.dart';
-import 'package:easy_copy/services/wallpaper_storage.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:reader/app.dart';
+import 'package:reader/services/app_preferences_controller.dart';
+import 'package:reader/services/wallpaper_storage.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -11,5 +11,5 @@ Future<void> main() async {
       AppPreferencesController.instance;
   await preferencesController.ensureInitialized();
   await WallpaperStorage.instance.ensureReady();
-  runApp(EasyCopyApp(preferencesController: preferencesController));
+  runApp(AppRoot(preferencesController: preferencesController));
 }

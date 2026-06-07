@@ -1,6 +1,6 @@
-import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/widgets/cover_image.dart';
 import 'package:flutter/material.dart';
+import 'package:reader/models/page_models.dart';
+import 'package:reader/widgets/cover_image.dart';
 
 const double _comicCoverAspectRatio = 0.72;
 const double _comicTitleHeight = 33.6;
@@ -174,7 +174,7 @@ class ComicCardTile extends StatelessWidget {
             child: Stack(
               children: <Widget>[
                 Positioned.fill(
-                  child: EasyCopyCoverImage(
+                  child: CoverImage(
                     imageUrl: item.coverUrl,
                     aspectRatio: _comicCoverAspectRatio,
                   ),

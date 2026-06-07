@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:easy_copy/config/app_config.dart';
-import 'package:easy_copy/models/app_preferences.dart';
-import 'package:easy_copy/services/app_preferences_store.dart';
 import 'package:flutter/foundation.dart';
+import 'package:reader/config/app_config.dart';
+import 'package:reader/models/app_preferences.dart';
+import 'package:reader/services/app_preferences_store.dart';
 
 class AppPreferencesController extends ChangeNotifier {
   AppPreferencesController({

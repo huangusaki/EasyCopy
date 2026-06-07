@@ -1,6 +1,6 @@
-import 'package:easy_copy/config/app_config.dart';
-import 'package:easy_copy/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:reader/config/app_config.dart';
+import 'package:reader/theme/app_theme.dart';
 
 enum AppThemePreference {
   system,

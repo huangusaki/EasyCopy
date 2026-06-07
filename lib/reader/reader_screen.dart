@@ -4,36 +4,40 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:easy_copy/models/app_preferences.dart';
-import 'package:easy_copy/models/chapter_comment.dart';
-import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/reader/internal/reader_comment_layout.dart';
-import 'package:easy_copy/reader/internal/reader_paged_scroll_physics.dart';
-import 'package:easy_copy/reader/reader_controller.dart';
-import 'package:easy_copy/reader/reader_image.dart';
-import 'package:easy_copy/reader/reader_pinch_zoom.dart';
-import 'package:easy_copy/reader/reader_progress_seek_bar.dart';
-import 'package:easy_copy/reader/reader_sheet_swipe_dismiss.dart';
-import 'package:easy_copy/reader/reader_status_label.dart';
-import 'package:easy_copy/services/app_preferences_controller.dart';
-import 'package:easy_copy/services/document_tree_image_provider.dart';
-import 'package:easy_copy/services/document_tree_relative_image_provider.dart';
-import 'package:easy_copy/services/image_cache.dart';
-import 'package:easy_copy/services/local_library_store.dart';
-import 'package:easy_copy/services/reader_comment_utils.dart';
-import 'package:easy_copy/services/reader_history_recorder.dart';
-import 'package:easy_copy/services/reader_platform_bridge.dart';
-import 'package:easy_copy/services/reader_progress_store.dart';
-import 'package:easy_copy/services/site_api_client.dart';
-import 'package:easy_copy/services/site_session.dart';
-import 'package:easy_copy/widgets/settings_ui.dart';
-import 'package:easy_copy/widgets/top_notice.dart';
 import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
+import 'package:reader/models/app_preferences.dart';
+import 'package:reader/models/chapter_comment.dart';
+import 'package:reader/models/page_models.dart';
+import 'package:reader/reader/internal/reader_comment_layout.dart';
+import 'package:reader/reader/internal/reader_paged_scroll_physics.dart';
+import 'package:reader/reader/reader_controller.dart';
+import 'package:reader/reader/reader_image.dart';
+import 'package:reader/reader/reader_pinch_zoom.dart';
+import 'package:reader/reader/reader_progress_seek_bar.dart';
+import 'package:reader/reader/reader_sheet_swipe_dismiss.dart';
+import 'package:reader/reader/reader_status_label.dart';
+import 'package:reader/services/app_preferences_controller.dart';
+import 'package:reader/services/document_tree_image_provider.dart';
+import 'package:reader/services/image_cache.dart';
+import 'package:reader/services/local_library_store.dart';
+import 'package:reader/services/reader_comment_utils.dart';
+import 'package:reader/services/reader_history_recorder.dart';
+import 'package:reader/services/reader_platform_bridge.dart';
+import 'package:reader/services/reader_progress_store.dart';
+import 'package:reader/services/site_api_client.dart';
+import 'package:reader/services/site_session.dart';
+import 'package:reader/services/tree_image_provider.dart';
+import 'package:reader/widgets/settings_ui.dart';
+import 'package:reader/widgets/top_notice.dart';
+
+part 'reader_screen/chapter_boundary.dart';
+part 'reader_screen/comment_cloud.dart';
+part 'reader_screen/settings_sheet.dart';
 
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
-const double _readerUiToggleHorizontalInsetRatio = 0.075;
-const double _readerSettingsSwipeDismissDistance = 72;
+const double _uiToggleInsetRatio = 0.075;
+const double _settingsDismissDistance = 72;
 
 class ReaderScreen extends StatefulWidget {
   const ReaderScreen({
@@ -119,8 +123,7 @@ class ReaderScreenState extends State<ReaderScreen> {
     final double viewportHeight = renderBox != null && renderBox.hasSize
         ? renderBox.size.height
         : details.localPosition.dy * 2;
-    final double uiToggleInsetWidth =
-        viewportWidth * _readerUiToggleHorizontalInsetRatio;
+    final double uiToggleInsetWidth = viewportWidth * _uiToggleInsetRatio;
     final double dx = details.localPosition.dx;
     if (dx <= uiToggleInsetWidth || dx >= viewportWidth - uiToggleInsetWidth) {
       return;
@@ -147,360 +150,6 @@ class ReaderScreenState extends State<ReaderScreen> {
       builder: _buildReaderSettingsSheet,
     );
     _controller.setSettingsSheetOpen(false);
-  }
-
-  Widget _buildReaderSettingsSheet(BuildContext context) {
-    final double maxHeight = MediaQuery.sizeOf(context).height * 0.78;
-    final AppPreferencesController preferencesController =
-        _controller.preferencesController;
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: ColoredBox(
-          color: colorScheme.surface.withValues(alpha: 0.78),
-          child: AnimatedBuilder(
-            animation: preferencesController,
-            builder: (BuildContext context, Widget? _) {
-              final ReaderPreferences preferences = _controller.preferences;
-              return ReaderSheetSwipeDismissRegion(
-                dismissDistance: _readerSettingsSwipeDismissDistance,
-                onDismiss: () => Navigator.of(context).maybePop(),
-                child: SafeArea(
-                  child: SizedBox(
-                    key: const ValueKey<String>('reader-settings-sheet'),
-                    height: maxHeight,
-                    child: Column(
-                      children: <Widget>[
-                        Padding(
-                          padding: const EdgeInsets.only(top: 10, bottom: 4),
-                          child: Center(
-                            child: Container(
-                              width: 32,
-                              height: 4,
-                              decoration: BoxDecoration(
-                                color: colorScheme.onSurface.withValues(
-                                  alpha: 0.32,
-                                ),
-                                borderRadius: BorderRadius.circular(2),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                            child: ListView(
-                              children: <Widget>[
-                                SettingsSection(
-                                  children: <Widget>[
-                                    SettingsSelectRow<ReaderScreenOrientation>(
-                                      label: '屏幕方向',
-                                      value: preferences.screenOrientation,
-                                      items: ReaderScreenOrientation.values
-                                          .map((ReaderScreenOrientation value) {
-                                            return DropdownMenuItem<
-                                              ReaderScreenOrientation
-                                            >(
-                                              value: value,
-                                              child: Text(
-                                                value ==
-                                                        ReaderScreenOrientation
-                                                            .portrait
-                                                    ? '竖屏'
-                                                    : '横屏',
-                                              ),
-                                            );
-                                          })
-                                          .toList(growable: false),
-                                      onChanged:
-                                          (ReaderScreenOrientation? value) {
-                                            if (value == null) return;
-                                            unawaited(
-                                              preferencesController
-                                                  .updateReaderPreferences(
-                                                    (
-                                                      ReaderPreferences current,
-                                                    ) => current.copyWith(
-                                                      screenOrientation: value,
-                                                    ),
-                                                  ),
-                                            );
-                                          },
-                                    ),
-                                    SettingsSelectRow<ReaderReadingDirection>(
-                                      label: '阅读方向',
-                                      value: preferences.readingDirection,
-                                      items: ReaderReadingDirection.values
-                                          .map((ReaderReadingDirection value) {
-                                            return DropdownMenuItem<
-                                              ReaderReadingDirection
-                                            >(
-                                              value: value,
-                                              child: Text(switch (value) {
-                                                ReaderReadingDirection
-                                                    .topToBottom =>
-                                                  '从上到下',
-                                                ReaderReadingDirection
-                                                    .leftToRight =>
-                                                  '从左到右',
-                                                ReaderReadingDirection
-                                                    .rightToLeft =>
-                                                  '从右到左',
-                                              }),
-                                            );
-                                          })
-                                          .toList(growable: false),
-                                      onChanged:
-                                          (ReaderReadingDirection? value) {
-                                            if (value == null) return;
-                                            unawaited(
-                                              preferencesController
-                                                  .updateReaderPreferences(
-                                                    (
-                                                      ReaderPreferences current,
-                                                    ) => current.copyWith(
-                                                      readingDirection: value,
-                                                    ),
-                                                  ),
-                                            );
-                                          },
-                                    ),
-                                    SettingsSelectRow<ReaderPageFit>(
-                                      label: '页面缩放',
-                                      value: preferences.pageFit,
-                                      items: ReaderPageFit.values
-                                          .map((ReaderPageFit value) {
-                                            return DropdownMenuItem<
-                                              ReaderPageFit
-                                            >(
-                                              value: value,
-                                              child: Text(
-                                                value == ReaderPageFit.fitWidth
-                                                    ? '匹配宽度'
-                                                    : '适应屏幕',
-                                              ),
-                                            );
-                                          })
-                                          .toList(growable: false),
-                                      onChanged: (ReaderPageFit? value) {
-                                        if (value == null) return;
-                                        unawaited(
-                                          preferencesController
-                                              .updateReaderPreferences(
-                                                (ReaderPreferences current) =>
-                                                    current.copyWith(
-                                                      pageFit: value,
-                                                    ),
-                                              ),
-                                        );
-                                      },
-                                    ),
-                                    SettingsSelectRow<ReaderOpeningPosition>(
-                                      label: '开页位置',
-                                      value: preferences.openingPosition,
-                                      items: ReaderOpeningPosition.values
-                                          .map((ReaderOpeningPosition value) {
-                                            return DropdownMenuItem<
-                                              ReaderOpeningPosition
-                                            >(
-                                              value: value,
-                                              child: Text(
-                                                value ==
-                                                        ReaderOpeningPosition
-                                                            .top
-                                                    ? '顶部'
-                                                    : '中心',
-                                              ),
-                                            );
-                                          })
-                                          .toList(growable: false),
-                                      onChanged:
-                                          (ReaderOpeningPosition? value) {
-                                            if (value == null) return;
-                                            unawaited(
-                                              preferencesController
-                                                  .updateReaderPreferences(
-                                                    (
-                                                      ReaderPreferences current,
-                                                    ) => current.copyWith(
-                                                      openingPosition: value,
-                                                    ),
-                                                  ),
-                                            );
-                                          },
-                                    ),
-                                    SettingsSliderRow(
-                                      label:
-                                          '自动翻页(${preferences.autoPageTurnSeconds}秒)',
-                                      value: preferences.autoPageTurnSeconds
-                                          .toDouble(),
-                                      max: 10,
-                                      divisions: 10,
-                                      onChanged: (double value) {
-                                        unawaited(
-                                          preferencesController
-                                              .updateReaderPreferences(
-                                                (ReaderPreferences current) =>
-                                                    current.copyWith(
-                                                      autoPageTurnSeconds: value
-                                                          .round(),
-                                                    ),
-                                              ),
-                                        );
-                                      },
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 16),
-                                SettingsSection(
-                                  children: <Widget>[
-                                    SettingsSwitchRow(
-                                      label: '显示评论页',
-                                      value: preferences.showChapterComments,
-                                      onChanged: (bool value) {
-                                        unawaited(
-                                          preferencesController
-                                              .updateReaderPreferences(
-                                                (ReaderPreferences current) =>
-                                                    current.copyWith(
-                                                      showChapterComments:
-                                                          value,
-                                                    ),
-                                              ),
-                                        );
-                                      },
-                                    ),
-                                    SettingsSwitchRow(
-                                      label: '屏幕常亮',
-                                      value: preferences.keepScreenOn,
-                                      onChanged: (bool value) {
-                                        unawaited(
-                                          preferencesController
-                                              .updateReaderPreferences(
-                                                (ReaderPreferences current) =>
-                                                    current.copyWith(
-                                                      keepScreenOn: value,
-                                                    ),
-                                              ),
-                                        );
-                                      },
-                                    ),
-                                    SettingsSwitchRow(
-                                      label: '显示时钟',
-                                      value: preferences.showClock,
-                                      onChanged: (bool value) {
-                                        unawaited(
-                                          preferencesController
-                                              .updateReaderPreferences(
-                                                (ReaderPreferences current) =>
-                                                    current.copyWith(
-                                                      showClock: value,
-                                                    ),
-                                              ),
-                                        );
-                                      },
-                                    ),
-                                    SettingsSwitchRow(
-                                      label: '显示进度',
-                                      value: preferences.showProgress,
-                                      onChanged: (bool value) {
-                                        unawaited(
-                                          preferencesController
-                                              .updateReaderPreferences(
-                                                (ReaderPreferences current) =>
-                                                    current.copyWith(
-                                                      showProgress: value,
-                                                    ),
-                                              ),
-                                        );
-                                      },
-                                    ),
-                                    if (_controller
-                                        .platformBridge
-                                        .isAndroidSupported)
-                                      SettingsSwitchRow(
-                                        label: '显示电量',
-                                        value: preferences.showBattery,
-                                        onChanged: (bool value) {
-                                          unawaited(
-                                            preferencesController
-                                                .updateReaderPreferences(
-                                                  (ReaderPreferences current) =>
-                                                      current.copyWith(
-                                                        showBattery: value,
-                                                      ),
-                                                ),
-                                          );
-                                        },
-                                      ),
-                                    SettingsSwitchRow(
-                                      label: '显示页面间隔',
-                                      value: preferences.showPageGap,
-                                      onChanged: (bool value) {
-                                        unawaited(
-                                          preferencesController
-                                              .updateReaderPreferences(
-                                                (ReaderPreferences current) =>
-                                                    current.copyWith(
-                                                      showPageGap: value,
-                                                    ),
-                                              ),
-                                        );
-                                      },
-                                    ),
-                                    if (_controller
-                                        .platformBridge
-                                        .isAndroidSupported)
-                                      SettingsSwitchRow(
-                                        label: '使用音量键翻页',
-                                        value:
-                                            preferences.useVolumeKeysForPaging,
-                                        onChanged: (bool value) {
-                                          unawaited(
-                                            preferencesController
-                                                .updateReaderPreferences(
-                                                  (ReaderPreferences current) =>
-                                                      current.copyWith(
-                                                        useVolumeKeysForPaging:
-                                                            value,
-                                                      ),
-                                                ),
-                                          );
-                                        },
-                                      ),
-                                    SettingsSwitchRow(
-                                      label: '全屏',
-                                      value: preferences.fullscreen,
-                                      onChanged: (bool value) {
-                                        unawaited(
-                                          preferencesController
-                                              .updateReaderPreferences(
-                                                (ReaderPreferences current) =>
-                                                    current.copyWith(
-                                                      fullscreen: value,
-                                                    ),
-                                              ),
-                                        );
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _buildReaderOverlay(BuildContext context, ReaderPageData page) {
@@ -544,7 +193,7 @@ class ReaderScreenState extends State<ReaderScreen> {
               ),
             ),
           if (page.nextHref.trim().isNotEmpty)
-            _buildReaderNextChapterCueOverlay(context, page),
+            _buildNextChapterCue(context, page),
         ],
       ),
     );
@@ -664,7 +313,7 @@ class ReaderScreenState extends State<ReaderScreen> {
   ) {
     if (_controller.isZoomGestureLocked || page.imageUrls.isEmpty) return;
     final int clampedIndex = imageIndex.clamp(0, page.imageUrls.length - 1);
-    final double estimatedOffset = _estimateReaderScrollOffsetForImageIndex(
+    final double estimatedOffset = _estimateOffsetForImage(
       context,
       page,
       clampedIndex,
@@ -676,7 +325,7 @@ class ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  double _estimateReaderScrollOffsetForImageIndex(
+  double _estimateOffsetForImage(
     BuildContext context,
     ReaderPageData page,
     int imageIndex,
@@ -707,7 +356,7 @@ class ReaderScreenState extends State<ReaderScreen> {
     return offset;
   }
 
-  Widget _buildReaderChapterControlsOverlay(
+  Widget _buildChapterControlsOverlay(
     BuildContext context,
     ReaderPageData page,
   ) {
@@ -754,9 +403,9 @@ class ReaderScreenState extends State<ReaderScreen> {
         : const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics());
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
-        _handleReaderScrollLifecycleNotification(notification);
+        _handleScrollLifecycle(notification);
         if (!_controller.isZoomGestureLocked) {
-          _controller.handleChapterPullScrollNotification(
+          _controller.handleChapterPull(
             notification,
             page: page,
             controller: _controller.scrollController,
@@ -817,14 +466,14 @@ class ReaderScreenState extends State<ReaderScreen> {
           );
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
-        _handleReaderScrollLifecycleNotification(notification);
+        _handleScrollLifecycle(notification);
         final bool isLastReaderPage =
             _controller.currentPageIndex >=
             _controller.readerPagedPageCount(page) - 1;
         if (!_controller.isZoomGestureLocked &&
             isLastReaderPage &&
             hasNextChapter) {
-          _controller.handleChapterPullScrollNotification(
+          _controller.handleChapterPull(
             notification,
             page: page,
             controller: _controller.pageController,
@@ -872,7 +521,7 @@ class ReaderScreenState extends State<ReaderScreen> {
                   ? pageBody
                   : NotificationListener<ScrollNotification>(
                       onNotification: (ScrollNotification notification) {
-                        _handleReaderScrollLifecycleNotification(notification);
+                        _handleScrollLifecycle(notification);
                         if (_isUserDrivenScrollNotification(notification)) {
                           _controller.noteUserInteraction();
                         }
@@ -917,20 +566,19 @@ class ReaderScreenState extends State<ReaderScreen> {
     final bool isDocumentTreeFile =
         parsedUri != null && parsedUri.scheme == 'content';
     final bool isDocumentTreeRelativeFile =
-        parsedUri != null &&
-        parsedUri.scheme == documentTreeRelativeImageScheme;
+        parsedUri != null && parsedUri.scheme == treeImageScheme;
     final ImageProvider<Object> imageProvider;
     if (isLocalFile) {
       imageProvider = FileImage(File.fromUri(parsedUri));
     } else if (isDocumentTreeRelativeFile) {
-      imageProvider = DocumentTreeRelativeImageProvider.fromUri(parsedUri);
+      imageProvider = TreeImageProvider.fromUri(parsedUri);
     } else if (isDocumentTreeFile) {
       imageProvider = DocumentTreeImageProvider(imageUrl);
     } else {
       imageProvider = CachedNetworkImageProvider(
         imageUrl,
-        cacheManager: EasyCopyImageCaches.readerCache,
-        headers: EasyCopyImageCaches.readerImageHeaders(page.uri),
+        cacheManager: AppImageCaches.readerCache,
+        headers: AppImageCaches.readerImageHeaders(page.uri),
       );
     }
     return ColoredBox(
@@ -1048,717 +696,6 @@ class ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  Widget _buildReaderCommentComposer(
-    BuildContext context,
-    ReaderPageData page,
-  ) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final SiteSession session = _controller.session;
-    final bool isAuthenticated =
-        session.isAuthenticated && (session.token ?? '').isNotEmpty;
-    final Widget actionButton = isAuthenticated
-        ? FilledButton(
-            onPressed: _controller.isCommentSubmitting
-                ? null
-                : () => unawaited(_controller.submitComment(page)),
-            style: FilledButton.styleFrom(
-              minimumSize: const Size(0, 32),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: Text(_controller.isCommentSubmitting ? '发送中' : '发送'),
-          )
-        : TextButton(
-            onPressed: () => unawaited(widget.onRequestAuth()),
-            style: TextButton.styleFrom(
-              minimumSize: const Size(0, 32),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: const Text('登录'),
-          );
-    return Stack(
-      alignment: Alignment.bottomRight,
-      children: <Widget>[
-        TextField(
-          controller: _controller.commentController,
-          enabled: !_controller.isCommentSubmitting,
-          readOnly: !isAuthenticated,
-          onTap: !isAuthenticated
-              ? () => unawaited(widget.onRequestAuth())
-              : null,
-          maxLines: 3,
-          minLines: 2,
-          textInputAction: TextInputAction.newline,
-          decoration: InputDecoration(
-            hintText: isAuthenticated ? '说点什么...' : '登录后评论',
-            filled: true,
-            fillColor: colorScheme.surface,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: colorScheme.outlineVariant),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: colorScheme.outlineVariant),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide(color: colorScheme.primary, width: 1.2),
-            ),
-            contentPadding: const EdgeInsets.fromLTRB(12, 10, 90, 12),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(right: 8, bottom: 8),
-          child: actionButton,
-        ),
-      ],
-    );
-  }
-
-  void _handleReaderCommentCloudDragUpdate(DragUpdateDetails details) {
-    final double? primaryDelta = details.primaryDelta;
-    if (primaryDelta == null ||
-        !_controller.commentScrollController.hasClients) {
-      return;
-    }
-    final ScrollPosition position =
-        _controller.commentScrollController.position;
-    final double nextOffset = (position.pixels - primaryDelta)
-        .clamp(0.0, position.maxScrollExtent)
-        .toDouble();
-    if ((nextOffset - position.pixels).abs() < 0.5) return;
-    _controller.commentScrollController.jumpTo(nextOffset);
-  }
-
-  void _handleReaderCommentCloudDragEnd(DragEndDetails details) {
-    if (!_controller.commentScrollController.hasClients) return;
-    final double velocity = -(details.primaryVelocity ?? 0);
-    if (velocity.abs() < 90) return;
-    final ScrollPosition position =
-        _controller.commentScrollController.position;
-    if (position.maxScrollExtent <= 0) return;
-    final double targetOffset = (position.pixels + (velocity * 0.18))
-        .clamp(0.0, position.maxScrollExtent)
-        .toDouble();
-    if ((targetOffset - position.pixels).abs() < 1) return;
-    unawaited(
-      _controller.commentScrollController.animateTo(
-        targetOffset,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      ),
-    );
-  }
-
-  Widget _buildReaderCommentScrollStrip({required bool enabled}) {
-    if (!enabled) return const SizedBox.shrink();
-    return Align(
-      alignment: Alignment.center,
-      child: FractionallySizedBox(
-        widthFactor: 0.3,
-        heightFactor: 1,
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onVerticalDragUpdate: _handleReaderCommentCloudDragUpdate,
-          onVerticalDragEnd: _handleReaderCommentCloudDragEnd,
-          child: const SizedBox.expand(),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildReaderCommentCloud(
-    BuildContext context,
-    ReaderPageData page, {
-    required List<ChapterComment> comments,
-  }) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    if (_controller.isCommentsLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_controller.commentsError.isNotEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(
-              _controller.commentsError,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface.withValues(alpha: 0.78),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: () => unawaited(_controller.loadComments(page)),
-              child: const Text('重试'),
-            ),
-          ],
-        ),
-      );
-    }
-    if (comments.isEmpty) {
-      return Center(
-        child: Text(
-          '暂无评论',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: colorScheme.onSurface.withValues(alpha: 0.72),
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      );
-    }
-    final List<ReaderCommentCluster> clusters = buildReaderCommentClusters(
-      comments,
-    );
-    if (clusters.isEmpty) {
-      return Center(
-        child: Text(
-          '暂无评论',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: colorScheme.onSurface.withValues(alpha: 0.72),
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      );
-    }
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        final ReaderCommentCloudLayout layout = _buildReaderCommentCloudLayout(
-          context,
-          clusters,
-          maxWidth: constraints.maxWidth,
-        );
-        final double contentHeight = layout.height + 8;
-        final double maxViewportHeight = constraints.hasBoundedHeight
-            ? constraints.maxHeight
-            : contentHeight;
-        final double viewportHeight = math.min(
-          contentHeight,
-          maxViewportHeight,
-        );
-        final bool canScroll = contentHeight > viewportHeight + 0.5;
-        final Widget cloud = Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: SizedBox(
-            width: constraints.maxWidth,
-            height: layout.height,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: layout.placements
-                  .map(
-                    (ReaderCommentBubblePlacement placement) => Positioned(
-                      left: placement.left,
-                      top: placement.top,
-                      child: _buildReaderCommentBubble(
-                        context,
-                        clusters[placement.index],
-                        index: placement.index,
-                        width: placement.width,
-                      ),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
-          ),
-        );
-        return SizedBox(
-          height: viewportHeight,
-          child: ClipRect(
-            child: Stack(
-              children: <Widget>[
-                IgnorePointer(
-                  ignoring: true,
-                  child: SingleChildScrollView(
-                    controller: _controller.commentScrollController,
-                    physics: const NeverScrollableScrollPhysics(),
-                    child: cloud,
-                  ),
-                ),
-                _buildReaderCommentScrollStrip(enabled: canScroll),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  ReaderCommentCloudLayout _buildReaderCommentCloudLayout(
-    BuildContext context,
-    List<ReaderCommentCluster> clusters, {
-    required double maxWidth,
-  }) {
-    final double availableWidth = maxWidth
-        .clamp(120.0, double.infinity)
-        .toDouble();
-    const double slotWidth = 6;
-    const double runSpacing = 6;
-    final double maxBubbleWidth = availableWidth >= 420
-        ? availableWidth * 0.72
-        : availableWidth * 0.92;
-    final double minBubbleWidth = math.min(
-      maxBubbleWidth,
-      availableWidth >= 420 ? 72 : 56,
-    );
-    final int slotCount = math.max(1, (availableWidth / slotWidth).floor());
-    final List<double> skyline = List<double>.filled(slotCount, 0);
-    final List<ReaderCommentBubblePlacement> placements =
-        <ReaderCommentBubblePlacement>[];
-    for (int index = 0; index < clusters.length; index++) {
-      final ReaderCommentBubbleMetrics metrics = _measureReaderCommentBubble(
-        context,
-        clusters[index],
-        minBubbleWidth: minBubbleWidth,
-        maxBubbleWidth: maxBubbleWidth,
-      );
-      final int span = math.max(
-        1,
-        math.min(slotCount, (metrics.width / slotWidth).ceil()),
-      );
-      int bestStart = 0;
-      double bestTop = double.infinity;
-      for (int start = 0; start <= slotCount - span; start++) {
-        double top = 0;
-        for (int offset = 0; offset < span; offset++) {
-          top = math.max(top, skyline[start + offset]);
-        }
-        if (top < bestTop - 0.5 ||
-            ((top - bestTop).abs() < 0.5 && start < bestStart)) {
-          bestTop = top;
-          bestStart = start;
-        }
-      }
-      final double left = bestStart * slotWidth;
-      placements.add(
-        ReaderCommentBubblePlacement(
-          index: index,
-          left: left,
-          top: bestTop,
-          width: metrics.width,
-        ),
-      );
-      final double nextHeight = bestTop + metrics.height + runSpacing;
-      for (int offset = 0; offset < span; offset++) {
-        skyline[bestStart + offset] = nextHeight;
-      }
-    }
-    final double contentHeight = placements.isEmpty
-        ? 0
-        : math.max(0, skyline.reduce(math.max) - runSpacing).toDouble();
-    return ReaderCommentCloudLayout(
-      height: contentHeight,
-      placements: placements,
-    );
-  }
-
-  ReaderCommentBubbleMetrics _measureReaderCommentBubble(
-    BuildContext context,
-    ReaderCommentCluster cluster, {
-    required double minBubbleWidth,
-    required double maxBubbleWidth,
-  }) {
-    const double horizontalPadding = 12;
-    const double verticalPadding = 10;
-    const double avatarGap = 5;
-    final double avatarWidth = _readerCommentAvatarStackWidth(cluster.count);
-    final TextScaler textScaler = MediaQuery.textScalerOf(context);
-    final InlineSpan textSpan = TextSpan(
-      style: const TextStyle(
-        fontSize: 12,
-        fontWeight: FontWeight.w700,
-        height: 1.25,
-      ),
-      text: cluster.message,
-    );
-    final TextPainter naturalPainter = TextPainter(
-      text: textSpan,
-      textDirection: Directionality.of(context),
-      textScaler: textScaler,
-    )..layout();
-    final double bubbleWidth =
-        (naturalPainter.width + horizontalPadding + avatarWidth + avatarGap)
-            .clamp(minBubbleWidth, maxBubbleWidth)
-            .toDouble();
-    final TextPainter painter =
-        TextPainter(
-          text: textSpan,
-          textDirection: Directionality.of(context),
-          textScaler: textScaler,
-        )..layout(
-          maxWidth: math.max(
-            18,
-            bubbleWidth - horizontalPadding - avatarWidth - avatarGap,
-          ),
-        );
-    final double contentHeight = math.max(22, painter.height);
-    return ReaderCommentBubbleMetrics(
-      width: bubbleWidth,
-      height: contentHeight + verticalPadding,
-    );
-  }
-
-  Widget _buildReaderCommentBubble(
-    BuildContext context,
-    ReaderCommentCluster cluster, {
-    required int index,
-    required double width,
-  }) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final List<Color> bubbleColors = <Color>[
-      colorScheme.secondaryContainer.withValues(alpha: 0.96),
-      colorScheme.tertiaryContainer.withValues(alpha: 0.96),
-      colorScheme.primaryContainer.withValues(alpha: 0.94),
-      colorScheme.surfaceContainerHigh.withValues(alpha: 0.98),
-    ];
-    final Color backgroundColor = bubbleColors[index % bubbleColors.length];
-    final Color foregroundColor =
-        ThemeData.estimateBrightnessForColor(backgroundColor) == Brightness.dark
-        ? Colors.white
-        : colorScheme.onSurface;
-    final TextStyle messageStyle = TextStyle(
-      color: foregroundColor,
-      fontSize: 12,
-      fontWeight: FontWeight.w700,
-      height: 1.25,
-    );
-    return SizedBox(
-      width: width,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: foregroundColor.withValues(alpha: 0.06)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(6, 5, 6, 5),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              _buildReaderCommentAvatarStack(cluster, foregroundColor),
-              const SizedBox(width: 5),
-              Flexible(
-                child: RichText(
-                  textScaler: MediaQuery.textScalerOf(context),
-                  text: TextSpan(style: messageStyle, text: cluster.message),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  double _readerCommentAvatarStackWidth(int count) {
-    const double avatarSize = 22;
-    const double overlap = 8;
-    final int visibleCount = math.max(1, math.min(3, count));
-    return avatarSize + (visibleCount - 1) * (avatarSize - overlap);
-  }
-
-  Widget _buildReaderCommentAvatarStack(
-    ReaderCommentCluster cluster,
-    Color foregroundColor,
-  ) {
-    const double avatarSize = 22;
-    const double overlap = 8;
-    final int visibleCount = math.max(1, math.min(3, cluster.count));
-    final double step = avatarSize - overlap;
-    return SizedBox(
-      width: _readerCommentAvatarStackWidth(cluster.count),
-      height: avatarSize,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: List<Widget>.generate(visibleCount, (int index) {
-          final bool isOverflowAvatar =
-              cluster.hasOverflowAvatars && index == visibleCount - 1;
-          final String avatarUrl = index < cluster.avatarUrls.length
-              ? cluster.avatarUrls[index]
-              : '';
-          return Positioned(
-            left: index * step,
-            top: 0,
-            child: SizedBox(
-              width: avatarSize,
-              height: avatarSize,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: foregroundColor.withValues(alpha: 0.18),
-                    width: 1,
-                  ),
-                ),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: <Widget>[
-                    _buildReaderCommentAvatar(avatarUrl),
-                    if (isOverflowAvatar)
-                      ClipOval(
-                        child: ColoredBox(
-                          color: Colors.black.withValues(alpha: 0.54),
-                          child: const Center(
-                            child: Text(
-                              '...',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w900,
-                                height: 1,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        }),
-      ),
-    );
-  }
-
-  Widget _buildReaderCommentAvatar(String avatarUrl) {
-    if (avatarUrl.trim().isEmpty) {
-      return const CircleAvatar(
-        radius: 11,
-        child: Icon(Icons.person_rounded, size: 13),
-      );
-    }
-    return ClipOval(
-      child: CachedNetworkImage(
-        imageUrl: avatarUrl,
-        width: 22,
-        height: 22,
-        fit: BoxFit.cover,
-        cacheManager: EasyCopyImageCaches.readerCache,
-        errorWidget: (BuildContext context, String url, Object error) {
-          return const CircleAvatar(
-            radius: 11,
-            child: Icon(Icons.person_rounded, size: 13),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildReaderNextChapterFooter(
-    BuildContext context,
-    ReaderPageData page,
-  ) {
-    return SizedBox(
-      height: _controller.preferences.isPaged ? 72 : 80,
-      child: Center(
-        child: _buildReaderChapterBoundaryCue(
-          context,
-          isPrevious: false,
-          compact: false,
-          forceVisible: true,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildReaderNextChapterCueOverlay(
-    BuildContext context,
-    ReaderPageData page,
-  ) {
-    final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
-    final bool showPreviousCue =
-        _controller.previousChapterPullDistance > 0 ||
-        (_controller.isNextChapterLoading &&
-            _controller.previousChapterPullDistance > 0);
-    final bool showNextCue =
-        _controller.nextChapterPullDistance > 0 ||
-        (_controller.isNextChapterLoading &&
-            _controller.nextChapterPullDistance > 0);
-    return Positioned.fill(
-      child: Stack(
-        children: <Widget>[
-          if (showPreviousCue)
-            _buildReaderChapterBoundaryCueOverlayEntry(
-              context,
-              isPrevious: true,
-              forceVisible: showPreviousCue,
-              viewPadding: viewPadding,
-            ),
-          if (showNextCue)
-            _buildReaderChapterBoundaryCueOverlayEntry(
-              context,
-              isPrevious: false,
-              forceVisible: showNextCue,
-              viewPadding: viewPadding,
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildReaderChapterBoundaryCueOverlayEntry(
-    BuildContext context, {
-    required bool isPrevious,
-    required bool forceVisible,
-    required EdgeInsets viewPadding,
-  }) {
-    final ReaderPreferences preferences = _controller.preferences;
-    final Alignment alignment;
-    final EdgeInsets padding;
-    if (preferences.isPaged) {
-      final bool nextOnRight =
-          preferences.readingDirection == ReaderReadingDirection.rightToLeft;
-      final bool placeOnRight = isPrevious ? !nextOnRight : nextOnRight;
-      alignment = placeOnRight ? Alignment.centerRight : Alignment.centerLeft;
-      padding = EdgeInsets.only(
-        left: placeOnRight ? 0 : viewPadding.left + 14,
-        right: placeOnRight ? viewPadding.right + 14 : 0,
-      );
-    } else {
-      alignment = isPrevious ? Alignment.topCenter : Alignment.bottomCenter;
-      padding = EdgeInsets.only(
-        top: isPrevious ? viewPadding.top + 18 : 0,
-        bottom: isPrevious
-            ? 0
-            : (viewPadding.bottom > 0 ? viewPadding.bottom : 0) + 18,
-      );
-    }
-    return Align(
-      alignment: alignment,
-      child: Padding(
-        padding: padding,
-        child: _buildReaderChapterBoundaryCue(
-          context,
-          isPrevious: isPrevious,
-          compact: true,
-          forceVisible: forceVisible,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildReaderChapterBoundaryCue(
-    BuildContext context, {
-    required bool isPrevious,
-    required bool compact,
-    required bool forceVisible,
-  }) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final ReaderPreferences preferences = _controller.preferences;
-    final bool isLoading = _controller.isNextChapterLoading;
-    final double pullDistance = isPrevious
-        ? _controller.previousChapterPullDistance
-        : _controller.nextChapterPullDistance;
-    final bool isReady =
-        (isPrevious
-            ? _controller.previousChapterPullReady
-            : _controller.nextChapterPullReady) &&
-        !isLoading;
-    final double triggerDistance = preferences.isPaged ? 152 : 266;
-    final double progress = (pullDistance / triggerDistance)
-        .clamp(0, 1)
-        .toDouble();
-    final bool isVisible = forceVisible || isLoading || progress > 0;
-    final IconData directionIcon = switch ((
-      isPrevious,
-      preferences.isPaged,
-      preferences.readingDirection,
-    )) {
-      (false, true, ReaderReadingDirection.leftToRight) =>
-        Icons.chevron_left_rounded,
-      (false, true, ReaderReadingDirection.rightToLeft) =>
-        Icons.chevron_right_rounded,
-      (true, true, ReaderReadingDirection.leftToRight) =>
-        Icons.chevron_right_rounded,
-      (true, true, ReaderReadingDirection.rightToLeft) =>
-        Icons.chevron_left_rounded,
-      (false, true, _) => Icons.chevron_left_rounded,
-      (false, false, _) => Icons.expand_less_rounded,
-      (true, false, _) => Icons.expand_more_rounded,
-      (true, true, _) => Icons.chevron_right_rounded,
-    };
-    final String label = isPrevious ? '上一章' : '下一章';
-    final Color accentColor = colorScheme.primary;
-    final double bgAlpha = compact ? 0.82 : 0.92;
-    final double height = compact ? 36.0 : 44.0;
-    final double iconSize = compact ? 18.0 : 20.0;
-    final double fontSize = compact ? 12.0 : 13.0;
-
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutQuart,
-      opacity: !isVisible
-          ? 0
-          : (isLoading || isReady ? 1 : (0.5 + progress * 0.5).clamp(0, 1)),
-      child: AnimatedScale(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOutQuart,
-        scale: isReady ? 1.0 : 0.88 + (progress * 0.12),
-        child: Container(
-          height: height,
-          padding: EdgeInsets.symmetric(horizontal: compact ? 14 : 18),
-          decoration: BoxDecoration(
-            color: colorScheme.surface.withValues(alpha: bgAlpha),
-            borderRadius: BorderRadius.circular(height / 2),
-            border: Border.all(
-              color: accentColor.withValues(
-                alpha: isReady ? 0.5 : 0.15 + (progress * 0.2),
-              ),
-              width: isReady ? 1.5 : 1.0,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              if (isLoading)
-                SizedBox.square(
-                  dimension: iconSize,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.0,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      accentColor.withValues(alpha: 0.8),
-                    ),
-                  ),
-                )
-              else
-                Icon(
-                  directionIcon,
-                  size: iconSize,
-                  color: accentColor.withValues(
-                    alpha: isReady ? 1 : 0.5 + (progress * 0.5),
-                  ),
-                ),
-              SizedBox(width: compact ? 4 : 6),
-              Text(
-                isLoading ? '加载中' : (isReady ? '松手跳转' : label),
-                style: TextStyle(
-                  color: isReady
-                      ? accentColor
-                      : colorScheme.onSurface.withValues(
-                          alpha: 0.6 + (progress * 0.4),
-                        ),
-                  fontSize: fontSize,
-                  fontWeight: isReady ? FontWeight.w700 : FontWeight.w600,
-                  height: 1.0,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   bool _isUserDrivenScrollNotification(ScrollNotification notification) {
     if (notification.depth != 0) return false;
     return switch (notification) {
@@ -1772,9 +709,7 @@ class ReaderScreenState extends State<ReaderScreen> {
     };
   }
 
-  void _handleReaderScrollLifecycleNotification(
-    ScrollNotification notification,
-  ) {
+  void _handleScrollLifecycle(ScrollNotification notification) {
     if (notification.depth != 0) return;
     if (notification is ScrollStartNotification &&
         notification.dragDetails != null) {
@@ -1924,7 +859,7 @@ class ReaderScreenState extends State<ReaderScreen> {
                       ),
                     ),
                     _buildReaderOverlay(context, page),
-                    _buildReaderChapterControlsOverlay(context, page),
+                    _buildChapterControlsOverlay(context, page),
                   ],
                 ),
               ),

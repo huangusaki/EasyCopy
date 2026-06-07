@@ -1,6 +1,6 @@
-import 'package:easy_copy/config/app_config.dart';
-import 'package:easy_copy/models/page_models.dart';
 import 'package:flutter/foundation.dart';
+import 'package:reader/config/app_config.dart';
+import 'package:reader/models/page_models.dart';
 
 enum NavigationIntent { push, preserve, resetToRoot }
 
@@ -41,7 +41,7 @@ class PrimaryTabRouteEntry {
 
   final Uri uri;
   final String routeKey;
-  final EasyCopyPage? page;
+  final SitePage? page;
   final bool isLoading;
   final String? errorMessage;
   final double standardScrollOffset;
@@ -50,7 +50,7 @@ class PrimaryTabRouteEntry {
   PrimaryTabRouteEntry copyWith({
     Uri? uri,
     String? routeKey,
-    EasyCopyPage? page,
+    SitePage? page,
     bool clearPage = false,
     bool? isLoading,
     String? errorMessage,
@@ -153,7 +153,7 @@ class PrimaryTabSessionStore {
     return rootEntry;
   }
 
-  void updatePage(int tabIndex, EasyCopyPage page) {
+  void updatePage(int tabIndex, SitePage page) {
     final List<PrimaryTabRouteEntry> stack = _stackFor(tabIndex);
     final Uri pageUri = _normalizeSessionUri(Uri.parse(page.uri));
     stack[stack.length - 1] = stack.last.copyWith(

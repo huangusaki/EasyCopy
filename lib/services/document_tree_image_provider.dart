@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
-import 'package:easy_copy/services/android_document_tree_bridge.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
+import 'package:reader/services/android_document_tree_bridge.dart';
 
 class DocumentTreeImageProvider
     extends ImageProvider<DocumentTreeImageProvider> {

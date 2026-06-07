@@ -1,5 +1,5 @@
-import 'package:easy_copy/services/debug_trace.dart';
 import 'package:flutter/material.dart';
+import 'package:reader/services/debug_trace.dart';
 
 class ReaderChapterImage extends StatefulWidget {
   const ReaderChapterImage({

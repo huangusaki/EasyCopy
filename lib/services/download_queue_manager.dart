@@ -1,19 +1,21 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:easy_copy/models/app_preferences.dart';
-import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/services/app_preferences_controller.dart';
-import 'package:easy_copy/services/comic_download_service.dart';
-import 'package:easy_copy/services/debug_trace.dart';
-import 'package:easy_copy/services/download_storage_migration_store.dart';
-import 'package:easy_copy/services/download_storage_service.dart';
-import 'package:easy_copy/services/download_queue_store.dart';
-import 'package:easy_copy/services/migration_delta_journal_store.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:reader/models/app_preferences.dart';
+import 'package:reader/models/page_models.dart';
+import 'package:reader/services/app_preferences_controller.dart';
+import 'package:reader/services/comic_download_service.dart';
+import 'package:reader/services/debug_trace.dart';
+import 'package:reader/services/download_queue_store.dart';
+import 'package:reader/services/download_storage_service.dart';
+import 'package:reader/services/migration_delta_journal_store.dart';
+import 'package:reader/services/storage_migration_store.dart';
 
-typedef DownloadQueueLibraryChangedCallback =
+part 'download_queue_manager/migration_coordinator.dart';
+
+typedef LibraryChangedCallback =
     Future<void> Function(CacheLibraryRefreshReason reason);
 typedef DownloadQueueNoticeCallback = void Function(String message);
 
@@ -37,7 +39,7 @@ class DownloadQueueManager {
     required DownloadTaskRunner taskRunner,
     DownloadStorageMigrationStore? migrationStore,
     MigrationDeltaJournalStore? deltaJournalStore,
-    DownloadQueueLibraryChangedCallback? onLibraryChanged,
+    LibraryChangedCallback? onLibraryChanged,
     DownloadQueueNoticeCallback? onNotice,
   }) : _preferencesController = preferencesController,
        _downloadService = downloadService,
@@ -56,7 +58,7 @@ class DownloadQueueManager {
   final DownloadTaskRunner _taskRunner;
   final DownloadStorageMigrationStore _migrationStore;
   final MigrationDeltaJournalStore _deltaJournalStore;
-  final DownloadQueueLibraryChangedCallback? _onLibraryChanged;
+  final LibraryChangedCallback? _onLibraryChanged;
   final DownloadQueueNoticeCallback? _onNotice;
 
   final ValueNotifier<DownloadQueueSnapshot> snapshotNotifier =
@@ -64,9 +66,8 @@ class DownloadQueueManager {
   final ValueNotifier<DownloadStorageState> storageStateNotifier =
       ValueNotifier<DownloadStorageState>(const DownloadStorageState.loading());
   final ValueNotifier<bool> storageBusyNotifier = ValueNotifier<bool>(false);
-  final ValueNotifier<DownloadStorageMigrationProgress?>
-  storageMigrationProgressNotifier =
-      ValueNotifier<DownloadStorageMigrationProgress?>(null);
+  final ValueNotifier<StorageMigrationProgress?> migrationProgressNotifier =
+      ValueNotifier<StorageMigrationProgress?>(null);
 
   final Map<String, List<DownloadQueueTask>> _pendingCancelledTaskCleanups =
       <String, List<DownloadQueueTask>>{};
@@ -86,10 +87,10 @@ class DownloadQueueManager {
   bool _storageSwitchPending = false;
   Future<void>? _activeMigrationTask;
   PendingDownloadStorageMigration? _pendingMigration;
-  Timer? _migrationProgressFlushTimer;
-  DownloadStorageMigrationProgress? _queuedMigrationProgress;
-  DownloadStorageMigrationProgress? _lastVisibleMigrationProgress;
-  DateTime? _lastVisibleMigrationProgressAt;
+  Timer? _migrationFlushTimer;
+  StorageMigrationProgress? _pendingMigrationProgress;
+  StorageMigrationProgress? _lastMigrationProgress;
+  DateTime? _lastMigrationAt;
 
   DownloadQueueSnapshot get snapshot => snapshotNotifier.value;
 
@@ -101,7 +102,7 @@ class DownloadQueueManager {
   bool get shouldBypassCachedReaderLookup =>
       _activeMigrationTask != null ||
       storageBusyNotifier.value ||
-      storageMigrationProgressNotifier.value != null;
+      migrationProgressNotifier.value != null;
 
   Future<void> restoreState() async {
     await _queueStore.ensureInitialized();
@@ -122,7 +123,7 @@ class DownloadQueueManager {
     _syncRetryTimers(snapshotNotifier.value);
   }
 
-  Future<void> recoverInterruptedStorageMigration() async {
+  Future<void> recoverStorageMigration() async {
     await _migrationStore.ensureInitialized();
     await _deltaJournalStore.ensureInitialized();
     if (_disposed || _activeMigrationTask != null) {
@@ -309,7 +310,7 @@ class DownloadQueueManager {
       comicKey: task.comicKey,
       fallbackTitle: task.comicTitle,
     );
-    await _recordComicDeletionForMigration(task.comicTitle);
+    await _recordComicDeletion(task.comicTitle);
     await _notifyLibraryChanged(CacheLibraryRefreshReason.queueChanged);
   }
 
@@ -346,7 +347,7 @@ class DownloadQueueManager {
     if (!removesRunningComic) {
       await _downloadService.cleanupIncompleteTasks(removedTasks);
       await _downloadService.deleteCachedComic(entry);
-      await _recordComicDeletionForMigration(entry.comicTitle);
+      await _recordComicDeletion(entry.comicTitle);
       await _notifyLibraryChanged(CacheLibraryRefreshReason.queueChanged);
       return;
     }
@@ -359,7 +360,7 @@ class DownloadQueueManager {
   String? storageEditBlockReason() {
     if (_activeMigrationTask != null ||
         storageBusyNotifier.value ||
-        storageMigrationProgressNotifier.value != null) {
+        migrationProgressNotifier.value != null) {
       return '正在切换缓存目录，请稍后再试';
     }
     return null;
@@ -378,7 +379,7 @@ class DownloadQueueManager {
       return null;
     }
     if (_activeMigrationTask != null ||
-        storageMigrationProgressNotifier.value != null) {
+        migrationProgressNotifier.value != null) {
       throw const FileSystemException('已有缓存目录迁移正在进行中。');
     }
     final DownloadStorageState fromState = await _downloadService
@@ -415,8 +416,8 @@ class DownloadQueueManager {
     await _deltaJournalStore.clear();
     _pendingMigration = pendingMigration;
     storageStateNotifier.value = fromState;
-    _setVisibleMigrationProgress(
-      DownloadStorageMigrationProgress(
+    _setMigrationProgressVisible(
+      StorageMigrationProgress(
         phase: DownloadStorageMigrationPhase.preparing,
         fromPath: fromState.displayPath,
         toPath: toState.displayPath,
@@ -564,397 +565,9 @@ class DownloadQueueManager {
     }
   }
 
-  void _startMigrationTask(
-    PendingDownloadStorageMigration pendingMigration, {
-    required bool isRecovery,
-  }) {
-    if (_disposed || _activeMigrationTask != null) {
-      return;
-    }
-    _pendingMigration = pendingMigration;
-    late final Future<void> task;
-    task = _runMigrationFlow(pendingMigration, isRecovery: isRecovery)
-        .whenComplete(() {
-          if (identical(_activeMigrationTask, task)) {
-            _activeMigrationTask = null;
-          }
-          if (!_disposed) {
-            unawaited(ensureRunning());
-          }
-        });
-    _activeMigrationTask = task;
-  }
-
-  Future<void> _runMigrationFlow(
-    PendingDownloadStorageMigration pendingMigration, {
-    required bool isRecovery,
-  }) async {
-    PendingDownloadStorageMigration currentMigration = pendingMigration;
-    final Stopwatch stopwatch = Stopwatch()..start();
-    DebugTrace.log('storage_migration.flow_start', <String, Object?>{
-      'migrationId': currentMigration.storageKey,
-      'phase': currentMigration.phase.name,
-      'trigger': isRecovery ? 'recovery' : 'manual',
-      'pendingAgeMs': DateTime.now()
-          .difference(currentMigration.createdAt)
-          .inMilliseconds,
-    });
-    try {
-      if (currentMigration.phase == DownloadStorageMigrationStep.copying) {
-        currentMigration = await _runMigrationCopyPhase(currentMigration);
-      }
-      if (currentMigration.phase == DownloadStorageMigrationStep.switching) {
-        currentMigration = await _runMigrationSwitchPhase(currentMigration);
-      }
-      if (currentMigration.phase == DownloadStorageMigrationStep.cleaning ||
-          currentMigration.cleanupPending) {
-        if (!_disposed) {
-          storageBusyNotifier.value = false;
-          _storageSwitchPending = false;
-        }
-        unawaited(ensureRunning());
-        await _runMigrationCleanupPhase(currentMigration);
-      }
-      DebugTrace.log('storage_migration.flow_complete', <String, Object?>{
-        'migrationId': pendingMigration.storageKey,
-        'elapsedMs': stopwatch.elapsedMilliseconds,
-      });
-    } catch (error) {
-      DebugTrace.log('storage_migration.flow_failed', <String, Object?>{
-        'migrationId': pendingMigration.storageKey,
-        'phase': _pendingMigration?.phase.name ?? pendingMigration.phase.name,
-        'elapsedMs': stopwatch.elapsedMilliseconds,
-        'error': error.toString(),
-      });
-      if (!_disposed) {
-        storageBusyNotifier.value = false;
-        _storageSwitchPending = false;
-        _clearVisibleMigrationProgress();
-      }
-      _notify('缓存目录迁移失败：${_formatDownloadError(error)}');
-    }
-  }
-
-  Future<PendingDownloadStorageMigration> _runMigrationCopyPhase(
-    PendingDownloadStorageMigration pendingMigration,
-  ) async {
-    DebugTrace.log('storage_migration.copy_phase_start', <String, Object?>{
-      'migrationId': pendingMigration.storageKey,
-      'phase': pendingMigration.phase.name,
-    });
-    await _downloadService.migrateCacheRoot(
-      from: pendingMigration.from,
-      to: pendingMigration.to,
-      onProgress: _setMigrationProgress,
-    );
-    final String fromStorageKey = await _downloadService
-        .storageKeyForPreferences(pendingMigration.from);
-    final PendingDownloadStorageMigration nextMigration = pendingMigration
-        .copyWith(
-          phase: DownloadStorageMigrationStep.switching,
-          activeStorageKey: fromStorageKey,
-          cleanupPending: true,
-        );
-    await _persistMigration(nextMigration);
-    DebugTrace.log('storage_migration.copy_phase_complete', <String, Object?>{
-      'migrationId': pendingMigration.storageKey,
-      'nextPhase': nextMigration.phase.name,
-    });
-    return nextMigration;
-  }
-
-  Future<PendingDownloadStorageMigration> _runMigrationSwitchPhase(
-    PendingDownloadStorageMigration pendingMigration,
-  ) async {
-    final bool resumeQueueAfterSwitch =
-        snapshot.isNotEmpty && !snapshot.isPaused;
-    if (resumeQueueAfterSwitch) {
-      await _persistSnapshot(snapshot.copyWith(isPaused: true));
-    }
-    if (!_disposed) {
-      _storageSwitchPending = true;
-      storageBusyNotifier.value = true;
-    }
-    await _waitForQueueIdle();
-
-    final DownloadStorageState fromState = await _downloadService
-        .resolveStorageState(
-          preferences: pendingMigration.from,
-          verifyWritable: false,
-        );
-    final DownloadStorageState toState = await _downloadService
-        .resolveStorageState(
-          preferences: pendingMigration.to,
-          verifyWritable: true,
-        );
-    final List<MigrationDeltaEntry> deltas = await _deltaJournalStore.read(
-      pendingMigration.storageKey,
-    );
-    DebugTrace.log('storage_migration.switch_phase_start', <String, Object?>{
-      'migrationId': pendingMigration.storageKey,
-      'deltaReplayCount': deltas.length,
-      'fromPath': fromState.displayPath,
-      'toPath': toState.displayPath,
-    });
-    _setVisibleMigrationProgress(
-      DownloadStorageMigrationProgress(
-        phase: DownloadStorageMigrationPhase.preparing,
-        fromPath: fromState.displayPath,
-        toPath: toState.displayPath,
-        message: '正在切换缓存目录…',
-      ),
-      immediate: true,
-    );
-    if (deltas.isNotEmpty) {
-      await _downloadService.applyMigrationDeltas(
-        from: pendingMigration.from,
-        to: pendingMigration.to,
-        entries: deltas,
-        onProgress: _setMigrationProgress,
-      );
-    }
-    await _downloadService.copyCachedLibraryIndex(
-      from: pendingMigration.from,
-      to: pendingMigration.to,
-    );
-    await _preferencesController.updateDownloadPreferences(
-      (_) => pendingMigration.to,
-    );
-    await _deltaJournalStore.clear(pendingMigration.storageKey);
-    final String targetStorageKey = await _downloadService
-        .storageKeyForPreferences(pendingMigration.to);
-    final PendingDownloadStorageMigration nextMigration = pendingMigration
-        .copyWith(
-          phase: DownloadStorageMigrationStep.cleaning,
-          activeStorageKey: targetStorageKey,
-          cleanupPending: true,
-        );
-    await _persistMigration(nextMigration);
-    if (!_disposed) {
-      storageStateNotifier.value = toState;
-      storageBusyNotifier.value = false;
-      _storageSwitchPending = false;
-    }
-    await _notifyLibraryChanged(CacheLibraryRefreshReason.migrationSwitched);
-    if (resumeQueueAfterSwitch &&
-        !_disposed &&
-        snapshot.isNotEmpty &&
-        snapshot.isPaused) {
-      await _persistSnapshot(snapshot.copyWith(isPaused: false));
-    }
-    DebugTrace.log('storage_migration.switch_phase_complete', <String, Object?>{
-      'migrationId': pendingMigration.storageKey,
-      'deltaReplayCount': deltas.length,
-    });
-    return nextMigration;
-  }
-
-  Future<void> _runMigrationCleanupPhase(
-    PendingDownloadStorageMigration pendingMigration,
-  ) async {
-    DebugTrace.log('storage_migration.cleanup_phase_start', <String, Object?>{
-      'migrationId': pendingMigration.storageKey,
-      'fromPath': pendingMigration.from.displayPath,
-    });
-    final String cleanupWarning = await _downloadService
-        .cleanupStorageDirectory(
-          preferences: pendingMigration.from,
-          onProgress: _setMigrationProgress,
-        );
-    await _deltaJournalStore.clear(pendingMigration.storageKey);
-    await _migrationStore.clear();
-    _pendingMigration = null;
-    if (!_disposed) {
-      _clearVisibleMigrationProgress();
-      storageBusyNotifier.value = false;
-      _storageSwitchPending = false;
-    }
-    if (cleanupWarning.isNotEmpty) {
-      _notify(cleanupWarning);
-    }
-    DebugTrace.log(
-      'storage_migration.cleanup_phase_complete',
-      <String, Object?>{
-        'migrationId': pendingMigration.storageKey,
-        'warning': cleanupWarning,
-      },
-    );
-  }
-
-  Future<void> _waitForQueueIdle() async {
-    while (!_disposed && (_runningTaskId != null || _isProcessingQueue)) {
-      await Future<void>.delayed(const Duration(milliseconds: 80));
-    }
-  }
-
-  Future<void> _persistMigration(
-    PendingDownloadStorageMigration migration,
-  ) async {
-    _pendingMigration = migration;
-    await _migrationStore.write(migration);
-  }
-
-  Future<void> _setMigrationProgress(
-    DownloadStorageMigrationProgress progress,
-  ) async {
-    if (_disposed) {
-      return;
-    }
-    _setVisibleMigrationProgress(progress);
-  }
-
-  void _setVisibleMigrationProgress(
-    DownloadStorageMigrationProgress progress, {
-    bool immediate = false,
-  }) {
-    if (_disposed) {
-      return;
-    }
-    if (immediate || _shouldEmitMigrationProgressImmediately(progress)) {
-      _publishMigrationProgress(progress);
-      return;
-    }
-    _queuedMigrationProgress = progress;
-    _scheduleMigrationProgressFlush();
-  }
-
-  bool _shouldEmitMigrationProgressImmediately(
-    DownloadStorageMigrationProgress progress,
-  ) {
-    final DownloadStorageMigrationProgress? lastProgress =
-        _lastVisibleMigrationProgress;
-    if (lastProgress == null) {
-      return true;
-    }
-    if (lastProgress.phase != progress.phase ||
-        lastProgress.totalItems != progress.totalItems ||
-        progress.completedItems <= 3 ||
-        (progress.totalItems > 0 &&
-            progress.completedItems >= progress.totalItems)) {
-      return true;
-    }
-    final DateTime? lastUpdatedAt = _lastVisibleMigrationProgressAt;
-    if (lastUpdatedAt == null) {
-      return true;
-    }
-    return DateTime.now().difference(lastUpdatedAt) >=
-        _migrationProgressUiInterval;
-  }
-
-  void _scheduleMigrationProgressFlush() {
-    if (_disposed || _migrationProgressFlushTimer != null) {
-      return;
-    }
-    final DateTime? lastUpdatedAt = _lastVisibleMigrationProgressAt;
-    final Duration delay = lastUpdatedAt == null
-        ? Duration.zero
-        : _migrationProgressUiInterval -
-              DateTime.now().difference(lastUpdatedAt);
-    _migrationProgressFlushTimer = Timer(
-      delay.isNegative ? Duration.zero : delay,
-      _flushQueuedMigrationProgress,
-    );
-  }
-
-  void _flushQueuedMigrationProgress() {
-    _migrationProgressFlushTimer?.cancel();
-    _migrationProgressFlushTimer = null;
-    if (_disposed) {
-      _queuedMigrationProgress = null;
-      return;
-    }
-    final DownloadStorageMigrationProgress? queuedProgress =
-        _queuedMigrationProgress;
-    if (queuedProgress == null) {
-      return;
-    }
-    _queuedMigrationProgress = null;
-    _publishMigrationProgress(queuedProgress);
-  }
-
-  void _publishMigrationProgress(DownloadStorageMigrationProgress progress) {
-    _migrationProgressFlushTimer?.cancel();
-    _migrationProgressFlushTimer = null;
-    _queuedMigrationProgress = null;
-    _lastVisibleMigrationProgress = progress;
-    _lastVisibleMigrationProgressAt = DateTime.now();
-    storageMigrationProgressNotifier.value = progress;
-  }
-
-  void _clearVisibleMigrationProgress() {
-    _migrationProgressFlushTimer?.cancel();
-    _migrationProgressFlushTimer = null;
-    _queuedMigrationProgress = null;
-    _lastVisibleMigrationProgress = null;
-    _lastVisibleMigrationProgressAt = null;
-    storageMigrationProgressNotifier.value = null;
-  }
-
-  Future<void> _recordMigrationDelta(MigrationDeltaEntry entry) async {
-    final PendingDownloadStorageMigration? pendingMigration = _pendingMigration;
-    if (_disposed ||
-        pendingMigration == null ||
-        pendingMigration.phase != DownloadStorageMigrationStep.copying ||
-        entry.relativePath.trim().isEmpty) {
-      return;
-    }
-    await _deltaJournalStore.append(pendingMigration.storageKey, entry);
-    DebugTrace.log('storage_migration.delta_recorded', <String, Object?>{
-      'migrationId': pendingMigration.storageKey,
-      'phase': pendingMigration.phase.name,
-      'kind': entry.kind.name,
-      'relativePath': entry.relativePath,
-    });
-  }
-
-  Future<void> _recordTaskUpsertForMigration(DownloadQueueTask task) {
-    return _recordMigrationDelta(
-      MigrationDeltaEntry(
-        kind: MigrationDeltaKind.upsertChapter,
-        relativePath: _downloadService.chapterDirectoryPath(
-          task.comicTitle,
-          task.chapterLabel,
-        ),
-        updatedAt: DateTime.now(),
-      ),
-    );
-  }
-
-  Future<void> _recordTaskCleanupForMigration(
-    Iterable<DownloadQueueTask> tasks,
-  ) async {
-    final Set<String> seenPaths = <String>{};
-    for (final DownloadQueueTask task in tasks) {
-      final String relativePath = _downloadService.chapterDirectoryPath(
-        task.comicTitle,
-        task.chapterLabel,
-      );
-      if (relativePath.isEmpty || !seenPaths.add(relativePath)) {
-        continue;
-      }
-      await _recordMigrationDelta(
-        MigrationDeltaEntry(
-          kind: MigrationDeltaKind.deleteChapter,
-          relativePath: relativePath,
-          updatedAt: DateTime.now(),
-        ),
-      );
-    }
-  }
-
-  Future<void> _recordComicDeletionForMigration(String comicTitle) {
-    return _recordMigrationDelta(
-      MigrationDeltaEntry(
-        kind: MigrationDeltaKind.deleteComic,
-        relativePath: _downloadService.comicDirectoryPath(comicTitle),
-        updatedAt: DateTime.now(),
-      ),
-    );
-  }
-
   void dispose() {
     _disposed = true;
-    _migrationProgressFlushTimer?.cancel();
+    _migrationFlushTimer?.cancel();
     for (final Timer timer in _retryTimers.values) {
       timer.cancel();
     }
@@ -962,7 +575,7 @@ class DownloadQueueManager {
     snapshotNotifier.dispose();
     storageStateNotifier.dispose();
     storageBusyNotifier.dispose();
-    storageMigrationProgressNotifier.dispose();
+    migrationProgressNotifier.dispose();
   }
 
   Future<void> _persistSnapshot(DownloadQueueSnapshot nextSnapshot) async {
@@ -1164,7 +777,7 @@ class DownloadQueueManager {
       );
       if (comicDeletionTitle != null) {
         await _downloadService.deleteComicCacheByTitle(comicDeletionTitle);
-        await _recordComicDeletionForMigration(comicDeletionTitle);
+        await _recordComicDeletion(comicDeletionTitle);
       } else if (tasksToCleanup != null) {
         await _downloadService.cleanupIncompleteTasks(tasksToCleanup);
         await _recordTaskCleanupForMigration(tasksToCleanup);
@@ -1198,7 +811,7 @@ class DownloadQueueManager {
       );
       if (comicDeletionTitle != null) {
         await _downloadService.deleteComicCacheByTitle(comicDeletionTitle);
-        await _recordComicDeletionForMigration(comicDeletionTitle);
+        await _recordComicDeletion(comicDeletionTitle);
       } else {
         await _downloadService.cleanupIncompleteTasks(tasksToCleanup);
         await _recordTaskCleanupForMigration(tasksToCleanup);
@@ -1214,7 +827,7 @@ class DownloadQueueManager {
             .remove(task.id);
         if (comicDeletionTitle != null) {
           await _downloadService.deleteComicCacheByTitle(comicDeletionTitle);
-          await _recordComicDeletionForMigration(comicDeletionTitle);
+          await _recordComicDeletion(comicDeletionTitle);
           await _notifyLibraryChanged(CacheLibraryRefreshReason.queueChanged);
           return;
         }

@@ -1,9 +1,9 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:easy_copy/services/image_cache.dart';
 import 'package:flutter/material.dart';
+import 'package:reader/services/image_cache.dart';
 
-class EasyCopyCoverImage extends StatelessWidget {
-  const EasyCopyCoverImage({
+class CoverImage extends StatelessWidget {
+  const CoverImage({
     required this.imageUrl,
     this.aspectRatio,
     this.borderRadius = 20,
@@ -21,14 +21,14 @@ class EasyCopyCoverImage extends StatelessWidget {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         Widget child = imageUrl.isEmpty
-            ? const EasyCopyPlaceholderImage()
+            ? const PlaceholderImage()
             : CachedNetworkImage(
                 imageUrl: imageUrl,
                 fit: fit,
                 memCacheWidth: _coverCacheWidth(context, constraints),
-                cacheManager: EasyCopyImageCaches.coverCache,
-                placeholder: (_, __) => const EasyCopyCoverSkeleton(),
-                errorWidget: (_, __, ___) => const EasyCopyPlaceholderImage(),
+                cacheManager: AppImageCaches.coverCache,
+                placeholder: (_, __) => const CoverSkeleton(),
+                errorWidget: (_, __, ___) => const PlaceholderImage(),
               );
 
         if (aspectRatio != null) {
@@ -56,8 +56,8 @@ class EasyCopyCoverImage extends StatelessWidget {
   }
 }
 
-class EasyCopyPlaceholderImage extends StatelessWidget {
-  const EasyCopyPlaceholderImage({super.key});
+class PlaceholderImage extends StatelessWidget {
+  const PlaceholderImage({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -84,8 +84,8 @@ class EasyCopyPlaceholderImage extends StatelessWidget {
   }
 }
 
-class EasyCopyCoverSkeleton extends StatelessWidget {
-  const EasyCopyCoverSkeleton({super.key});
+class CoverSkeleton extends StatelessWidget {
+  const CoverSkeleton({super.key});
 
   @override
   Widget build(BuildContext context) {

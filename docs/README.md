@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="../assets/icons/app_icon_rounded_1024.png" alt="EasyCopy" width="120" />
-  <h1>EasyCopy</h1>
+<img src="../assets/icons/app_icon_rounded_1024.png" alt="EasyCopy" width="120" />
+<h1>EasyCopy</h1>
   <p>安卓漫画阅读器</p>
 </div>
 

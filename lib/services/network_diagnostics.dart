@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:easy_copy/config/app_config.dart';
-import 'package:easy_copy/services/debug_trace.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
+import 'package:reader/config/app_config.dart';
+import 'package:reader/services/debug_trace.dart';
 
 class NetworkDiagnostics {
   NetworkDiagnostics._();
@@ -75,9 +75,7 @@ class NetworkDiagnostics {
     if (!kDebugMode || !AppConfig.debugProbeImages) {
       return;
     }
-    unawaited(
-      probeImage(url, referer: '', label: '${label}_no_referer'),
-    );
+    unawaited(probeImage(url, referer: '', label: '${label}_no_referer'));
     unawaited(
       probeImage(url, referer: referer, label: '${label}_with_referer'),
     );

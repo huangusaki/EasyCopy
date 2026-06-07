@@ -1,15 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:easy_copy/models/app_preferences.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:reader/models/app_preferences.dart';
 
 typedef AppPreferencesDirectoryProvider = Future<Directory> Function();
 
 class AppPreferencesStore {
-  AppPreferencesStore({
-    AppPreferencesDirectoryProvider? directoryProvider,
-  }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
+  AppPreferencesStore({AppPreferencesDirectoryProvider? directoryProvider})
+    : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
 
   final AppPreferencesDirectoryProvider _directoryProvider;
 

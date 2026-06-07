@@ -324,7 +324,7 @@ String extractAssignedJavaScriptString(String source, String variableName) {
   return '';
 }
 
-String extractJavaScriptCallStringArgument(
+String extractJsCallStringArg(
   String source,
   String functionName, {
   int argumentIndex = 0,

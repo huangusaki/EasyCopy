@@ -124,8 +124,10 @@ class AndroidDocumentTreeBridge {
       return;
     }
     final Map<Object?, Object?> rawArgs =
-        (call.arguments as Map<Object?, Object?>?) ?? const <Object?, Object?>{};
-    final String operationId = (rawArgs['operationId'] as String?)?.trim() ?? '';
+        (call.arguments as Map<Object?, Object?>?) ??
+        const <Object?, Object?>{};
+    final String operationId =
+        (rawArgs['operationId'] as String?)?.trim() ?? '';
     if (operationId.isEmpty) {
       return;
     }
@@ -198,15 +200,13 @@ class AndroidDocumentTreeBridge {
       _progressCallbacks[operationId] = onProgress!;
     }
     try {
-      await _methodChannel.invokeMethod<void>(
-        'importDirectoryFromPath',
-        <String, Object?>{
-          'treeUri': treeUri,
-          'sourcePath': sourcePath,
-          'relativePath': relativePath,
-          if (operationId != null) 'operationId': operationId,
-        },
-      );
+      await _methodChannel
+          .invokeMethod<void>('importDirectoryFromPath', <String, Object?>{
+            'treeUri': treeUri,
+            'sourcePath': sourcePath,
+            'relativePath': relativePath,
+            if (operationId != null) 'operationId': operationId,
+          });
     } finally {
       if (operationId != null) {
         _progressCallbacks.remove(operationId);
@@ -227,15 +227,13 @@ class AndroidDocumentTreeBridge {
       _progressCallbacks[operationId] = onProgress!;
     }
     try {
-      await _methodChannel.invokeMethod<void>(
-        'exportDirectoryToPath',
-        <String, Object?>{
-          'treeUri': treeUri,
-          'destinationPath': destinationPath,
-          'relativePath': relativePath,
-          if (operationId != null) 'operationId': operationId,
-        },
-      );
+      await _methodChannel
+          .invokeMethod<void>('exportDirectoryToPath', <String, Object?>{
+            'treeUri': treeUri,
+            'destinationPath': destinationPath,
+            'relativePath': relativePath,
+            if (operationId != null) 'operationId': operationId,
+          });
     } finally {
       if (operationId != null) {
         _progressCallbacks.remove(operationId);
@@ -257,16 +255,14 @@ class AndroidDocumentTreeBridge {
       _progressCallbacks[operationId] = onProgress!;
     }
     try {
-      await _methodChannel.invokeMethod<void>(
-        'copyDirectoryToTree',
-        <String, Object?>{
-          'sourceTreeUri': sourceTreeUri,
-          'targetTreeUri': targetTreeUri,
-          'sourceRelativePath': sourceRelativePath,
-          'targetRelativePath': targetRelativePath,
-          if (operationId != null) 'operationId': operationId,
-        },
-      );
+      await _methodChannel
+          .invokeMethod<void>('copyDirectoryToTree', <String, Object?>{
+            'sourceTreeUri': sourceTreeUri,
+            'targetTreeUri': targetTreeUri,
+            'sourceRelativePath': sourceRelativePath,
+            'targetRelativePath': targetRelativePath,
+            if (operationId != null) 'operationId': operationId,
+          });
     } finally {
       if (operationId != null) {
         _progressCallbacks.remove(operationId);
@@ -360,14 +356,12 @@ class AndroidDocumentTreeBridge {
       _progressCallbacks[operationId] = onProgress!;
     }
     try {
-      return await _methodChannel.invokeMethod<bool>(
-            'deletePath',
-            <String, Object?>{
-              'treeUri': treeUri,
-              'relativePath': relativePath,
-              if (operationId != null) 'operationId': operationId,
-            },
-          ) ??
+      return await _methodChannel
+              .invokeMethod<bool>('deletePath', <String, Object?>{
+                'treeUri': treeUri,
+                'relativePath': relativePath,
+                if (operationId != null) 'operationId': operationId,
+              }) ??
           false;
     } finally {
       if (operationId != null) {

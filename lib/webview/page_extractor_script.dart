@@ -438,7 +438,7 @@ const String _pageExtractionScriptTemplate = r"""
     return 'unknown';
   };
   const pageTitle = () =>
-    cleanText(document.title.replace(/- 拷[^-]+$/, '')) || 'EasyCopy';
+      cleanText(document.title.replace(/- 拷[^-]+$/, '')) || 'EasyCopy';
   const buildHomePayload = () => {
     const sections = Array.from(document.querySelectorAll('.index-all-icon'))
       .map((header) => {

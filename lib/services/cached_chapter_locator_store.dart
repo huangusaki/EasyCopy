@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 
-typedef CachedChapterLocatorDirectoryProvider = Future<Directory> Function();
+typedef LocatorDirProvider = Future<Directory> Function();
 typedef CachedChapterLocatorNowProvider = DateTime Function();
 
 @immutable
@@ -85,7 +85,7 @@ class CachedChapterLocator {
 
 class CachedChapterLocatorStore {
   CachedChapterLocatorStore({
-    CachedChapterLocatorDirectoryProvider? directoryProvider,
+    LocatorDirProvider? directoryProvider,
     CachedChapterLocatorNowProvider? now,
     sqflite.DatabaseFactory? databaseFactory,
   }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory,
@@ -97,7 +97,7 @@ class CachedChapterLocatorStore {
   static const String _tableName = 'cached_chapter_locator';
   static const String _databaseName = 'cached_chapter_locator.db';
 
-  final CachedChapterLocatorDirectoryProvider _directoryProvider;
+  final LocatorDirProvider _directoryProvider;
   final CachedChapterLocatorNowProvider _now;
   final sqflite.DatabaseFactory _databaseFactory;
 

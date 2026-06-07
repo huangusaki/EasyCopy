@@ -1,11 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:easy_copy/config/app_config.dart';
-import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/services/host_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:reader/config/app_config.dart';
+import 'package:reader/models/page_models.dart';
+import 'package:reader/services/host_manager.dart';
 
 typedef CacheNowProvider = DateTime Function();
 typedef CacheDirectoryProvider = Future<Directory> Function();
@@ -34,18 +34,18 @@ class PageCachePolicy {
     hardTtl: Duration(minutes: 5),
   );
 
-  static PageCachePolicy forPage(EasyCopyPage page) {
+  static PageCachePolicy forPage(SitePage page) {
     switch (page.type) {
-      case EasyCopyPageType.detail:
+      case SitePageType.detail:
         return detailPage;
-      case EasyCopyPageType.reader:
+      case SitePageType.reader:
         return readerPage;
-      case EasyCopyPageType.profile:
+      case SitePageType.profile:
         return profilePage;
-      case EasyCopyPageType.home:
-      case EasyCopyPageType.discover:
-      case EasyCopyPageType.rank:
-      case EasyCopyPageType.unknown:
+      case SitePageType.home:
+      case SitePageType.discover:
+      case SitePageType.rank:
+      case SitePageType.unknown:
         return listPage;
     }
   }
@@ -70,9 +70,9 @@ class CachedPageEnvelope {
     final String pageTypeName = (json['pageType'] as String?) ?? '';
     return CachedPageEnvelope(
       routeKey: (json['routeKey'] as String?) ?? '',
-      pageType: EasyCopyPageType.values.firstWhere(
-        (EasyCopyPageType value) => value.name == pageTypeName,
-        orElse: () => EasyCopyPageType.unknown,
+      pageType: SitePageType.values.firstWhere(
+        (SitePageType value) => value.name == pageTypeName,
+        orElse: () => SitePageType.unknown,
       ),
       payload:
           ((json['payload'] as Map<Object?, Object?>?) ??
@@ -97,7 +97,7 @@ class CachedPageEnvelope {
   }
 
   final String routeKey;
-  final EasyCopyPageType pageType;
+  final SitePageType pageType;
   final Map<String, Object?> payload;
   final String fingerprint;
   final DateTime fetchedAt;
@@ -329,7 +329,7 @@ class PageCacheStore {
 
   static CachedPageEnvelope buildEnvelope({
     required String routeKey,
-    required EasyCopyPage page,
+    required SitePage page,
     required String fingerprint,
     required String authScope,
     DateTime? now,
@@ -352,7 +352,7 @@ class PageCacheStore {
 
   static const Set<String> _rootPayloadKeys = <String>{'type', 'title', 'uri'};
 
-  static Map<String, Object?> _cachePayloadForPage(EasyCopyPage page) {
+  static Map<String, Object?> _cachePayloadForPage(SitePage page) {
     final Map<String, Object?> payload = Map<String, Object?>.from(
       page.toJson(),
     );
@@ -407,19 +407,19 @@ class PageCacheStore {
     return value;
   }
 
-  static EasyCopyPage restorePage(
+  static SitePage restorePage(
     CachedPageEnvelope envelope, {
     HostManager? hostManager,
   }) {
     return restorePagePayload(envelope.payload, hostManager: hostManager);
   }
 
-  static EasyCopyPage restorePagePayload(
+  static SitePage restorePagePayload(
     Map<String, Object?> payload, {
     HostManager? hostManager,
   }) {
     final HostManager manager = hostManager ?? HostManager.instance;
-    return EasyCopyPage.fromJson(
+    return SitePage.fromJson(
       _rewritePayloadHosts(payload, manager) as Map<String, Object?>,
     );
   }

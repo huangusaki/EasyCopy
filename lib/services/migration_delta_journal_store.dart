@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
-typedef MigrationDeltaJournalDirectoryProvider = Future<Directory> Function();
+typedef JournalDirProvider = Future<Directory> Function();
 
 enum MigrationDeltaKind { upsertChapter, deleteChapter, deleteComic }
 
@@ -41,14 +41,13 @@ class MigrationDeltaEntry {
 }
 
 class MigrationDeltaJournalStore {
-  MigrationDeltaJournalStore({
-    MigrationDeltaJournalDirectoryProvider? directoryProvider,
-  }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
+  MigrationDeltaJournalStore({JournalDirProvider? directoryProvider})
+    : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
 
   static final MigrationDeltaJournalStore instance =
       MigrationDeltaJournalStore();
 
-  final MigrationDeltaJournalDirectoryProvider _directoryProvider;
+  final JournalDirProvider _directoryProvider;
 
   Future<void>? _initialization;
   File? _file;
@@ -80,8 +79,7 @@ class MigrationDeltaJournalStore {
           .map(
             (Map<Object?, Object?> entry) => MigrationDeltaEntry.fromJson(
               entry.map(
-                (Object? key, Object? value) =>
-                    MapEntry(key.toString(), value),
+                (Object? key, Object? value) => MapEntry(key.toString(), value),
               ),
             ),
           )
@@ -91,10 +89,7 @@ class MigrationDeltaJournalStore {
     }
   }
 
-  Future<void> append(
-    String storageKey,
-    MigrationDeltaEntry entry,
-  ) async {
+  Future<void> append(String storageKey, MigrationDeltaEntry entry) async {
     final List<MigrationDeltaEntry> entries = await read(storageKey);
     await _write(storageKey, <MigrationDeltaEntry>[...entries, entry]);
   }
@@ -126,7 +121,9 @@ class MigrationDeltaJournalStore {
     await file.writeAsString(
       const JsonEncoder.withIndent('  ').convert(<String, Object?>{
         'storageKey': storageKey,
-        'entries': entries.map((MigrationDeltaEntry entry) => entry.toJson()).toList(),
+        'entries': entries
+            .map((MigrationDeltaEntry entry) => entry.toJson())
+            .toList(),
       }),
       flush: true,
     );

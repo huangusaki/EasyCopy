@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:easy_copy/services/site_api_client.dart';
-import 'package:easy_copy/services/login_credentials_store.dart';
-import 'package:easy_copy/widgets/auth_webview_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:reader/services/login_credentials_store.dart';
+import 'package:reader/services/site_api_client.dart';
+import 'package:reader/widgets/auth_webview_screen.dart';
 
 class NativeLoginScreen extends StatefulWidget {
   const NativeLoginScreen({

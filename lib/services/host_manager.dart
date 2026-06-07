@@ -399,11 +399,7 @@ class HostManager {
   Future<HostProbeRecord> _probeKnownHost(String host) async {
     final String normalizedHost = _normalizeHost(host);
     if (normalizedHost.isEmpty) {
-      return const HostProbeRecord(
-        host: '',
-        success: false,
-        latencyMs: 999999,
-      );
+      return const HostProbeRecord(host: '', success: false, latencyMs: 999999);
     }
     final bool reachable = await _isHostReachable(normalizedHost);
     if (!reachable) {

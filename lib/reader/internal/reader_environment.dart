@@ -1,5 +1,5 @@
-import 'package:easy_copy/models/app_preferences.dart';
 import 'package:flutter/foundation.dart';
+import 'package:reader/models/app_preferences.dart';
 
 @immutable
 class AppliedReaderEnvironment {

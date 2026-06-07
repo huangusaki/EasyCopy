@@ -1,8 +1,8 @@
 import 'dart:collection';
 import 'dart:math' as math;
 
-import 'package:easy_copy/models/chapter_comment.dart';
 import 'package:flutter/foundation.dart';
+import 'package:reader/models/chapter_comment.dart';
 
 const int readerCommentPageSize = 40;
 
@@ -21,7 +21,7 @@ class ReaderCommentPageWindow {
   bool get isEmpty => limit <= 0;
 }
 
-ReaderCommentPageWindow initialReaderCommentAscendingWindow({
+ReaderCommentPageWindow initialCommentWindow({
   required int total,
   int pageSize = readerCommentPageSize,
 }) {
@@ -35,7 +35,7 @@ ReaderCommentPageWindow initialReaderCommentAscendingWindow({
   );
 }
 
-ReaderCommentPageWindow nextReaderCommentAscendingWindow({
+ReaderCommentPageWindow nextCommentWindow({
   required int loadedStartOffset,
   int pageSize = readerCommentPageSize,
 }) {
@@ -49,9 +49,7 @@ ReaderCommentPageWindow nextReaderCommentAscendingWindow({
   );
 }
 
-List<ChapterComment> normalizeReaderCommentAscendingPage(
-  List<ChapterComment> comments,
-) {
+List<ChapterComment> normalizeCommentPage(List<ChapterComment> comments) {
   return List<ChapterComment>.unmodifiable(comments.reversed);
 }
 

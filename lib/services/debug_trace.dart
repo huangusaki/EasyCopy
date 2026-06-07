@@ -5,7 +5,10 @@ import 'package:flutter/foundation.dart';
 class DebugTrace {
   const DebugTrace._();
 
-  static void log(String event, [Map<String, Object?> fields = const <String, Object?>{}]) {
+  static void log(
+    String event, [
+    Map<String, Object?> fields = const <String, Object?>{},
+  ]) {
     if (!kDebugMode) {
       return;
     }

@@ -1,8 +1,8 @@
-import 'package:easy_copy/config/app_config.dart';
-import 'package:easy_copy/models/page_models.dart';
-import 'package:easy_copy/services/local_library_store.dart';
-import 'package:easy_copy/services/site_api_client.dart';
-import 'package:easy_copy/services/site_session.dart';
+import 'package:reader/config/app_config.dart';
+import 'package:reader/models/page_models.dart';
+import 'package:reader/services/local_library_store.dart';
+import 'package:reader/services/site_api_client.dart';
+import 'package:reader/services/site_session.dart';
 
 class LocalProfilePageLoader {
   LocalProfilePageLoader({

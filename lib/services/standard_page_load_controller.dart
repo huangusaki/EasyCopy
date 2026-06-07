@@ -1,9 +1,9 @@
 import 'dart:async';
 
-import 'package:easy_copy/config/app_config.dart';
-import 'package:easy_copy/services/navigation_request_guard.dart';
-import 'package:easy_copy/services/page_repository.dart';
-import 'package:easy_copy/services/primary_tab_session_store.dart';
+import 'package:reader/config/app_config.dart';
+import 'package:reader/services/navigation_request_guard.dart';
+import 'package:reader/services/page_repository.dart';
+import 'package:reader/services/primary_tab_session_store.dart';
 
 enum StandardPageLoadEventSource {
   navigationRequest,
