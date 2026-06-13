@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:reader/config/app_config.dart';
+import 'package:reader/models/shortcut_preferences.dart';
 import 'package:reader/theme/app_theme.dart';
 
 enum AppThemePreference {
   system,
+  // name 已持久化，只可新增。
+  dynamicColor,
   pureWhite,
   pureBlack,
   warmLight,
@@ -18,6 +21,8 @@ String appThemePreferenceLabel(AppThemePreference value) {
   switch (value) {
     case AppThemePreference.system:
       return '跟随系统';
+    case AppThemePreference.dynamicColor:
+      return '动态取色';
     case AppThemePreference.pureWhite:
       return '纯白';
     case AppThemePreference.pureBlack:
@@ -274,6 +279,7 @@ class ReaderPreferences {
     this.useVolumeKeysForPaging = false,
     this.fullscreen = true,
     this.showChapterComments = true,
+    this.disablePageTransitionAnimation = false,
   });
 
   factory ReaderPreferences.fromJson(Map<String, Object?> json) {
@@ -310,6 +316,8 @@ class ReaderPreferences {
           (json['useVolumeKeysForPaging'] as bool?) ?? false,
       fullscreen: (json['fullscreen'] as bool?) ?? true,
       showChapterComments: (json['showChapterComments'] as bool?) ?? true,
+      disablePageTransitionAnimation:
+          (json['disablePageTransitionAnimation'] as bool?) ?? false,
     );
   }
 
@@ -326,6 +334,7 @@ class ReaderPreferences {
   final bool useVolumeKeysForPaging;
   final bool fullscreen;
   final bool showChapterComments;
+  final bool disablePageTransitionAnimation;
 
   bool get isPaged =>
       readingDirection == ReaderReadingDirection.leftToRight ||
@@ -345,6 +354,7 @@ class ReaderPreferences {
     bool? useVolumeKeysForPaging,
     bool? fullscreen,
     bool? showChapterComments,
+    bool? disablePageTransitionAnimation,
   }) {
     return ReaderPreferences(
       screenOrientation: screenOrientation ?? this.screenOrientation,
@@ -361,6 +371,8 @@ class ReaderPreferences {
           useVolumeKeysForPaging ?? this.useVolumeKeysForPaging,
       fullscreen: fullscreen ?? this.fullscreen,
       showChapterComments: showChapterComments ?? this.showChapterComments,
+      disablePageTransitionAnimation:
+          disablePageTransitionAnimation ?? this.disablePageTransitionAnimation,
     );
   }
 
@@ -379,6 +391,7 @@ class ReaderPreferences {
       'useVolumeKeysForPaging': useVolumeKeysForPaging,
       'fullscreen': fullscreen,
       'showChapterComments': showChapterComments,
+      'disablePageTransitionAnimation': disablePageTransitionAnimation,
     };
   }
 }
@@ -390,6 +403,7 @@ class AppPreferences {
     this.readerPreferences = const ReaderPreferences(),
     this.downloadPreferences = const DownloadPreferences(),
     this.wallpaperPreferences = const WallpaperPreferences(),
+    this.shortcutPreferences = const ShortcutPreferences(),
     this.profileCollectionSort = AppConfig.defaultProfileCollectionSort,
     this.lastPrimaryTabIndex = 0,
   });
@@ -413,6 +427,13 @@ class AppPreferences {
       ),
       wallpaperPreferences: WallpaperPreferences.fromJson(
         ((json['wallpaperPreferences'] as Map<Object?, Object?>?) ??
+                const <Object?, Object?>{})
+            .map(
+              (Object? key, Object? value) => MapEntry(key.toString(), value),
+            ),
+      ),
+      shortcutPreferences: ShortcutPreferences.fromJson(
+        ((json['shortcutPreferences'] as Map<Object?, Object?>?) ??
                 const <Object?, Object?>{})
             .map(
               (Object? key, Object? value) => MapEntry(key.toString(), value),
@@ -446,12 +467,15 @@ class AppPreferences {
   final ReaderPreferences readerPreferences;
   final DownloadPreferences downloadPreferences;
   final WallpaperPreferences wallpaperPreferences;
+  final ShortcutPreferences shortcutPreferences;
   final ProfileCollectionSort profileCollectionSort;
   final int lastPrimaryTabIndex;
 
   ThemeMode get materialThemeMode {
     switch (themePreference) {
       case AppThemePreference.system:
+        return ThemeMode.system;
+      case AppThemePreference.dynamicColor:
         return ThemeMode.system;
       case AppThemePreference.pureWhite:
       case AppThemePreference.warmLight:
@@ -471,6 +495,7 @@ class AppPreferences {
       case AppThemePreference.system:
       case AppThemePreference.pureWhite:
         return AppTheme.buildPureWhiteTheme();
+      case AppThemePreference.dynamicColor:
       case AppThemePreference.warmLight:
         return AppTheme.buildWarmLightTheme();
       case AppThemePreference.lightOrange:
@@ -492,6 +517,7 @@ class AppPreferences {
       case AppThemePreference.system:
       case AppThemePreference.pureBlack:
         return AppTheme.buildPureBlackTheme();
+      case AppThemePreference.dynamicColor:
       case AppThemePreference.warmDark:
         return AppTheme.buildWarmDarkTheme();
       case AppThemePreference.pureWhite:
@@ -509,6 +535,7 @@ class AppPreferences {
     ReaderPreferences? readerPreferences,
     DownloadPreferences? downloadPreferences,
     WallpaperPreferences? wallpaperPreferences,
+    ShortcutPreferences? shortcutPreferences,
     ProfileCollectionSort? profileCollectionSort,
     int? lastPrimaryTabIndex,
   }) {
@@ -517,6 +544,7 @@ class AppPreferences {
       readerPreferences: readerPreferences ?? this.readerPreferences,
       downloadPreferences: downloadPreferences ?? this.downloadPreferences,
       wallpaperPreferences: wallpaperPreferences ?? this.wallpaperPreferences,
+      shortcutPreferences: shortcutPreferences ?? this.shortcutPreferences,
       profileCollectionSort:
           profileCollectionSort ?? this.profileCollectionSort,
       lastPrimaryTabIndex: lastPrimaryTabIndex ?? this.lastPrimaryTabIndex,
@@ -529,6 +557,7 @@ class AppPreferences {
       'readerPreferences': readerPreferences.toJson(),
       'downloadPreferences': downloadPreferences.toJson(),
       'wallpaperPreferences': wallpaperPreferences.toJson(),
+      'shortcutPreferences': shortcutPreferences.toJson(),
       'profileCollectionSort': _enumName(profileCollectionSort),
       'lastPrimaryTabIndex': lastPrimaryTabIndex,
     };

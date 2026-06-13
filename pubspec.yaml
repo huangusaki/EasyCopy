@@ -45,6 +45,11 @@ dependencies:
   sqflite: ^2.4.2
   url_launcher: ^6.3.1
   webview_flutter: ^4.13.1
+  webview_windows: ^0.4.0
+  file_selector: ^1.1.0
+  sqflite_common_ffi: ^2.4.0+3
+  window_manager: ^0.5.1
+  dynamic_color: ^1.8.1
 
 dev_dependencies:
   flutter_test:
@@ -56,7 +61,6 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
-  sqflite_common_ffi: ^2.3.6
 
 dependency_overrides:
   path_provider_android: 2.3.1
@@ -72,10 +76,10 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  assets:
+    - assets/icons/app_icon_rounded_1024.png
+
   # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

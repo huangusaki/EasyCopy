@@ -456,6 +456,30 @@ extension _AppScreenDownloadActions on _AppScreenState {
         !_canEditDownloadStorage()) {
       return;
     }
+    if (PlatformCapabilities.isWindows) {
+      final DownloadStorageState currentState =
+          _downloadStorageStateNotifier.value;
+      final String? selectedPath = await getDirectoryPath(
+        initialDirectory: currentState.displayPath.trim().isEmpty
+            ? null
+            : currentState.displayPath,
+        confirmButtonText: '选择',
+        canCreateDirectories: true,
+      );
+      final String normalizedPath = (selectedPath ?? '').trim();
+      if (normalizedPath.isEmpty) {
+        return;
+      }
+      final DownloadPreferences nextPreferences = DownloadPreferences(
+        mode: DownloadStorageMode.customDirectory,
+        customBasePath: normalizedPath,
+        customTreeUri: '',
+        customDisplayPath: normalizedPath,
+        usePickedDirectoryAsRoot: true,
+      );
+      await _applyStoragePrefs(nextPreferences, successMessage: '已开始迁移到新的存储位置');
+      return;
+    }
     final PickedDocumentTreeDirectory? pickedDirectory = await _services
         .downloadStorageService
         .pickDocumentTreeDirectory();

@@ -1,6 +1,26 @@
 part of '../app_screen.dart';
 
+/// 缓存命中后延迟刷新，避开切页高峰。
+const Duration _backgroundRevalidateDelay = Duration(milliseconds: 1200);
+
 extension _AppScreenPageLoadActions on _AppScreenState {
+  Future<void> _runDeferredBackgroundRefresh(
+    NavigationRequestContext requestContext,
+    Future<void> Function() refresh,
+  ) async {
+    await Future<void>.delayed(_backgroundRevalidateDelay);
+    if (!mounted || !_canCommitRequest(requestContext)) {
+      return;
+    }
+    perfLog(
+      '[load] background refresh start '
+      'route=${requestContext.routeKey}',
+    );
+    _markTabEntryLoading(requestContext, preservePage: true);
+    await refresh();
+    perfLog('[load] background refresh done route=${requestContext.routeKey}');
+  }
+
   void _setPendingLocation(
     Uri uri, {
     required StandardPageLoadHandle<SitePage> pendingLoad,
@@ -192,9 +212,24 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       _detachPrimaryWebViewIfIdle();
       throw const SupersededPageLoadException();
     }
+    if (!PlatformCapabilities.usesMobileWebView) {
+      unawaited(
+        _loadStandardPageWithDesktopExtractor(
+          pendingLoad: pendingLoad,
+          targetUri: targetUri,
+        ),
+      );
+      return pendingLoad.completer.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          _standardPageLoadController.clear(pendingLoad);
+          throw TimeoutException('页面解析超时');
+        },
+      );
+    }
     await _ensurePrimaryWebViewAttached();
     try {
-      await _controller.loadRequest(targetUri);
+      await _primaryWebViewController.loadRequest(targetUri);
     } catch (_) {
       _failPendingPageLoad('页面加载失败，请稍后重试。');
       rethrow;
@@ -207,6 +242,36 @@ extension _AppScreenPageLoadActions on _AppScreenState {
         throw TimeoutException('页面解析超时');
       },
     );
+  }
+
+  Future<void> _loadStandardPageWithDesktopExtractor({
+    required StandardPageLoadHandle<SitePage> pendingLoad,
+    required Uri targetUri,
+  }) async {
+    try {
+      final SitePage page = await DesktopPageExtractor.instance.loadPage(
+        targetUri,
+        loadId: pendingLoad.loadId,
+      );
+      if (!_standardPageLoadController.isCurrent(pendingLoad)) {
+        if (!pendingLoad.completer.isCompleted) {
+          pendingLoad.completer.completeError(
+            const SupersededPageLoadException(),
+          );
+        }
+        return;
+      }
+      if (!pendingLoad.completer.isCompleted) {
+        pendingLoad.completer.complete(page);
+      }
+    } catch (error, stackTrace) {
+      if (_standardPageLoadController.isCurrent(pendingLoad) &&
+          !pendingLoad.completer.isCompleted) {
+        pendingLoad.completer.completeError(error, stackTrace);
+      }
+    } finally {
+      _standardPageLoadController.clear(pendingLoad);
+    }
   }
 
   Future<SitePage> _preparePageForApply(SitePage page) async {
@@ -439,7 +504,13 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       }
     }
     if (!bypassCache && !shouldPreferFreshReaderLoad) {
+      final Stopwatch cacheStopwatch = Stopwatch()..start();
       final CachedPageHit? cachedHit = await _pageRepository.readCached(key);
+      perfLog(
+        '[load] readCached(${key.routeKey}) '
+        '${cacheStopwatch.elapsedMilliseconds}ms '
+        'hit=${cachedHit != null} memory=${cachedHit?.fromMemory ?? false}',
+      );
       if (!_canCommitRequest(requestContext)) {
         _recordDiscardedMutation(requestContext, phase: 'cached-read');
         return;
@@ -502,16 +573,17 @@ extension _AppScreenPageLoadActions on _AppScreenState {
           if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
             return;
           }
-          _markTabEntryLoading(requestContext, preservePage: true);
+          final NavigationRequestContext revalidateContext = requestContext
+              .copyWith(sourceKind: NavigationRequestSourceKind.revalidate);
           unawaited(
-            _revalidateCachedPage(
-              targetUri,
-              key: key,
-              cachedEntry: cachedHit.envelope,
-              requestContext: requestContext.copyWith(
-                sourceKind: NavigationRequestSourceKind.revalidate,
-              ),
-            ),
+            _runDeferredBackgroundRefresh(revalidateContext, () {
+              return _revalidateCachedPage(
+                targetUri,
+                key: key,
+                cachedEntry: cachedHit.envelope,
+                requestContext: revalidateContext,
+              );
+            }),
           );
           return;
         }
@@ -737,17 +809,18 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
         return true;
       }
-      _markTabEntryLoading(requestContext, preservePage: true);
+      final NavigationRequestContext revalidateContext = requestContext
+          .copyWith(sourceKind: NavigationRequestSourceKind.revalidate);
       unawaited(
-        _revalidateCachedPage(
-          targetUri,
-          key: key,
-          cachedEntry: cachedHit.envelope,
-          requestContext: requestContext.copyWith(
-            sourceKind: NavigationRequestSourceKind.revalidate,
-          ),
-          visibleUri: targetUri,
-        ),
+        _runDeferredBackgroundRefresh(revalidateContext, () {
+          return _revalidateCachedPage(
+            targetUri,
+            key: key,
+            cachedEntry: cachedHit.envelope,
+            requestContext: revalidateContext,
+            visibleUri: targetUri,
+          );
+        }),
       );
       return true;
     }
@@ -768,15 +841,16 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     if (!localProfilePage.isLoggedIn) {
       return true;
     }
-    _markTabEntryLoading(requestContext, preservePage: true);
+    final NavigationRequestContext profileRefreshContext = requestContext
+        .copyWith(sourceKind: NavigationRequestSourceKind.revalidate);
     unawaited(
-      _refreshProfilePage(
-        targetUri,
-        key: key,
-        requestContext: requestContext.copyWith(
-          sourceKind: NavigationRequestSourceKind.revalidate,
-        ),
-      ),
+      _runDeferredBackgroundRefresh(profileRefreshContext, () {
+        return _refreshProfilePage(
+          targetUri,
+          key: key,
+          requestContext: profileRefreshContext,
+        );
+      }),
     );
     return true;
   }

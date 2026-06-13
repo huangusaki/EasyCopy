@@ -5,14 +5,28 @@ import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/reader/reader_screen.dart';
 import 'package:reader/services/comic_download_service.dart';
+import 'package:reader/utils/platform_capabilities.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class AppScreenUiState {
-  final WebViewCookieManager cookieManager = WebViewCookieManager();
+  final WebViewCookieManager? cookieManager =
+      PlatformCapabilities.usesMobileWebView ? WebViewCookieManager() : null;
   final TextEditingController searchController = TextEditingController();
+  final FocusNode desktopSearchFocusNode = FocusNode(
+    debugLabel: 'desktop-global-search',
+  );
+  final FocusNode readerShortcutFocusNode = FocusNode(
+    debugLabel: 'desktop-reader-shortcuts',
+  );
   final ScrollController standardScrollController = ScrollController();
   final ValueNotifier<bool> discoverFilterExpandedNotifier =
       ValueNotifier<bool>(false);
+
+  final ValueNotifier<bool> bottomBarVisibleNotifier = ValueNotifier<bool>(
+    true,
+  );
+
+  double bottomBarScrollAccumulator = 0;
   final Map<String, GlobalKey<State<StatefulWidget>>> discoverListAnchorKeys =
       <String, GlobalKey<State<StatefulWidget>>>{};
   final GlobalKey<ReaderScreenState> readerScreenKey =
@@ -20,8 +34,11 @@ class AppScreenUiState {
 
   void dispose() {
     searchController.dispose();
+    desktopSearchFocusNode.dispose();
+    readerShortcutFocusNode.dispose();
     standardScrollController.dispose();
     discoverFilterExpandedNotifier.dispose();
+    bottomBarVisibleNotifier.dispose();
   }
 }
 
@@ -60,6 +77,10 @@ class AppShellState {
   bool isCheckingForUpdates = false;
   bool isUpdatingCollection = false;
   bool isReaderExitTransitionActive = false;
+  String? readerShortcutFocusRouteKey;
   String appVersion = '';
   String appBuildNumber = '';
+
+  /// 移动端 CookieManager 同步指纹。
+  String? syncedHostCookieFingerprint;
 }

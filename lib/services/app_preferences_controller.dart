@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/app_preferences.dart';
+import 'package:reader/models/shortcut_preferences.dart';
 import 'package:reader/services/app_preferences_store.dart';
 
 class AppPreferencesController extends ChangeNotifier {
@@ -33,6 +34,9 @@ class AppPreferencesController extends ChangeNotifier {
 
   WallpaperPreferences get wallpaperPreferences =>
       _preferences.wallpaperPreferences;
+
+  ShortcutPreferences get shortcutPreferences =>
+      _preferences.shortcutPreferences;
 
   ProfileCollectionSort get profileCollectionSort =>
       _preferences.profileCollectionSort;
@@ -80,6 +84,16 @@ class AppPreferencesController extends ChangeNotifier {
     return _replacePreferences(
       _preferences.copyWith(
         downloadPreferences: transform(_preferences.downloadPreferences),
+      ),
+    );
+  }
+
+  Future<void> updateShortcutPreferences(
+    ShortcutPreferences Function(ShortcutPreferences current) transform,
+  ) {
+    return _replacePreferences(
+      _preferences.copyWith(
+        shortcutPreferences: transform(_preferences.shortcutPreferences),
       ),
     );
   }

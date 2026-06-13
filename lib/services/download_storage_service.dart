@@ -80,6 +80,7 @@ class DownloadStorageService {
            documentTreeBridge ?? AndroidDocumentTreeBridge.instance,
        _supportsCustomDirs =
            Platform.isAndroid ||
+           Platform.isWindows ||
            customBaseDirectoriesProvider != null ||
            storageDirsProvider != null ||
            cacheDirsProvider != null;

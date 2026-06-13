@@ -206,6 +206,7 @@ extension _AppScreenTabNavigation on _AppScreenState {
     if (href.trim().isEmpty) {
       return;
     }
+    _ui.bottomBarVisibleNotifier.value = true;
     final Uri targetUri = AppConfig.resolveNavigationUri(
       href,
       currentUri: _currentUri,
@@ -274,6 +275,9 @@ extension _AppScreenTabNavigation on _AppScreenState {
       }, syncSearch: sourceTabIndex == _nav.selectedIndex);
       unawaited(_persistDetailPageCache(updatedPage));
       if (mounted) {
+        if (!PlatformCapabilities.isDesktop) {
+          unawaited(HapticFeedback.lightImpact());
+        }
         _showNotice(nextCollected ? '已加入书架' : '已取消收藏');
       }
     } catch (error) {
@@ -338,7 +342,7 @@ extension _AppScreenTabNavigation on _AppScreenState {
     _scrollState.resetStandardScrollPosition();
     await _pageRepository.removeAuthenticatedEntries();
     await _services.session.clear();
-    await _ui.cookieManager.clearCookies();
+    await _clearPlatformCookies();
     _mutateSessionState(() {
       for (int index = 0; index < appDestinations.length; index += 1) {
         _abandonCurrentRequest(index, phase: 'logout');
@@ -409,6 +413,28 @@ extension _AppScreenTabNavigation on _AppScreenState {
     if (index < 0 || index >= appDestinations.length) {
       return;
     }
+    final Stopwatch tapStopwatch = Stopwatch()..start();
+    perfLog(
+      '[tab] tap index=$index selected=${_nav.selectedIndex} '
+      'loading=$_isLoading',
+    );
+    _ui.bottomBarVisibleNotifier.value = true;
+    // 加载中重复点当前 Tab 不重启加载。
+    if (index == _nav.selectedIndex && _isLoading) {
+      perfLog('[tab] ignored re-tap while loading index=$index');
+      return;
+    }
+    try {
+      await _onItemTappedInner(index);
+    } finally {
+      perfLog(
+        '[tab] _onItemTapped($index) done in '
+        '${tapStopwatch.elapsedMilliseconds}ms',
+      );
+    }
+  }
+
+  Future<void> _onItemTappedInner(int index) async {
     if (index == _nav.selectedIndex &&
         _routes.isPrimaryTabContent &&
         !_isLoading) {
@@ -418,9 +444,22 @@ extension _AppScreenTabNavigation on _AppScreenState {
       return;
     }
     if (index == 3) {
+      final bool shouldResetToRoot = index == _nav.selectedIndex;
+      final Uri targetUri = _targetUriForPrimaryTab(
+        index,
+        resetToRoot: shouldResetToRoot,
+      );
+      if (!shouldResetToRoot &&
+          _tabSessionStore.currentEntry(index).page != null) {
+        _scrollState.persistVisiblePageState();
+        if (_activateRestoredPrimaryTab(index)) {
+          return;
+        }
+      }
       await _loadProfilePage(
+        targetUri: targetUri,
         preserveVisiblePage: true,
-        historyMode: index == _nav.selectedIndex
+        historyMode: shouldResetToRoot
             ? NavigationIntent.resetToRoot
             : NavigationIntent.preserve,
       );

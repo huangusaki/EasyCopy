@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:ui' as ui;
 
 import 'package:crypto/crypto.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart' show ValueListenable, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -23,17 +23,21 @@ import 'package:reader/app_screen/widgets.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/models/shortcut_preferences.dart';
 import 'package:reader/reader/reader_screen.dart';
 import 'package:reader/services/android_document_tree_bridge.dart';
 import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/app_update_checker.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/debug_trace.dart';
+import 'package:reader/services/desktop_page_extractor.dart';
+import 'package:reader/services/desktop_webview_environment.dart';
 import 'package:reader/services/discover_filter_selection.dart';
 import 'package:reader/services/display_mode_service.dart';
 import 'package:reader/services/download_queue_manager.dart';
 import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
+import 'package:reader/services/frame_jank_logger.dart';
 import 'package:reader/services/local_library_store.dart';
 import 'package:reader/services/navigation_request_guard.dart';
 import 'package:reader/services/network_diagnostics.dart';
@@ -47,12 +51,25 @@ import 'package:reader/services/site_api_client.dart';
 import 'package:reader/services/site_html_page_loader.dart';
 import 'package:reader/services/standard_page_load_controller.dart';
 import 'package:reader/services/tab_activation_policy.dart';
+import 'package:reader/utils/platform_capabilities.dart';
 import 'package:reader/webview/page_extractor_script.dart';
 import 'package:reader/widgets/auth_webview_screen.dart';
 import 'package:reader/widgets/comic_grid.dart';
+import 'package:reader/widgets/comic_quick_preview_sheet.dart';
+import 'package:reader/widgets/desktop/ambient_backdrop.dart';
+import 'package:reader/widgets/desktop/desktop_dock.dart';
+import 'package:reader/widgets/desktop/desktop_floating_window_controls.dart';
+import 'package:reader/widgets/desktop/desktop_search_field.dart';
+import 'package:reader/widgets/desktop/desktop_shortcuts.dart';
+import 'package:reader/widgets/desktop/desktop_title_bar.dart';
+import 'package:reader/widgets/desktop/keyboard_shortcuts_page.dart';
 import 'package:reader/widgets/download_management_page.dart';
+import 'package:reader/widgets/mobile_floating_nav_bar.dart';
+import 'package:reader/widgets/motion.dart';
 import 'package:reader/widgets/native_login_screen.dart';
+import 'package:reader/widgets/page_skeleton.dart';
 import 'package:reader/widgets/profile_page_view.dart';
+import 'package:reader/widgets/responsive_layout.dart';
 import 'package:reader/widgets/settings_ui.dart';
 import 'package:reader/widgets/top_notice.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -73,75 +90,12 @@ part 'app_screen/webview_pipeline.dart';
 
 const Duration _pageFadeTransitionDuration = Duration(milliseconds: 320);
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
-const Duration _standardBodyFadeInDuration = Duration(milliseconds: 220);
 
 Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
   return FadeTransition(
     opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
     child: child,
   );
-}
-
-/// Triggers a brief fade-in (with a subtle slide-up) every time [contentKey]
-/// changes. Unlike [AnimatedSwitcher], it keeps a single subtree mounted at all
-/// times, so descendants that own shared resources (like [ScrollController]s)
-/// never collide with a transitioning twin.
-class _TabContentFadeIn extends StatefulWidget {
-  const _TabContentFadeIn({required this.contentKey, required this.child});
-
-  final String contentKey;
-  final Widget child;
-
-  @override
-  State<_TabContentFadeIn> createState() => _TabContentFadeInState();
-}
-
-class _TabContentFadeInState extends State<_TabContentFadeIn>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _fade;
-  late final Animation<Offset> _slide;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: _standardBodyFadeInDuration,
-      value: 1,
-    );
-    final CurvedAnimation curve = CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeOutCubic,
-    );
-    _fade = curve;
-    _slide = Tween<Offset>(
-      begin: const Offset(0, 0.012),
-      end: Offset.zero,
-    ).animate(curve);
-  }
-
-  @override
-  void didUpdateWidget(covariant _TabContentFadeIn oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.contentKey != widget.contentKey) {
-      _controller.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fade,
-      child: SlideTransition(position: _slide, child: widget.child),
-    );
-  }
 }
 
 class _AppScreenDownloadTaskRunner implements DownloadTaskRunner {
@@ -188,8 +142,8 @@ class AppScreen extends StatefulWidget {
 }
 
 class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
-  late final WebViewController _controller;
-  late final WebViewController _downloadController;
+  WebViewController? _controller;
+  WebViewController? _downloadController;
   late final AppPreferencesController _preferencesController;
   final AppScreenServices _services = AppScreenServices();
   final AppScreenUiState _ui = AppScreenUiState();
@@ -227,12 +181,15 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    FrameJankLogger.install();
     WidgetsBinding.instance.addObserver(this);
     _preferencesController =
         widget.preferencesController ?? AppPreferencesController.instance;
     _shell.lastDownloadPrefs = _preferencesController.downloadPreferences;
-    _controller = _buildController();
-    _downloadController = _buildDownloadController();
+    if (PlatformCapabilities.usesMobileWebView) {
+      _controller = _buildController();
+      _downloadController = _buildDownloadController();
+    }
     _chapterKeys = ChapterPathResolver(_services.readerProgressStore);
     _searchActions = AppSearchActions(
       historyStore: _services.searchHistoryStore,
@@ -370,9 +327,116 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
     _detailChapters.noteViewportInteraction();
   }
 
+  Widget _wrapDesktopReaderShell(BuildContext context, Widget child) {
+    if (!PlatformCapabilities.isDesktop) {
+      return child;
+    }
+    final ShortcutPreferences shortcuts =
+        _preferencesController.shortcutPreferences;
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        shortcuts.bindingFor(ShortcutAction.exitReader).activator: () =>
+            unawaited(_handleBackNavigation()),
+        shortcuts.bindingFor(ShortcutAction.readerPreviousPage).activator:
+            _readerStepBackward,
+        shortcuts.bindingFor(ShortcutAction.readerNextPage).activator:
+            _readerStepForward,
+        shortcuts.bindingFor(ShortcutAction.readerScrollUp).activator:
+            _readerScrollUp,
+        shortcuts.bindingFor(ShortcutAction.readerScrollDown).activator:
+            _readerScrollDown,
+        shortcuts.bindingFor(ShortcutAction.readerPreviousChapter).activator:
+            _readerPreviousChapter,
+        shortcuts.bindingFor(ShortcutAction.readerNextChapter).activator:
+            _readerNextChapter,
+        shortcuts.bindingFor(ShortcutAction.readerToggleFullscreen).activator:
+            _toggleReaderFullscreen,
+      },
+      child: Focus(
+        focusNode: _ui.readerShortcutFocusNode,
+        autofocus: true,
+        skipTraversal: true,
+        includeSemantics: false,
+        child: child,
+      ),
+    );
+  }
+
+  void _readerStepForward() {
+    final ReaderScreenState? state = _ui.readerScreenKey.currentState;
+    if (state != null) {
+      unawaited(state.controller.stepForward());
+    }
+  }
+
+  void _readerStepBackward() {
+    final ReaderScreenState? state = _ui.readerScreenKey.currentState;
+    if (state != null) {
+      unawaited(state.controller.stepBackward());
+    }
+  }
+
+  void _readerScrollUp() {
+    final ReaderScreenState? state = _ui.readerScreenKey.currentState;
+    if (state != null) {
+      unawaited(state.controller.scrollCurrentPageUp());
+    }
+  }
+
+  void _readerScrollDown() {
+    final ReaderScreenState? state = _ui.readerScreenKey.currentState;
+    if (state != null) {
+      unawaited(state.controller.scrollCurrentPageDown());
+    }
+  }
+
+  void _readerNextChapter() =>
+      _ui.readerScreenKey.currentState?.goToNextChapter();
+
+  void _readerPreviousChapter() =>
+      _ui.readerScreenKey.currentState?.goToPreviousChapter();
+
+  void _toggleReaderFullscreen() {
+    unawaited(
+      _preferencesController.updateReaderPreferences(
+        (ReaderPreferences current) =>
+            current.copyWith(fullscreen: !current.fullscreen),
+      ),
+    );
+  }
+
+  void _syncDesktopReaderShortcutFocus(bool isReaderRoute) {
+    if (!PlatformCapabilities.isDesktop) {
+      return;
+    }
+    if (!isReaderRoute) {
+      _shell.readerShortcutFocusRouteKey = null;
+      return;
+    }
+    final String routeKey = _currentEntry.routeKey;
+    if (_shell.readerShortcutFocusRouteKey == routeKey) {
+      return;
+    }
+    _shell.readerShortcutFocusRouteKey = routeKey;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final SitePage? page = _page;
+      final bool stillReaderRoute =
+          page is ReaderPageData || _isReaderChapterUri(_currentUri);
+      if (stillReaderRoute && _ui.readerShortcutFocusNode.canRequestFocus) {
+        _ui.readerShortcutFocusNode.requestFocus();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final SitePage? page = _page;
+    final bool isReaderRoute =
+        page is ReaderPageData || _isReaderChapterUri(_currentUri);
+    _syncDesktopReaderShortcutFocus(isReaderRoute);
     return PopScope<Object?>(
       canPop: false,
       onPopInvokedWithResult: (bool didPop, Object? result) async {
@@ -395,30 +459,34 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
                 child: page is ReaderPageData
                     ? KeyedSubtree(
                         key: const ValueKey<String>('reader'),
-                        child: ReaderScreen(
-                          key: _ui.readerScreenKey,
-                          page: page,
-                          isExitTransitionActive:
-                              _shell.isReaderExitTransitionActive,
-                          onRequestChapterNavigation:
-                              (
-                                String href, {
-                                String prevHref = '',
-                                String nextHref = '',
-                                String catalogHref = '',
-                              }) async {
-                                await _openHref(
-                                  href,
-                                  prevHref: prevHref,
-                                  nextHref: nextHref,
-                                  catalogHref: catalogHref,
-                                  sourceTabIndex: _nav.selectedIndex,
-                                );
-                              },
-                          onRequestAuth: _openAuthFlow,
-                          onLogoutForExpiredSession: () =>
-                              _logout(showFeedback: false),
-                          onResolveHistoryCover: _resolveHistoryCoverForCatalog,
+                        child: _wrapDesktopReaderShell(
+                          context,
+                          ReaderScreen(
+                            key: _ui.readerScreenKey,
+                            page: page,
+                            isExitTransitionActive:
+                                _shell.isReaderExitTransitionActive,
+                            onRequestChapterNavigation:
+                                (
+                                  String href, {
+                                  String prevHref = '',
+                                  String nextHref = '',
+                                  String catalogHref = '',
+                                }) async {
+                                  await _openHref(
+                                    href,
+                                    prevHref: prevHref,
+                                    nextHref: nextHref,
+                                    catalogHref: catalogHref,
+                                    sourceTabIndex: _nav.selectedIndex,
+                                  );
+                                },
+                            onRequestAuth: _openAuthFlow,
+                            onLogoutForExpiredSession: () =>
+                                _logout(showFeedback: false),
+                            onResolveHistoryCover:
+                                _resolveHistoryCoverForCatalog,
+                          ),
                         ),
                       )
                     : _isReaderChapterUri(_currentUri)
@@ -433,6 +501,12 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
               ),
             ),
           ),
+          if (PlatformCapabilities.isDesktop && isReaderRoute)
+            const Positioned(
+              top: 0,
+              right: 0,
+              child: DesktopFloatingWindowControls(),
+            ),
         ],
       ),
     );

@@ -1,4 +1,31 @@
 import 'package:flutter/material.dart';
+import 'package:reader/utils/platform_capabilities.dart';
+
+class _SoftFadePageTransitionsBuilder extends PageTransitionsBuilder {
+  const _SoftFadePageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    return FadeTransition(
+      opacity: animation.drive(CurveTween(curve: Curves.easeOutCubic)),
+      child: SlideTransition(
+        position: animation.drive(
+          Tween<Offset>(
+            begin: const Offset(0, 0.015),
+            end: Offset.zero,
+          ).chain(CurveTween(curve: Curves.easeOutCubic)),
+        ),
+        child: child,
+      ),
+    );
+  }
+}
 
 @immutable
 class AppSemanticColors extends ThemeExtension<AppSemanticColors> {
@@ -63,7 +90,7 @@ class AppTheme {
   static const Color _accentOrangeDeep = Color(0xFFE85F1F);
 
   static const Color _warmLightBackground = Color(0xFFFAF6EE);
-  static const Color _warmDarkBackground = Color(0xFF18130E);
+  static const Color _warmDarkBackground = Color(0xFF1B130D);
 
   static const AppSemanticColors _warmLightSemanticColors = AppSemanticColors(
     success: Color(0xFF18A558),
@@ -126,26 +153,26 @@ class AppTheme {
       brightness: Brightness.dark,
     );
     final ColorScheme colorScheme = base.copyWith(
-      primary: const Color(0xFFE3B695),
-      onPrimary: const Color(0xFF3A1F0E),
-      primaryContainer: const Color(0xFF5C3A22),
-      onPrimaryContainer: const Color(0xFFF4DAC2),
+      primary: const Color(0xFFEFC09A),
+      onPrimary: const Color(0xFF44260D),
+      primaryContainer: const Color(0xFF6A4426),
+      onPrimaryContainer: const Color(0xFFFBDFC5),
       secondary: _accentOrange,
-      onSecondary: const Color(0xFF3A1500),
-      secondaryContainer: const Color(0xFF6B2A05),
-      onSecondaryContainer: const Color(0xFFFFE2CB),
-      tertiary: const Color(0xFFD4B387),
+      onSecondary: const Color(0xFF401600),
+      secondaryContainer: const Color(0xFF7A3411),
+      onSecondaryContainer: const Color(0xFFFFE0CC),
+      tertiary: const Color(0xFFDCB98B),
       surface: _warmDarkBackground,
       surfaceTint: _accentOrangeDeep,
-      surfaceContainerLowest: const Color(0xFF120E08),
-      surfaceContainerLow: const Color(0xFF1C170F),
-      surfaceContainer: const Color(0xFF221C13),
-      surfaceContainerHigh: const Color(0xFF2B231A),
-      surfaceContainerHighest: const Color(0xFF342B22),
-      outline: const Color(0xFF5C5044),
-      outlineVariant: const Color(0xFF3D352A),
-      onSurface: const Color(0xFFECE5D8),
-      onSurfaceVariant: const Color(0xFFB7AC9B),
+      surfaceContainerLowest: const Color(0xFF140D08),
+      surfaceContainerLow: const Color(0xFF20160F),
+      surfaceContainer: const Color(0xFF281C14),
+      surfaceContainerHigh: const Color(0xFF33251B),
+      surfaceContainerHighest: const Color(0xFF3F2F23),
+      outline: const Color(0xFF6E5C4B),
+      outlineVariant: const Color(0xFF463A2D),
+      onSurface: const Color(0xFFF3E9DD),
+      onSurfaceVariant: const Color(0xFFC5B4A1),
     );
 
     return _buildTheme(
@@ -256,34 +283,36 @@ class AppTheme {
 
   static ThemeData buildPureBlackTheme() {
     const Color paperSeed = Color(0xFFFFFFFF);
+    // 强调色用浅灰而非纯白，避免选中胶囊/光晕塌成刺眼的白块。
+    const Color accentGray = Color(0xFFD6D6D6);
 
     final ColorScheme base = ColorScheme.fromSeed(
       seedColor: paperSeed,
       brightness: Brightness.dark,
     );
     final ColorScheme colorScheme = base.copyWith(
-      primary: paperSeed,
-      onPrimary: const Color(0xFF000000),
-      primaryContainer: const Color(0xFF2A2A2A),
-      onPrimaryContainer: paperSeed,
-      secondary: const Color(0xFFDEDEDE),
-      onSecondary: const Color(0xFF000000),
-      secondaryContainer: const Color(0xFF1F1F1F),
-      onSecondaryContainer: paperSeed,
-      tertiary: const Color(0xFFC0C0C0),
-      tertiaryContainer: const Color(0xFF252525),
-      onTertiaryContainer: paperSeed,
+      primary: accentGray,
+      onPrimary: const Color(0xFF141414),
+      primaryContainer: const Color(0xFF2E2E2E),
+      onPrimaryContainer: const Color(0xFFECECEC),
+      secondary: const Color(0xFFADADAD),
+      onSecondary: const Color(0xFF141414),
+      secondaryContainer: const Color(0xFF333333),
+      onSecondaryContainer: const Color(0xFFECECEC),
+      tertiary: const Color(0xFF8C8C8C),
+      tertiaryContainer: const Color(0xFF292929),
+      onTertiaryContainer: const Color(0xFFECECEC),
       surface: const Color(0xFF000000),
-      surfaceTint: paperSeed,
+      surfaceTint: accentGray,
       surfaceContainerLowest: const Color(0xFF000000),
-      surfaceContainerLow: const Color(0xFF0A0A0A),
-      surfaceContainer: const Color(0xFF141414),
-      surfaceContainerHigh: const Color(0xFF1F1F1F),
-      surfaceContainerHighest: const Color(0xFF2A2A2A),
-      outline: const Color(0xFF404040),
-      outlineVariant: const Color(0xFF2A2A2A),
+      surfaceContainerLow: const Color(0xFF080808),
+      surfaceContainer: const Color(0xFF101010),
+      surfaceContainerHigh: const Color(0xFF181818),
+      surfaceContainerHighest: const Color(0xFF242424),
+      outline: const Color(0xFF5A5A5A),
+      outlineVariant: const Color(0xFF363636),
       onSurface: paperSeed,
-      onSurfaceVariant: const Color(0xFFA0A0A0),
+      onSurfaceVariant: const Color(0xFFB8B8B8),
     );
 
     return _buildTheme(
@@ -446,15 +475,71 @@ class AppTheme {
   static ThemeData buildLightTheme() => buildWarmLightTheme();
   static ThemeData buildDarkTheme() => buildWarmDarkTheme();
 
+  static ThemeData buildDynamicTheme(ColorScheme dynamicScheme) {
+    final bool isDark = dynamicScheme.brightness == Brightness.dark;
+    final Color accent = dynamicScheme.primary;
+
+    // ColorScheme.fromSeed（Windows/macOS 取系统强调色走这条）产出的表面几乎是
+    // 中性灰，整屏看不出强调色。这里把各级表面朝强调色叠一层薄色，让整体明显
+    // 跟随系统取色，而不只是几个小图标变色。
+    Color tinted(Color base, double amount) =>
+        Color.alphaBlend(accent.withValues(alpha: amount), base);
+
+    final Color surfaceBase = isDark
+        ? const Color(0xFF12100F)
+        : const Color(0xFFFBFAF9);
+
+    final ColorScheme scheme = dynamicScheme.copyWith(
+      surface: tinted(surfaceBase, isDark ? 0.08 : 0.05),
+      surfaceContainerLowest: tinted(
+        isDark ? const Color(0xFF0A0908) : const Color(0xFFFFFFFF),
+        isDark ? 0.04 : 0.02,
+      ),
+      surfaceContainerLow: tinted(surfaceBase, isDark ? 0.10 : 0.06),
+      surfaceContainer: tinted(surfaceBase, isDark ? 0.13 : 0.08),
+      surfaceContainerHigh: tinted(surfaceBase, isDark ? 0.16 : 0.11),
+      surfaceContainerHighest: tinted(surfaceBase, isDark ? 0.20 : 0.14),
+      surfaceTint: accent,
+    );
+
+    return _buildTheme(
+      colorScheme: scheme,
+      scaffoldBackgroundColor: scheme.surface,
+      semanticColors: isDark
+          ? _warmDarkSemanticColors
+          : _warmLightSemanticColors,
+    );
+  }
+
+  /// Windows CJK 回退字体栈。
+  static const String _windowsLatinFont = 'Segoe UI';
+  static const List<String> _simplifiedHanFallback = <String>[
+    'Microsoft YaHei UI',
+    'Microsoft YaHei',
+    'PingFang SC',
+    'Noto Sans SC',
+  ];
+
   static ThemeData _buildTheme({
     required ColorScheme colorScheme,
     required Color scaffoldBackgroundColor,
     required AppSemanticColors semanticColors,
   }) {
-    return ThemeData(
+    final bool useWindowsFontStack = PlatformCapabilities.isWindows;
+    final ThemeData theme = ThemeData(
       colorScheme: colorScheme,
       scaffoldBackgroundColor: scaffoldBackgroundColor,
       useMaterial3: true,
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: <TargetPlatform, PageTransitionsBuilder>{
+          TargetPlatform.android: ZoomPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.windows: _SoftFadePageTransitionsBuilder(),
+          TargetPlatform.linux: _SoftFadePageTransitionsBuilder(),
+          TargetPlatform.macOS: _SoftFadePageTransitionsBuilder(),
+        },
+      ),
+      fontFamily: useWindowsFontStack ? _windowsLatinFont : null,
       extensions: <ThemeExtension<dynamic>>[semanticColors],
       cardTheme: CardThemeData(
         color: colorScheme.surface,
@@ -463,6 +548,27 @@ class AppTheme {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       ),
       dividerColor: colorScheme.outlineVariant,
+      scrollbarTheme: ScrollbarThemeData(
+        radius: const Radius.circular(999),
+        crossAxisMargin: 3,
+        mainAxisMargin: 6,
+        interactive: true,
+        thickness: WidgetStateProperty.resolveWith<double>(
+          (Set<WidgetState> states) =>
+              states.contains(WidgetState.hovered) ? 8 : 5,
+        ),
+        thumbColor: WidgetStateProperty.resolveWith<Color?>((
+          Set<WidgetState> states,
+        ) {
+          if (states.contains(WidgetState.dragged)) {
+            return colorScheme.primary.withValues(alpha: 0.75);
+          }
+          if (states.contains(WidgetState.hovered)) {
+            return colorScheme.onSurface.withValues(alpha: 0.4);
+          }
+          return colorScheme.onSurface.withValues(alpha: 0.22);
+        }),
+      ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: colorScheme.surface,
         surfaceTintColor: colorScheme.surfaceTint,
@@ -535,11 +641,23 @@ class AppTheme {
         ),
       ),
     );
+    if (!useWindowsFontStack) {
+      return theme;
+    }
+    return theme.copyWith(
+      textTheme: theme.textTheme.apply(
+        fontFamily: _windowsLatinFont,
+        fontFamilyFallback: _simplifiedHanFallback,
+      ),
+      primaryTextTheme: theme.primaryTextTheme.apply(
+        fontFamily: _windowsLatinFont,
+        fontFamilyFallback: _simplifiedHanFallback,
+      ),
+    );
   }
 }
 
 extension WallpaperThemeOverlay on ThemeData {
-  /// 壁纸模式下的半透明主题。
   ThemeData applyWallpaperOverlay({required bool active}) {
     if (!active) {
       return this;

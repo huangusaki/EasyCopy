@@ -403,9 +403,21 @@ extension _AppScreenHostActions on _AppScreenState {
     if (_services.session.cookies.isEmpty) {
       return;
     }
+    if (!PlatformCapabilities.usesMobileWebView) {
+      return;
+    }
+    final WebViewCookieManager? cookieManager = _ui.cookieManager;
+    if (cookieManager == null) {
+      return;
+    }
+    // 未变化则跳过 CookieManager 平台调用。
+    final String fingerprint = _hostCookieFingerprint();
+    if (fingerprint == _shell.syncedHostCookieFingerprint) {
+      return;
+    }
     for (final MapEntry<String, String> cookie
         in _services.session.cookies.entries) {
-      await _ui.cookieManager.setCookie(
+      await cookieManager.setCookie(
         WebViewCookie(
           name: cookie.key,
           value: cookie.value,
@@ -413,6 +425,31 @@ extension _AppScreenHostActions on _AppScreenState {
           path: '/',
         ),
       );
+    }
+    _shell.syncedHostCookieFingerprint = fingerprint;
+  }
+
+  String _hostCookieFingerprint() {
+    final List<String> entries =
+        _services.session.cookies.entries
+            .map(
+              (MapEntry<String, String> cookie) =>
+                  '${cookie.key}=${cookie.value}',
+            )
+            .toList()
+          ..sort();
+    return '${_services.hostManager.currentHost}::${entries.join(';')}';
+  }
+
+  Future<void> _clearPlatformCookies() async {
+    if (PlatformCapabilities.usesMobileWebView) {
+      await _ui.cookieManager?.clearCookies();
+      _shell.syncedHostCookieFingerprint = null;
+      return;
+    }
+    if (PlatformCapabilities.supportsDesktopWebView) {
+      await DesktopWebViewEnvironment.instance.clearCookies();
+      DesktopPageExtractor.instance.invalidateCookiePriming();
     }
   }
 }

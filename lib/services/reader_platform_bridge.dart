@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:reader/models/app_preferences.dart';
+import 'package:window_manager/window_manager.dart';
 
 enum ReaderVolumeKeyAction { previous, next }
 
@@ -28,6 +31,16 @@ class ReaderPlatformBridge {
 
   bool get isAndroidSupported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  bool get _isDesktop =>
+      !kIsWeb &&
+      (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
+
+  bool get supportsOrientationLock =>
+      !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+  bool get _isRunningInTest =>
+      !kIsWeb && Platform.environment.containsKey('FLUTTER_TEST');
 
   Stream<int> get batteryStream {
     if (!isAndroidSupported) {
@@ -61,5 +74,53 @@ class ReaderPlatformBridge {
       return;
     }
     await _methodChannel.invokeMethod<void>('setVolumePagingEnabled', enabled);
+  }
+
+  Future<void> applyReaderPresentation({
+    required ReaderScreenOrientation orientation,
+    required bool fullscreen,
+  }) async {
+    if (_isDesktop) {
+      await _setDesktopFullscreen(fullscreen);
+      return;
+    }
+    if (supportsOrientationLock) {
+      await SystemChrome.setPreferredOrientations(
+        orientation == ReaderScreenOrientation.landscape
+            ? const <DeviceOrientation>[
+                DeviceOrientation.landscapeLeft,
+                DeviceOrientation.landscapeRight,
+              ]
+            : const <DeviceOrientation>[DeviceOrientation.portraitUp],
+      );
+    }
+    await SystemChrome.setEnabledSystemUIMode(
+      fullscreen ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+    );
+  }
+
+  Future<void> restoreDefaultPresentation() async {
+    if (_isDesktop) {
+      await _setDesktopFullscreen(false);
+      return;
+    }
+    if (supportsOrientationLock) {
+      await SystemChrome.setPreferredOrientations(const <DeviceOrientation>[
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    }
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
+
+  Future<void> _setDesktopFullscreen(bool enabled) async {
+    if (_isRunningInTest) {
+      return;
+    }
+    if (await windowManager.isFullScreen() == enabled) {
+      return;
+    }
+    await windowManager.setFullScreen(enabled);
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:reader/widgets/responsive_layout.dart';
 
 class AppSurfaceCard extends StatelessWidget {
   const AppSurfaceCard({
@@ -18,13 +19,30 @@ class AppSurfaceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final bool isLight = colorScheme.brightness == Brightness.light;
-    final Color cardColor = isLight
+    final bool isDesktop = usesDesktopLayout(context);
+    final bool useGlassEffect =
+        isDesktop &&
+        Theme.of(context).scaffoldBackgroundColor == Colors.transparent;
+
+    final Color cardColor = useGlassEffect
+        ? colorScheme.surface.withValues(alpha: 0.58)
+        : isLight
         ? colorScheme.surfaceContainerLow
         : colorScheme.surfaceContainerHigh;
+
+    // InkWell 需要最近的 Material 层。
     return Material(
       color: cardColor,
-      borderRadius: BorderRadius.circular(24),
       clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: useGlassEffect
+            ? BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.22),
+                width: 1.2,
+              )
+            : BorderSide.none,
+      ),
       child: Padding(
         padding: padding,
         child: Column(

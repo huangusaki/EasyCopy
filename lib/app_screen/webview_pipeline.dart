@@ -1,6 +1,22 @@
 part of '../app_screen.dart';
 
 extension _AppScreenWebviewPipeline on _AppScreenState {
+  WebViewController get _primaryWebViewController {
+    final WebViewController? controller = _controller;
+    if (controller == null) {
+      throw StateError('当前平台不支持移动端 WebView 管线');
+    }
+    return controller;
+  }
+
+  WebViewController get _downloadWebViewController {
+    final WebViewController? controller = _downloadController;
+    if (controller == null) {
+      throw StateError('当前平台不支持移动端 WebView 管线');
+    }
+    return controller;
+  }
+
   WebViewController _buildController() {
     return WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -94,7 +110,7 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
               return;
             }
             try {
-              await _controller.runJavaScript(
+              await _primaryWebViewController.runJavaScript(
                 buildPageExtractionScript(pendingLoad.loadId),
               );
             } catch (_) {
@@ -190,7 +206,7 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
               return;
             }
             try {
-              await _downloadController.runJavaScript(
+              await _downloadWebViewController.runJavaScript(
                 buildPageExtractionScript(loadId),
               );
             } catch (error) {
@@ -326,6 +342,15 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
   }
 
   Future<ReaderPageData> _extractDownloadPageWithWebView(Uri uri) async {
+    if (!PlatformCapabilities.usesMobileWebView) {
+      final SitePage page = await DesktopPageExtractor.instance.loadPage(
+        AppConfig.rewriteToCurrentHost(uri),
+      );
+      if (page is ReaderPageData) {
+        return page;
+      }
+      throw StateError('章节解析失败');
+    }
     if (_web.downloadExtractionCompleter != null) {
       throw StateError('正在准备其他章节下载，请稍后再试。');
     }
@@ -335,7 +360,7 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
     _web.downloadActiveLoadId += 1;
     await _ensureDownloadWebViewAttached();
     try {
-      await _downloadController.loadRequest(
+      await _downloadWebViewController.loadRequest(
         AppConfig.rewriteToCurrentHost(uri),
       );
     } catch (_) {
@@ -357,6 +382,7 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
     if (_web.isPrimaryWebViewAttached == attached) {
       return;
     }
+    perfLog('[webview] primary ${attached ? 'attach' : 'detach'}');
     if (!mounted) {
       _web.isPrimaryWebViewAttached = attached;
       return;
@@ -380,6 +406,9 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
   }
 
   Future<void> _ensurePrimaryWebViewAttached() async {
+    if (!PlatformCapabilities.usesMobileWebView) {
+      throw StateError('当前平台不支持移动端 WebView 管线');
+    }
     if (_web.isPrimaryWebViewAttached) {
       return;
     }
@@ -388,6 +417,9 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
   }
 
   Future<void> _ensureDownloadWebViewAttached() async {
+    if (!PlatformCapabilities.usesMobileWebView) {
+      throw StateError('当前平台不支持移动端 WebView 管线');
+    }
     if (_web.isDownloadWebViewAttached) {
       return;
     }
@@ -411,12 +443,17 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
   }
 
   List<Widget> _buildHiddenWebViewHosts() {
+    if (!PlatformCapabilities.usesMobileWebView) {
+      return const <Widget>[];
+    }
+    final WebViewController? controller = _controller;
+    final WebViewController? downloadController = _downloadController;
     return <Widget>[
-      if (_web.isPrimaryWebViewAttached)
-        _buildHiddenWebViewHost(controller: _controller, left: -8, top: -8),
-      if (_web.isDownloadWebViewAttached)
+      if (_web.isPrimaryWebViewAttached && controller != null)
+        _buildHiddenWebViewHost(controller: controller, left: -8, top: -8),
+      if (_web.isDownloadWebViewAttached && downloadController != null)
         _buildHiddenWebViewHost(
-          controller: _downloadController,
+          controller: downloadController,
           left: -16,
           top: -16,
         ),

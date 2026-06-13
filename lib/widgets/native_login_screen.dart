@@ -3,7 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:reader/services/login_credentials_store.dart';
 import 'package:reader/services/site_api_client.dart';
+import 'package:reader/utils/platform_capabilities.dart';
 import 'package:reader/widgets/auth_webview_screen.dart';
+import 'package:reader/widgets/desktop_auth_webview_screen.dart';
+import 'package:reader/widgets/responsive_layout.dart';
 
 class NativeLoginScreen extends StatefulWidget {
   const NativeLoginScreen({
@@ -111,6 +114,12 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
     final AuthSessionResult? result = await Navigator.of(context).push(
       MaterialPageRoute<AuthSessionResult>(
         builder: (BuildContext context) {
+          if (PlatformCapabilities.supportsDesktopWebView) {
+            return DesktopAuthWebViewScreen(
+              loginUri: widget.loginUri,
+              userAgent: widget.userAgent,
+            );
+          }
           return AuthWebViewScreen(
             loginUri: widget.loginUri,
             userAgent: widget.userAgent,
@@ -131,7 +140,7 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
     final bool isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
+      backgroundColor: opaquePageBackground(context),
       appBar: AppBar(title: const Text('登录')),
       body: Container(
         key: const ValueKey<String>('native_login_backdrop'),

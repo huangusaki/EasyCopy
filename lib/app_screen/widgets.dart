@@ -1,11 +1,14 @@
 // ignore_for_file: use_key_in_widget_constructors
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:reader/app_screen/models.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/theme/app_theme.dart';
 import 'package:reader/widgets/cover_image.dart';
+import 'package:reader/widgets/responsive_layout.dart';
 import 'package:reader/widgets/settings_ui.dart';
 
 part 'widgets/detail_cards.dart';

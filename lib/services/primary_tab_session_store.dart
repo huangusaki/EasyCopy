@@ -92,6 +92,11 @@ class PrimaryTabSessionStore {
     return _stackFor(tabIndex).last;
   }
 
+  /// 当前 Tab 路由栈深度。
+  int depth(int tabIndex) {
+    return _stackFor(tabIndex).length;
+  }
+
   bool canPop(int tabIndex) {
     return _stackFor(tabIndex).length > 1;
   }
