@@ -4,6 +4,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:reader/models/app_preferences.dart';
+import 'package:reader/utils/platform_capabilities.dart';
 import 'package:window_manager/window_manager.dart';
 
 enum ReaderVolumeKeyAction { previous, next }
@@ -32,9 +33,7 @@ class ReaderPlatformBridge {
   bool get isAndroidSupported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
-  bool get _isDesktop =>
-      !kIsWeb &&
-      (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
+  bool get _isDesktop => PlatformCapabilities.isDesktop;
 
   bool get supportsOrientationLock =>
       !kIsWeb && (Platform.isAndroid || Platform.isIOS);

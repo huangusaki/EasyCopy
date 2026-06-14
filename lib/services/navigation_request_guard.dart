@@ -17,7 +17,6 @@ class NavigationRequestContext {
     required this.intent,
     required this.preserveVisiblePage,
     required this.sourceKind,
-    this.allowBackgroundCache = true,
   });
 
   final int requestId;
@@ -26,7 +25,6 @@ class NavigationRequestContext {
   final NavigationIntent intent;
   final bool preserveVisiblePage;
   final NavigationRequestSourceKind sourceKind;
-  final bool allowBackgroundCache;
 
   NavigationRequestContext copyWith({
     int? requestId,
@@ -35,7 +33,6 @@ class NavigationRequestContext {
     NavigationIntent? intent,
     bool? preserveVisiblePage,
     NavigationRequestSourceKind? sourceKind,
-    bool? allowBackgroundCache,
   }) {
     return NavigationRequestContext(
       requestId: requestId ?? this.requestId,
@@ -44,7 +41,6 @@ class NavigationRequestContext {
       intent: intent ?? this.intent,
       preserveVisiblePage: preserveVisiblePage ?? this.preserveVisiblePage,
       sourceKind: sourceKind ?? this.sourceKind,
-      allowBackgroundCache: allowBackgroundCache ?? this.allowBackgroundCache,
     );
   }
 }

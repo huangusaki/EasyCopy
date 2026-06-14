@@ -37,6 +37,7 @@ class DetailChapterRequest {
   final String dnt;
 }
 
+// 与 WebView 注入脚本共享站点 DOM 约定，选择器变更需同步。
 class SiteHtmlPageParser {
   const SiteHtmlPageParser();
 
@@ -111,69 +112,64 @@ class SiteHtmlPageParser {
   }
 
   HomePageData _buildHomePage(Uri uri, dom.Document document) {
-    final List<ComicSectionData>
-    sections = _querySelectorAll(document, '.index-all-icon')
-        .map((dom.Element header) {
-          final String title = _queryText(header, '.index-all-icon-left-txt');
-          final String sectionHref = _linkUrl(
-            uri,
-            _querySelector(header, '.index-all-icon-right a'),
-          );
-          final Uri? sectionUri = Uri.tryParse(sectionHref);
-          final String normalizedTitle = title.replaceAll(RegExp(r'\s+'), '');
-          final String normalizedSectionPath = (sectionUri?.path ?? sectionHref)
-              .trim()
-              .toLowerCase();
-          if (title.isEmpty || title.contains('排行榜')) {
-            return null;
-          }
-          if (normalizedTitle.contains('熱門更新') ||
-              normalizedTitle.contains('热门更新') ||
-              normalizedSectionPath == '/comics' ||
-              normalizedSectionPath == '/comics/') {
-            return null;
-          }
+    final List<ComicSectionData> sections =
+        _querySelectorAll(document, '.index-all-icon')
+            .map((dom.Element header) {
+              final String title = _queryText(
+                header,
+                '.index-all-icon-left-txt',
+              );
+              final String sectionHref = _linkUrl(
+                uri,
+                _querySelector(header, '.index-all-icon-right a'),
+              );
+              if (title.isEmpty || title.contains('排行榜')) {
+                return null;
+              }
+              if (!shouldRetainHomeSection(title: title, href: sectionHref)) {
+                return null;
+              }
 
-          final dom.Element? container = _parentElement(header);
-          if (container == null) {
-            return null;
-          }
-          final int headerIndex = container.children.indexOf(header);
-          if (headerIndex < 0) {
-            return null;
-          }
+              final dom.Element? container = _parentElement(header);
+              if (container == null) {
+                return null;
+              }
+              final int headerIndex = container.children.indexOf(header);
+              if (headerIndex < 0) {
+                return null;
+              }
 
-          dom.Element? row;
-          for (final dom.Element sibling in container.children.skip(
-            headerIndex + 1,
-          )) {
-            if (sibling.classes.contains('row')) {
-              row = sibling;
-              break;
-            }
-          }
-          if (row == null) {
-            return null;
-          }
+              dom.Element? row;
+              for (final dom.Element sibling in container.children.skip(
+                headerIndex + 1,
+              )) {
+                if (sibling.classes.contains('row')) {
+                  row = sibling;
+                  break;
+                }
+              }
+              if (row == null) {
+                return null;
+              }
 
-          final List<ComicCardData> items = _collectComicCards(
-            row,
-            uri,
-            'a[href*="/comic/"]',
-          );
-          if (items.isEmpty) {
-            return null;
-          }
+              final List<ComicCardData> items = _collectComicCards(
+                row,
+                uri,
+                'a[href*="/comic/"]',
+              );
+              if (items.isEmpty) {
+                return null;
+              }
 
-          return ComicSectionData(
-            title: title,
-            subtitle: '',
-            href: sectionHref,
-            items: items,
-          );
-        })
-        .whereType<ComicSectionData>()
-        .toList(growable: false);
+              return ComicSectionData(
+                title: title,
+                subtitle: '',
+                href: sectionHref,
+                items: items,
+              );
+            })
+            .whereType<ComicSectionData>()
+            .toList(growable: false);
 
     return HomePageData(
       title: '首页',
@@ -509,24 +505,10 @@ class SiteHtmlPageParser {
       throw SiteHtmlPageParseException('阅读页图片数据为空：${uri.path}');
     }
 
-    final Uint8List key = Uint8List.fromList(utf8.encode(cct));
-    final Uint8List iv = Uint8List.fromList(
-      utf8.encode(encrypted.substring(0, 16)),
+    final Uint8List plainBytes = _aesCbcDecrypt(
+      keyMaterial: cct,
+      encrypted: encrypted,
     );
-    final Uint8List cipherBytes = _decodeCipherText(encrypted.substring(16));
-    final PaddedBlockCipher cipher = PaddedBlockCipherImpl(
-      PKCS7Padding(),
-      CBCBlockCipher(AESEngine()),
-    );
-    cipher.init(
-      false,
-      PaddedBlockCipherParameters<ParametersWithIV<KeyParameter>, Null>(
-        ParametersWithIV<KeyParameter>(KeyParameter(key), iv),
-        null,
-      ),
-    );
-
-    final Uint8List plainBytes = cipher.process(cipherBytes);
     final Object? decoded = jsonDecode(utf8.decode(plainBytes));
     final List<String> imageUrls = _uniqueStrings(
       asObjectList(decoded).map((Object? item) {
@@ -557,24 +539,10 @@ class SiteHtmlPageParser {
       throw SiteHtmlPageParseException('详情页章节数据为空：${request.pageUri.path}');
     }
 
-    final Uint8List key = Uint8List.fromList(utf8.encode(request.ccz));
-    final Uint8List iv = Uint8List.fromList(
-      utf8.encode(encrypted.substring(0, 16)),
+    final Uint8List plainBytes = _aesCbcDecrypt(
+      keyMaterial: request.ccz,
+      encrypted: encrypted,
     );
-    final Uint8List cipherBytes = _decodeCipherText(encrypted.substring(16));
-    final PaddedBlockCipher cipher = PaddedBlockCipherImpl(
-      PKCS7Padding(),
-      CBCBlockCipher(AESEngine()),
-    );
-    cipher.init(
-      false,
-      PaddedBlockCipherParameters<ParametersWithIV<KeyParameter>, Null>(
-        ParametersWithIV<KeyParameter>(KeyParameter(key), iv),
-        null,
-      ),
-    );
-
-    final Uint8List plainBytes = cipher.process(cipherBytes);
     final Object? decoded = jsonDecode(utf8.decode(plainBytes));
     if (decoded is! Map) {
       throw SiteHtmlPageParseException('详情页章节数据格式异常：${request.pageUri.path}');

@@ -26,7 +26,9 @@ class ReaderHistoryRecorder {
           page,
           coverUrl: coverUrl,
         );
-      } catch (_) {}
+      } catch (_) {
+        // 忽略继续阅读写入失败。
+      }
 
       if (!_session.isAuthenticated) {
         try {
@@ -35,8 +37,12 @@ class ReaderHistoryRecorder {
             page,
             coverUrl: coverUrl,
           );
-        } catch (_) {}
+        } catch (_) {
+          // 忽略访客历史写入失败。
+        }
       }
-    } catch (_) {}
+    } catch (_) {
+      // 历史记录失败不影响阅读。
+    }
   }
 }

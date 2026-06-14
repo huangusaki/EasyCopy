@@ -1,3 +1,4 @@
+// 与 Dart 解析器共享站点 DOM 约定，选择器变更需同步。
 const String _pageExtractionScriptTemplate = r"""
 (() => {
   const loadId = __LOAD_ID__;

@@ -144,7 +144,7 @@ extension _AppScreenReaderNavigation on _AppScreenState {
       ).authScope;
       await _pageRepository.writeCachedPage(page, authScope: authScope);
     } catch (_) {
-      // Best-effort cache repair only.
+      // 缓存修复失败不影响当前页面。
     }
   }
 
@@ -363,7 +363,26 @@ extension _AppScreenReaderNavigation on _AppScreenState {
       await _loadHome();
       return;
     }
+    if (_shouldConfirmBackToExit()) {
+      return;
+    }
     await SystemNavigator.pop();
+  }
+
+  /// 移动端根路由需二次返回退出，避免误触。
+  bool _shouldConfirmBackToExit() {
+    if (PlatformCapabilities.isDesktop) {
+      return false;
+    }
+    final DateTime now = DateTime.now();
+    final DateTime? lastPrompt = _shell.backToExitPromptedAt;
+    if (lastPrompt != null &&
+        now.difference(lastPrompt) <= _backToExitConfirmWindow) {
+      return false;
+    }
+    _shell.backToExitPromptedAt = now;
+    _showNotice('再按一次返回退出应用');
+    return true;
   }
 
   Future<void> _runReaderExitTransition(Future<void> Function() action) async {
@@ -416,10 +435,7 @@ extension _AppScreenReaderNavigation on _AppScreenState {
       );
       return true;
     }
-    // Pop the reader entry off the stack first so that the catalog page
-    // is pushed on top of the previous entry (e.g. profile root).  This
-    // way pressing back from the catalog page returns the user to where
-    // they came from instead of getting stuck in a replaced entry.
+    // 先弹出阅读器，再把目录页压到原栈顶，保证目录返回原来源页。
     _scrollState.pauseTrackingForRoute();
     _tabSessionStore.pop(_nav.selectedIndex);
     await _loadUri(

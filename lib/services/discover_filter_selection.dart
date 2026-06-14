@@ -1,5 +1,6 @@
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/link_action_selection.dart';
 
 DiscoverPageData applyDiscoverFilterSelection(
   DiscoverPageData page, {
@@ -11,37 +12,17 @@ DiscoverPageData applyDiscoverFilterSelection(
 
   final List<FilterGroupData> nextFilters = page.filters
       .map((FilterGroupData group) {
-        final int selectedIndex = group.options.indexWhere((LinkAction option) {
-          if (!option.isNavigable) {
-            return false;
-          }
-          final Uri resolvedUri = currentUri.resolve(option.href);
-          return AppConfig.routeKeyForUri(resolvedUri) == targetRouteKey;
-        });
-        if (selectedIndex == -1) {
+        final ({List<LinkAction> options, bool changed}) result =
+            selectActiveLinkByRouteKey(
+              group.options,
+              currentUri: currentUri,
+              targetRouteKey: targetRouteKey,
+            );
+        if (!result.changed) {
           return group;
         }
-
-        bool groupChanged = false;
-        final List<LinkAction> nextOptions = <LinkAction>[
-          for (int index = 0; index < group.options.length; index += 1)
-            if (group.options[index].active != (index == selectedIndex))
-              (() {
-                groupChanged = true;
-                return group.options[index].copyWith(
-                  active: index == selectedIndex,
-                );
-              })()
-            else
-              group.options[index],
-        ];
-
-        if (!groupChanged) {
-          return group;
-        }
-
         didChange = true;
-        return group.copyWith(options: nextOptions);
+        return group.copyWith(options: result.options);
       })
       .toList(growable: false);
 

@@ -5,7 +5,7 @@ import 'package:reader/theme/app_theme.dart';
 
 enum AppThemePreference {
   system,
-  // name 已持久化，只可新增。
+// 枚举名已持久化，只可新增。
   dynamicColor,
   pureWhite,
   pureBlack,
@@ -109,13 +109,29 @@ class WallpaperPreferences {
     this.imageFileName = '',
     this.brightness = defaultBrightness,
     this.blurSigma = defaultBlurSigma,
+    this.cropLeft = 0.0,
+    this.cropTop = 0.0,
+    this.cropWidth = 1.0,
+    this.cropHeight = 1.0,
   });
 
   static const double defaultBrightness = 0.55;
   static const double defaultBlurSigma = 12.0;
   static const double maxBlurSigma = 40.0;
 
+  /// 最小裁剪边长。
+  static const double minCropExtent = 0.05;
+
   factory WallpaperPreferences.fromJson(Map<String, Object?> json) {
+    final double left = _clampUnit(json['cropLeft'], 0.0);
+    final double top = _clampUnit(json['cropTop'], 0.0);
+    final double width = _clampRange(json['cropWidth'], minCropExtent, 1.0, 1.0);
+    final double height = _clampRange(
+      json['cropHeight'],
+      minCropExtent,
+      1.0,
+      1.0,
+    );
     return WallpaperPreferences(
       enabled: (json['enabled'] as bool?) ?? false,
       imageFileName: ((json['imageFileName'] as String?) ?? '').trim(),
@@ -126,6 +142,10 @@ class WallpaperPreferences {
         maxBlurSigma,
         defaultBlurSigma,
       ),
+      cropLeft: left.clamp(0.0, 1.0 - width),
+      cropTop: top.clamp(0.0, 1.0 - height),
+      cropWidth: width,
+      cropHeight: height,
     );
   }
 
@@ -134,21 +154,42 @@ class WallpaperPreferences {
   final double brightness;
   final double blurSigma;
 
+  /// 裁剪选区，取值 0~1。
+  final double cropLeft;
+  final double cropTop;
+  final double cropWidth;
+  final double cropHeight;
+
   bool get hasImage => imageFileName.trim().isNotEmpty;
 
   bool get isActive => enabled && hasImage;
+
+  /// 是否已裁剪。
+  bool get hasCrop =>
+      cropLeft > 0.0001 ||
+      cropTop > 0.0001 ||
+      cropWidth < 0.9999 ||
+      cropHeight < 0.9999;
 
   WallpaperPreferences copyWith({
     bool? enabled,
     String? imageFileName,
     double? brightness,
     double? blurSigma,
+    double? cropLeft,
+    double? cropTop,
+    double? cropWidth,
+    double? cropHeight,
   }) {
     return WallpaperPreferences(
       enabled: enabled ?? this.enabled,
       imageFileName: imageFileName ?? this.imageFileName,
       brightness: brightness ?? this.brightness,
       blurSigma: blurSigma ?? this.blurSigma,
+      cropLeft: cropLeft ?? this.cropLeft,
+      cropTop: cropTop ?? this.cropTop,
+      cropWidth: cropWidth ?? this.cropWidth,
+      cropHeight: cropHeight ?? this.cropHeight,
     );
   }
 
@@ -158,6 +199,10 @@ class WallpaperPreferences {
       'imageFileName': imageFileName,
       'brightness': brightness,
       'blurSigma': blurSigma,
+      'cropLeft': cropLeft,
+      'cropTop': cropTop,
+      'cropWidth': cropWidth,
+      'cropHeight': cropHeight,
     };
   }
 
@@ -170,12 +215,24 @@ class WallpaperPreferences {
         other.enabled == enabled &&
         other.imageFileName == imageFileName &&
         other.brightness == brightness &&
-        other.blurSigma == blurSigma;
+        other.blurSigma == blurSigma &&
+        other.cropLeft == cropLeft &&
+        other.cropTop == cropTop &&
+        other.cropWidth == cropWidth &&
+        other.cropHeight == cropHeight;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(enabled, imageFileName, brightness, blurSigma);
+  int get hashCode => Object.hash(
+    enabled,
+    imageFileName,
+    brightness,
+    blurSigma,
+    cropLeft,
+    cropTop,
+    cropWidth,
+    cropHeight,
+  );
 }
 
 @immutable
@@ -280,6 +337,7 @@ class ReaderPreferences {
     this.fullscreen = true,
     this.showChapterComments = true,
     this.disablePageTransitionAnimation = false,
+    this.tapToTurnPage = false,
   });
 
   factory ReaderPreferences.fromJson(Map<String, Object?> json) {
@@ -318,6 +376,7 @@ class ReaderPreferences {
       showChapterComments: (json['showChapterComments'] as bool?) ?? true,
       disablePageTransitionAnimation:
           (json['disablePageTransitionAnimation'] as bool?) ?? false,
+      tapToTurnPage: (json['tapToTurnPage'] as bool?) ?? false,
     );
   }
 
@@ -335,6 +394,7 @@ class ReaderPreferences {
   final bool fullscreen;
   final bool showChapterComments;
   final bool disablePageTransitionAnimation;
+  final bool tapToTurnPage;
 
   bool get isPaged =>
       readingDirection == ReaderReadingDirection.leftToRight ||
@@ -355,6 +415,7 @@ class ReaderPreferences {
     bool? fullscreen,
     bool? showChapterComments,
     bool? disablePageTransitionAnimation,
+    bool? tapToTurnPage,
   }) {
     return ReaderPreferences(
       screenOrientation: screenOrientation ?? this.screenOrientation,
@@ -373,6 +434,7 @@ class ReaderPreferences {
       showChapterComments: showChapterComments ?? this.showChapterComments,
       disablePageTransitionAnimation:
           disablePageTransitionAnimation ?? this.disablePageTransitionAnimation,
+      tapToTurnPage: tapToTurnPage ?? this.tapToTurnPage,
     );
   }
 
@@ -392,6 +454,7 @@ class ReaderPreferences {
       'fullscreen': fullscreen,
       'showChapterComments': showChapterComments,
       'disablePageTransitionAnimation': disablePageTransitionAnimation,
+      'tapToTurnPage': tapToTurnPage,
     };
   }
 }

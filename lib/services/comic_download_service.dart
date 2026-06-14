@@ -17,6 +17,7 @@ import 'package:reader/services/download_storage_service.dart';
 import 'package:reader/services/migration_delta_journal_store.dart';
 import 'package:reader/services/network_client.dart';
 import 'package:reader/services/tree_image_provider.dart';
+import 'package:reader/services/uri_keys.dart';
 
 part 'comic_download_service/cached_detail_reader.dart';
 part 'comic_download_service/cached_library_index.dart';

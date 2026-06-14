@@ -251,6 +251,21 @@ extension _ReaderSettingsSheet on ReaderScreenState {
                                         );
                                       },
                                     ),
+                                    SettingsSwitchRow(
+                                      label: '点击换页',
+                                      value: preferences.tapToTurnPage,
+                                      onChanged: (bool value) {
+                                        unawaited(
+                                          preferencesController
+                                              .updateReaderPreferences(
+                                                (ReaderPreferences current) =>
+                                                    current.copyWith(
+                                                      tapToTurnPage: value,
+                                                    ),
+                                              ),
+                                        );
+                                      },
+                                    ),
                                     if (_controller
                                         .platformBridge
                                         .isAndroidSupported)

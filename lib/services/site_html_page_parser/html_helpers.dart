@@ -103,6 +103,29 @@ extension _SiteHtmlHelpers on SiteHtmlPageParser {
     return normalized;
   }
 
+  Uint8List _aesCbcDecrypt({
+    required String keyMaterial,
+    required String encrypted,
+  }) {
+    final Uint8List key = Uint8List.fromList(utf8.encode(keyMaterial));
+    final Uint8List iv = Uint8List.fromList(
+      utf8.encode(encrypted.substring(0, 16)),
+    );
+    final Uint8List cipherBytes = _decodeCipherText(encrypted.substring(16));
+    final PaddedBlockCipher cipher = PaddedBlockCipherImpl(
+      PKCS7Padding(),
+      CBCBlockCipher(AESEngine()),
+    );
+    cipher.init(
+      false,
+      PaddedBlockCipherParameters<ParametersWithIV<KeyParameter>, Null>(
+        ParametersWithIV<KeyParameter>(KeyParameter(key), iv),
+        null,
+      ),
+    );
+    return cipher.process(cipherBytes);
+  }
+
   Uint8List _decodeCipherText(String payload) {
     final String normalized = _cleanText(payload);
     if (SiteHtmlPageParser._hexPattern.hasMatch(normalized) &&

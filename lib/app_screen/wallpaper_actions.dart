@@ -57,8 +57,14 @@ Future<void> _pickAndApplyWallpaper({
       File(picked.path),
     );
     await preferencesController.updateWallpaperPreferences(
-      (WallpaperPreferences current) =>
-          current.copyWith(imageFileName: savedFileName, enabled: true),
+      (WallpaperPreferences current) => current.copyWith(
+        imageFileName: savedFileName,
+        enabled: true,
+        cropLeft: 0,
+        cropTop: 0,
+        cropWidth: 1,
+        cropHeight: 1,
+      ),
     );
     unawaited(WallpaperStorage.instance.pruneExcept(savedFileName));
     if (previous.imageFileName.isNotEmpty &&
@@ -75,8 +81,14 @@ void _clearWallpaper(AppPreferencesController preferencesController) {
       preferencesController.wallpaperPreferences;
   unawaited(
     preferencesController.updateWallpaperPreferences(
-      (WallpaperPreferences current) =>
-          current.copyWith(imageFileName: '', enabled: false),
+      (WallpaperPreferences current) => current.copyWith(
+        imageFileName: '',
+        enabled: false,
+        cropLeft: 0,
+        cropTop: 0,
+        cropWidth: 1,
+        cropHeight: 1,
+      ),
     ),
   );
   if (previous.imageFileName.isNotEmpty) {

@@ -29,10 +29,10 @@ EdgeInsets standardContentPadding(BuildContext context) {
 int responsiveComicCrossAxisCount(
   BuildContext context,
   double availableWidth, {
-  double minItemWidth = 120,
+  double minItemWidth = 165,
   double spacing = 12,
   int mobileCount = 3,
-  int maxCount = 8,
+  int maxCount = 6,
 }) {
   if (!usesDesktopLayout(context)) {
     return mobileCount;
@@ -40,12 +40,10 @@ int responsiveComicCrossAxisCount(
   if (!availableWidth.isFinite || availableWidth <= 0) {
     return mobileCount;
   }
-  final double effectiveMinWidth = minItemWidth == 120 ? 165.0 : minItemWidth;
-  final int effectiveMaxCount = maxCount == 8 ? 6 : maxCount;
 
-  final int count = ((availableWidth + spacing) / (effectiveMinWidth + spacing))
+  final int count = ((availableWidth + spacing) / (minItemWidth + spacing))
       .floor()
-      .clamp(mobileCount, effectiveMaxCount)
+      .clamp(mobileCount, maxCount)
       .toInt();
   return count;
 }

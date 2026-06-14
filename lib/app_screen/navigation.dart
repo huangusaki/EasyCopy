@@ -35,7 +35,6 @@ extension _AppScreenNavigation on _AppScreenState {
     required NavigationIntent intent,
     required bool preserveVisiblePage,
     required NavigationRequestSourceKind sourceKind,
-    bool allowBackgroundCache = true,
   }) {
     final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
     return NavigationRequestContext(
@@ -45,7 +44,6 @@ extension _AppScreenNavigation on _AppScreenState {
       intent: intent,
       preserveVisiblePage: preserveVisiblePage,
       sourceKind: sourceKind,
-      allowBackgroundCache: allowBackgroundCache,
     );
   }
 

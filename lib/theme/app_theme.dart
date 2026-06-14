@@ -283,7 +283,7 @@ class AppTheme {
 
   static ThemeData buildPureBlackTheme() {
     const Color paperSeed = Color(0xFFFFFFFF);
-    // 强调色用浅灰而非纯白，避免选中胶囊/光晕塌成刺眼的白块。
+    // 浅灰强调色避免选中态过亮。
     const Color accentGray = Color(0xFFD6D6D6);
 
     final ColorScheme base = ColorScheme.fromSeed(
@@ -472,16 +472,11 @@ class AppTheme {
     );
   }
 
-  static ThemeData buildLightTheme() => buildWarmLightTheme();
-  static ThemeData buildDarkTheme() => buildWarmDarkTheme();
-
   static ThemeData buildDynamicTheme(ColorScheme dynamicScheme) {
     final bool isDark = dynamicScheme.brightness == Brightness.dark;
     final Color accent = dynamicScheme.primary;
 
-    // ColorScheme.fromSeed（Windows/macOS 取系统强调色走这条）产出的表面几乎是
-    // 中性灰，整屏看不出强调色。这里把各级表面朝强调色叠一层薄色，让整体明显
-    // 跟随系统取色，而不只是几个小图标变色。
+    // 系统取色生成的表面色偏中性，叠少量强调色增强取色感。
     Color tinted(Color base, double amount) =>
         Color.alphaBlend(accent.withValues(alpha: amount), base);
 
@@ -511,7 +506,7 @@ class AppTheme {
     );
   }
 
-  /// Windows CJK 回退字体栈。
+  /// 桌面中文回退字体栈。
   static const String _windowsLatinFont = 'Segoe UI';
   static const List<String> _simplifiedHanFallback = <String>[
     'Microsoft YaHei UI',

@@ -12,6 +12,7 @@ import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
 import 'package:reader/services/migration_delta_journal_store.dart';
 import 'package:reader/services/storage_migration_store.dart';
+import 'package:reader/services/uri_keys.dart';
 
 part 'download_queue_manager/migration_coordinator.dart';
 
@@ -819,7 +820,7 @@ class DownloadQueueManager {
       await _notifyLibraryChanged(CacheLibraryRefreshReason.queueChanged);
     } catch (error) {
       final DownloadQueueTask? latestTask = _taskById(task.id);
-      final String message = _formatDownloadError(error);
+      final String message = formatDownloadError(error);
       if (latestTask == null) {
         final List<DownloadQueueTask>? tasksToCleanup =
             _pendingCancelledTaskCleanups.remove(task.id);
@@ -912,13 +913,7 @@ class DownloadQueueManager {
     await _downloadService.deleteComicCacheByTitle(fallbackTitle);
   }
 
-  String _comicKey(String value) {
-    final Uri? uri = Uri.tryParse(value);
-    if (uri == null) {
-      return value.trim();
-    }
-    return Uri(path: uri.path).toString();
-  }
+  String _comicKey(String value) => UriKeys.pathKey(value);
 
   Future<void> _notifyLibraryChanged(CacheLibraryRefreshReason reason) async {
     if (_disposed || _onLibraryChanged == null) {
@@ -933,19 +928,20 @@ class DownloadQueueManager {
     }
     _onNotice?.call(message);
   }
+}
 
-  String _formatDownloadError(Object error) {
-    return switch (error) {
-      TimeoutException _ => '章节解析超时',
-      HttpException httpError => httpError.message,
-      FileSystemException fileError => fileError.message,
-      PlatformException platformError =>
-        platformError.message?.trim().isNotEmpty == true
-            ? platformError.message!.trim()
-            : platformError.code,
-      DownloadPausedException paused => paused.message,
-      DownloadCancelledException cancelled => cancelled.message,
-      _ => error.toString(),
-    };
-  }
+/// 转为面向用户的下载错误文案。
+String formatDownloadError(Object error) {
+  return switch (error) {
+    TimeoutException _ => '章节解析超时',
+    HttpException httpError => httpError.message,
+    FileSystemException fileError => fileError.message,
+    PlatformException platformError =>
+      platformError.message?.trim().isNotEmpty == true
+          ? platformError.message!.trim()
+          : platformError.code,
+    DownloadPausedException paused => paused.message,
+    DownloadCancelledException cancelled => cancelled.message,
+    _ => error.toString(),
+  };
 }

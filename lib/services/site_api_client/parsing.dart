@@ -56,31 +56,17 @@ extension _SiteApiParsing on SiteApiClient {
             'pathWord',
             'slug',
           ]);
-          final String updatedAt =
-              pickString(source, <String>[
-                'datetime_updated',
-                'updated_at',
-                'updatedAt',
-                'last_update_time',
-                'last_update_at',
-                'update_time',
-              ]).isNotEmpty
-              ? pickString(source, <String>[
-                  'datetime_updated',
-                  'updated_at',
-                  'updatedAt',
-                  'last_update_time',
-                  'last_update_at',
-                  'update_time',
-                ])
-              : pickString(item, <String>[
-                  'datetime_updated',
-                  'updated_at',
-                  'updatedAt',
-                  'last_update_time',
-                  'last_update_at',
-                  'update_time',
-                ]);
+          final String updatedAt = pickFirstString(
+            <Map<String, Object?>>[source, item],
+            const <String>[
+              'datetime_updated',
+              'updated_at',
+              'updatedAt',
+              'last_update_time',
+              'last_update_at',
+              'update_time',
+            ],
+          );
           return ProfileLibraryItem(
             title: pickString(source, <String>['name', 'title']),
             coverUrl: pickString(source, <String>[
@@ -138,22 +124,20 @@ extension _SiteApiParsing on SiteApiClient {
             'pathWord',
             'slug',
           ]);
-          final String chapterUuid =
-              pickString(chapter, <String>[
-                'uuid',
-                'chapter_uuid',
-                'id',
-              ]).isNotEmpty
-              ? pickString(chapter, <String>['uuid', 'chapter_uuid', 'id'])
-              : pickString(item, <String>['last_chapter_id']);
-          final String chapterLabel =
-              pickString(chapter, <String>[
-                'name',
-                'title',
-                'chapter_name',
-              ]).isNotEmpty
-              ? pickString(chapter, <String>['name', 'title', 'chapter_name'])
-              : pickString(item, <String>['last_chapter_name']);
+          final String chapterUuidFromChapter = pickString(
+            chapter,
+            const <String>['uuid', 'chapter_uuid', 'id'],
+          );
+          final String chapterUuid = chapterUuidFromChapter.isNotEmpty
+              ? chapterUuidFromChapter
+              : pickString(item, const <String>['last_chapter_id']);
+          final String chapterLabelFromChapter = pickString(
+            chapter,
+            const <String>['name', 'title', 'chapter_name'],
+          );
+          final String chapterLabel = chapterLabelFromChapter.isNotEmpty
+              ? chapterLabelFromChapter
+              : pickString(item, const <String>['last_chapter_name']);
           return ProfileHistoryItem(
             title: pickString(source, <String>['name', 'title']),
             coverUrl: pickString(source, <String>[
@@ -184,20 +168,13 @@ extension _SiteApiParsing on SiteApiClient {
   }
 
   ComicCardData _parseSearchComic(Map<String, Object?> item) {
-    final Map<String, Object?> source =
-        _firstNonEmptyMap(item, <String>[
-          'comic',
-          'comic_info',
-          'cartoon',
-          'results',
-        ]).isNotEmpty
-        ? _firstNonEmptyMap(item, <String>[
-            'comic',
-            'comic_info',
-            'cartoon',
-            'results',
-          ])
-        : item;
+    final Map<String, Object?> nestedSource = _firstNonEmptyMap(
+      item,
+      const <String>['comic', 'comic_info', 'cartoon', 'results'],
+    );
+    final Map<String, Object?> source = nestedSource.isEmpty
+        ? item
+        : nestedSource;
     final String pathWord = pickString(source, <String>[
       'path_word',
       'pathWord',
@@ -224,6 +201,18 @@ extension _SiteApiParsing on SiteApiClient {
       'author',
     ]);
     final int commentId = pickInt(item, const <String>['id'], fallback: 0);
+    final String itemAvatar = pickString(item, const <String>[
+      'user_avatar',
+      'avatar',
+      'avatar_url',
+    ]);
+    final String avatarUrl = itemAvatar.isNotEmpty
+        ? itemAvatar
+        : pickString(user, const <String>[
+            'avatar',
+            'avatar_url',
+            'user_avatar',
+          ]);
     return ChapterComment(
       id: commentId > 0
           ? '$commentId'
@@ -234,22 +223,7 @@ extension _SiteApiParsing on SiteApiClient {
         'content',
         'text',
       ]),
-      avatarUrl:
-          pickString(item, const <String>[
-            'user_avatar',
-            'avatar',
-            'avatar_url',
-          ]).isNotEmpty
-          ? pickString(item, const <String>[
-              'user_avatar',
-              'avatar',
-              'avatar_url',
-            ])
-          : pickString(user, const <String>[
-              'avatar',
-              'avatar_url',
-              'user_avatar',
-            ]),
+      avatarUrl: avatarUrl,
     );
   }
 

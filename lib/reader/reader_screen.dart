@@ -38,6 +38,7 @@ part 'reader_screen/settings_sheet.dart';
 
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
 const double _uiToggleInsetRatio = 0.075;
+const double _tapTurnSideZoneRatio = 0.33;
 const double _settingsDismissDistance = 72;
 const double _instantPageSwipeDistance = 72;
 const double _instantPageSwipeVelocity = 220;
@@ -50,6 +51,8 @@ class ReaderScreen extends StatefulWidget {
     required this.onRequestAuth,
     required this.onLogoutForExpiredSession,
     required this.onResolveHistoryCover,
+    this.openAtEnd = false,
+    this.onOpenAtEndConsumed,
     super.key,
   });
 
@@ -59,6 +62,12 @@ class ReaderScreen extends StatefulWidget {
   final Future<void> Function() onRequestAuth;
   final Future<void> Function() onLogoutForExpiredSession;
   final ResolveReaderHistoryCover onResolveHistoryCover;
+
+  /// 本章打开后定位末页。
+  final bool openAtEnd;
+
+  /// 清除末页定位意图。
+  final VoidCallback? onOpenAtEndConsumed;
 
   @override
   State<ReaderScreen> createState() => ReaderScreenState();
@@ -91,17 +100,29 @@ class ReaderScreenState extends State<ReaderScreen> {
     _controller.attachPlatformSubscriptions();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _controller.setPage(widget.page);
+      _controller.setPage(widget.page, openAtEnd: widget.openAtEnd);
+      _consumeOpenAtEndIntent();
     });
   }
 
   @override
   void didUpdateWidget(covariant ReaderScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.page.uri != widget.page.uri ||
-        !identical(oldWidget.page, widget.page)) {
-      _controller.setPage(widget.page, previousUri: oldWidget.page.uri);
+    if (!identical(oldWidget.page, widget.page)) {
+      _controller.setPage(
+        widget.page,
+        previousUri: oldWidget.page.uri,
+        openAtEnd: widget.openAtEnd,
+      );
+      _consumeOpenAtEndIntent();
     }
+  }
+
+  void _consumeOpenAtEndIntent() {
+    // 阅读器切换到新章节后，无论本次是否使用了 openAtEnd，都通知上层清除
+    // 这个一次性意图：避免加载失败 / 被其它导航打断 / 经目录等入口再次打开
+    // 同一章节时，残留的 key 误判 openAtEnd 直接跳到末页。
+    widget.onOpenAtEndConsumed?.call();
   }
 
   @override
@@ -127,17 +148,51 @@ class ReaderScreenState extends State<ReaderScreen> {
     final double viewportHeight = renderBox != null && renderBox.hasSize
         ? renderBox.size.height
         : details.localPosition.dy * 2;
-    final double uiToggleInsetWidth = viewportWidth * _uiToggleInsetRatio;
     final double dx = details.localPosition.dx;
+    final double dy = details.localPosition.dy;
+    final ReaderPreferences preferences = _controller.preferences;
+
+    if (preferences.tapToTurnPage) {
+      final double sideZoneWidth = viewportWidth * _tapTurnSideZoneRatio;
+      if (dx <= sideZoneWidth) {
+        _handleTapPageTurn(tappedLeft: true);
+        return;
+      }
+      if (dx >= viewportWidth - sideZoneWidth) {
+        _handleTapPageTurn(tappedLeft: false);
+        return;
+      }
+      _handleReaderMenuTap(dy <= viewportHeight * 0.5);
+      return;
+    }
+
+    final double uiToggleInsetWidth = viewportWidth * _uiToggleInsetRatio;
     if (dx <= uiToggleInsetWidth || dx >= viewportWidth - uiToggleInsetWidth) {
       return;
     }
-    if (details.localPosition.dy <= viewportHeight * 0.5) {
+    _handleReaderMenuTap(dy <= viewportHeight * 0.5);
+  }
+
+  void _handleReaderMenuTap(bool isTopHalf) {
+    if (isTopHalf) {
       _controller.hideChapterControls();
       unawaited(_showReaderSettingsSheet());
       return;
     }
     _controller.toggleChapterControls();
+  }
+
+  void _handleTapPageTurn({required bool tappedLeft}) {
+    _controller.hideChapterControls();
+    final bool isRightToLeft =
+        _controller.preferences.readingDirection ==
+        ReaderReadingDirection.rightToLeft;
+    final bool forward = isRightToLeft ? tappedLeft : !tappedLeft;
+    if (forward) {
+      unawaited(_controller.stepForward());
+    } else {
+      unawaited(_controller.stepBackward());
+    }
   }
 
   Future<void> _showReaderSettingsSheet() async {
@@ -179,10 +234,7 @@ class ReaderScreenState extends State<ReaderScreen> {
             Positioned(
               right: 8,
               top: topOffset,
-              child: ReaderStatusLabel(
-                label: _readerClockLabel(),
-                fontSize: 14,
-              ),
+              child: const _ReaderClockLabel(),
             ),
           if (preferences.showProgress)
             Positioned(
@@ -201,13 +253,6 @@ class ReaderScreenState extends State<ReaderScreen> {
         ],
       ),
     );
-  }
-
-  String _readerClockLabel() {
-    final DateTime now = DateTime.now();
-    final String hour = now.hour.toString().padLeft(2, '0');
-    final String minute = now.minute.toString().padLeft(2, '0');
-    return '$hour:$minute';
   }
 
   String _readerPageCountLabel(ReaderPageData page) {
@@ -307,6 +352,7 @@ class ReaderScreenState extends State<ReaderScreen> {
       prevHref: isPrev ? '' : currentPage.uri,
       nextHref: isPrev ? currentPage.uri : '',
       catalogHref: currentPage.catalogHref,
+      openAtEnd: isPrev,
     );
   }
 
@@ -580,12 +626,14 @@ class ReaderScreenState extends State<ReaderScreen> {
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
         _handleScrollLifecycle(notification);
+        final int pageCount = _controller.readerPagedPageCount(page);
         final bool isLastReaderPage =
-            _controller.currentPageIndex >=
-            _controller.readerPagedPageCount(page) - 1;
+            _controller.currentPageIndex >= pageCount - 1;
+        final bool isFirstReaderPage = _controller.currentPageIndex <= 0;
+        final bool hasPreviousChapter = page.prevHref.trim().isNotEmpty;
         if (!_controller.isZoomGestureLocked &&
-            isLastReaderPage &&
-            hasNextChapter) {
+            ((isLastReaderPage && hasNextChapter) ||
+                (isFirstReaderPage && hasPreviousChapter))) {
           _controller.handleChapterPull(
             notification,
             page: page,
@@ -749,10 +797,10 @@ class ReaderScreenState extends State<ReaderScreen> {
         child: SizedBox(
           height: minHeight,
           child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
               const SizedBox(height: 12),
-              commentSection,
-              const Spacer(),
+              Flexible(child: commentSection),
               const SizedBox(height: 16),
             ],
           ),
@@ -948,5 +996,49 @@ class ReaderScreenState extends State<ReaderScreen> {
         );
       },
     );
+  }
+}
+
+class _ReaderClockLabel extends StatefulWidget {
+  const _ReaderClockLabel();
+
+  @override
+  State<_ReaderClockLabel> createState() => _ReaderClockLabelState();
+}
+
+class _ReaderClockLabelState extends State<_ReaderClockLabel> {
+  Timer? _timer;
+  late String _label;
+
+  @override
+  void initState() {
+    super.initState();
+    _label = _formatNow();
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _label = _formatNow();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  static String _formatNow() {
+    final DateTime now = DateTime.now();
+    final String hour = now.hour.toString().padLeft(2, '0');
+    final String minute = now.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ReaderStatusLabel(label: _label, fontSize: 14);
   }
 }

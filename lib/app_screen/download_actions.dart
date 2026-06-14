@@ -132,13 +132,7 @@ extension _AppScreenDownloadActions on _AppScreenState {
     await _downloadQueueManager.restoreQueue();
   }
 
-  String _comicQueueKey(String value) {
-    final Uri? uri = Uri.tryParse(value);
-    if (uri == null) {
-      return value.trim();
-    }
-    return Uri(path: AppConfig.rewriteToCurrentHost(uri).path).toString();
-  }
+  String _comicQueueKey(String value) => UriKeys.pathKey(value);
 
   Future<void> _persistCachedDetailSnapshot(DetailPageData page) async {
     final CachedComicDetailSnapshot snapshot = page.toCachedDetailSnapshot();
@@ -294,13 +288,17 @@ extension _AppScreenDownloadActions on _AppScreenState {
     _showNotice('已继续后台缓存');
   }
 
-  Future<void> _confirmDeleteCachedComic(CachedComicLibraryEntry item) async {
+  Future<bool> _confirmDialog({
+    required String title,
+    required String content,
+    required String confirmLabel,
+  }) async {
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('删除已缓存漫画'),
-          content: Text('确认删除《${item.comicTitle}》的本地缓存吗？'),
+          title: Text(title),
+          content: Text(content),
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -308,16 +306,23 @@ extension _AppScreenDownloadActions on _AppScreenState {
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('删除'),
+              child: Text(confirmLabel),
             ),
           ],
         );
       },
     );
-    if (confirmed != true || !mounted) {
+    return confirmed == true && mounted;
+  }
+
+  Future<void> _confirmDeleteCachedComic(CachedComicLibraryEntry item) async {
+    if (!await _confirmDialog(
+      title: '删除已缓存漫画',
+      content: '确认删除《${item.comicTitle}》的本地缓存吗？',
+      confirmLabel: '删除',
+    )) {
       return;
     }
-
     final String comicKey = item.comicHref.isEmpty
         ? item.comicTitle
         : _comicQueueKey(item.comicHref);
@@ -326,113 +331,49 @@ extension _AppScreenDownloadActions on _AppScreenState {
   }
 
   Future<void> _confirmRemoveQueuedComic(DownloadQueueTask task) async {
-    final bool? confirmed = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('移出缓存队列'),
-          content: Text('确认停止《${task.comicTitle}》的后台缓存，并清理未完成文件吗？'),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('移出'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true || !mounted) {
+    if (!await _confirmDialog(
+      title: '移出缓存队列',
+      content: '确认停止《${task.comicTitle}》的后台缓存，并清理未完成文件吗？',
+      confirmLabel: '移出',
+    )) {
       return;
     }
-
     await _downloadQueueManager.removeQueuedComic(task);
     _showNotice('已移出 ${task.comicTitle} 的缓存任务');
   }
 
   Future<void> _confirmRemoveComicCache(DownloadQueueTask task) async {
-    final bool? confirmed = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('移除漫画缓存'),
-          content: Text('确认停止《${task.comicTitle}》的后台缓存，并删除这部漫画已缓存的章节吗？'),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('移除'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true || !mounted) {
+    if (!await _confirmDialog(
+      title: '移除漫画缓存',
+      content: '确认停止《${task.comicTitle}》的后台缓存，并删除这部漫画已缓存的章节吗？',
+      confirmLabel: '移除',
+    )) {
       return;
     }
-
     await _downloadQueueManager.removeComicAndDeleteCache(task);
     _showNotice('已移除 ${task.comicTitle} 的下载任务和本地缓存');
   }
 
   Future<void> _confirmClearDownloadQueue() async {
-    final bool? confirmed = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('移除全部下载任务'),
-          content: const Text('确认清空当前下载队列，并清理未完成文件吗？'),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('清空'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true || !mounted) {
+    if (!await _confirmDialog(
+      title: '移除全部下载任务',
+      content: '确认清空当前下载队列，并清理未完成文件吗？',
+      confirmLabel: '清空',
+    )) {
       return;
     }
-
     await _downloadQueueManager.clearQueue();
     _showNotice('已清空下载队列');
   }
 
   Future<void> _confirmRemoveQueuedTask(DownloadQueueTask task) async {
-    final bool? confirmed = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('移出章节任务'),
-          content: Text('确认移出《${task.comicTitle}》的 ${task.chapterLabel} 吗？'),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('移出'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true || !mounted) {
+    if (!await _confirmDialog(
+      title: '移出章节任务',
+      content: '确认移出《${task.comicTitle}》的 ${task.chapterLabel} 吗？',
+      confirmLabel: '移出',
+    )) {
       return;
     }
-
     await _downloadQueueManager.removeQueuedTask(task);
     _showNotice('已移出 ${task.chapterLabel}');
   }
@@ -518,22 +459,11 @@ extension _AppScreenDownloadActions on _AppScreenState {
       _showNotice('$successMessage，完成后自动切换');
     } catch (error) {
       await _refreshDownloadStorageState();
-      _showNotice(_formatDownloadError(error));
+      _showNotice(formatDownloadError(error));
     }
   }
 
   Future<void> _ensureDownloadQueueRunning() async {
     await _downloadQueueManager.ensureRunning();
-  }
-
-  String _formatDownloadError(Object error) {
-    return switch (error) {
-      TimeoutException _ => '章节解析超时',
-      HttpException httpError => httpError.message,
-      FileSystemException fileError => fileError.message,
-      DownloadPausedException paused => paused.message,
-      DownloadCancelledException cancelled => cancelled.message,
-      _ => error.toString(),
-    };
   }
 }

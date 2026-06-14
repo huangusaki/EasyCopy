@@ -92,68 +92,51 @@ class DetailChapterControlChip extends StatelessWidget {
         ? colorScheme.onPrimaryContainer
         : colorScheme.onSurface;
 
-    final Widget content = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: borderColor),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          if (icon != null) ...<Widget>[
-            Icon(icon, size: 14, color: foregroundColor),
-            const SizedBox(width: 6),
-          ],
-          Text(
-            label,
-            style: TextStyle(
-              color: foregroundColor,
-              fontSize: 12,
-              fontWeight: active ? FontWeight.w800 : FontWeight.w700,
-            ),
-          ),
+    final Widget chipChild = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        if (icon != null) ...<Widget>[
+          Icon(icon, size: 14, color: foregroundColor),
+          const SizedBox(width: 6),
         ],
-      ),
+        Text(
+          label,
+          style: TextStyle(
+            color: foregroundColor,
+            fontSize: 12,
+            fontWeight: active ? FontWeight.w800 : FontWeight.w700,
+          ),
+        ),
+      ],
     );
+    const EdgeInsets chipPadding = EdgeInsets.symmetric(
+      horizontal: 14,
+      vertical: 9,
+    );
+    final BoxDecoration chipDecoration = BoxDecoration(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: borderColor),
+    );
+    final Widget chipBody = usesDesktopLayout(context)
+        ? AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            padding: chipPadding,
+            decoration: chipDecoration,
+            child: chipChild,
+          )
+        : Container(
+            padding: chipPadding,
+            decoration: chipDecoration,
+            child: chipChild,
+          );
 
     return Opacity(
       opacity: enabled ? 1 : 0.72,
       child: InkWell(
         onTap: interactive ? onTap : null,
         borderRadius: BorderRadius.circular(14),
-        child: usesDesktopLayout(context)
-            ? AnimatedContainer(
-                duration: const Duration(milliseconds: 140),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 9,
-                ),
-                decoration: BoxDecoration(
-                  color: backgroundColor,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: borderColor),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    if (icon != null) ...<Widget>[
-                      Icon(icon, size: 14, color: foregroundColor),
-                      const SizedBox(width: 6),
-                    ],
-                    Text(
-                      label,
-                      style: TextStyle(
-                        color: foregroundColor,
-                        fontSize: 12,
-                        fontWeight: active ? FontWeight.w800 : FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            : content,
+        child: chipBody,
       ),
     );
   }

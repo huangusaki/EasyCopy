@@ -227,78 +227,69 @@ extension _AppScreenTabNavigation on _AppScreenState {
     );
   }
 
-  Future<void> _toggleDetailCollection(DetailPageData page) async {
-    if (_shell.isUpdatingCollection) {
-      return;
-    }
-
-    final int sourceTabIndex = _nav.selectedIndex;
-    final bool nextCollected = !page.isCollected;
-    _mutateSessionState(() {
-      _shell.isUpdatingCollection = true;
-    }, syncSearch: false);
-    try {
-      if (_services.session.isAuthenticated &&
-          (_services.session.token ?? '').isNotEmpty) {
-        await _services.siteApiClient.setComicCollection(
-          comicId: page.comicId,
-          isCollected: nextCollected,
-        );
-      } else {
-        if (nextCollected) {
-          final String secondaryText = page.updatedAt.trim().isNotEmpty
-              ? page.updatedAt.trim()
-              : page.status.trim();
-          await _services.localLibraryStore.upsertCollection(
-            LocalLibraryStore.guestScope,
-            ProfileLibraryItem(
-              title: page.title.trim(),
-              coverUrl: page.coverUrl.trim(),
-              href: page.uri.trim(),
-              subtitle: page.authors.trim(),
-              secondaryText: secondaryText,
-              updatedAt: page.updatedAt.trim(),
-            ),
+  Future<void> _toggleDetailCollection(DetailPageData page) {
+    return _runExclusive(
+      isBusy: () => _shell.isUpdatingCollection,
+      setBusy: (bool value) => _shell.isUpdatingCollection = value,
+      action: () async {
+        final int sourceTabIndex = _nav.selectedIndex;
+        final bool nextCollected = !page.isCollected;
+        try {
+          if (_services.session.isAuthenticated &&
+              (_services.session.token ?? '').isNotEmpty) {
+            await _services.siteApiClient.setComicCollection(
+              comicId: page.comicId,
+              isCollected: nextCollected,
+            );
+          } else {
+            if (nextCollected) {
+              final String secondaryText = page.updatedAt.trim().isNotEmpty
+                  ? page.updatedAt.trim()
+                  : page.status.trim();
+              await _services.localLibraryStore.upsertCollection(
+                LocalLibraryStore.guestScope,
+                ProfileLibraryItem(
+                  title: page.title.trim(),
+                  coverUrl: page.coverUrl.trim(),
+                  href: page.uri.trim(),
+                  subtitle: page.authors.trim(),
+                  secondaryText: secondaryText,
+                  updatedAt: page.updatedAt.trim(),
+                ),
+              );
+            } else {
+              await _services.localLibraryStore.removeCollection(
+                LocalLibraryStore.guestScope,
+                page.uri,
+              );
+            }
+          }
+          final DetailPageData updatedPage = page.copyWith(
+            isCollected: nextCollected,
           );
-        } else {
-          await _services.localLibraryStore.removeCollection(
-            LocalLibraryStore.guestScope,
-            page.uri,
-          );
+          _mutateSessionState(() {
+            _tabSessionStore.updatePage(sourceTabIndex, updatedPage);
+          }, syncSearch: sourceTabIndex == _nav.selectedIndex);
+          unawaited(_persistDetailPageCache(updatedPage));
+          if (mounted) {
+            if (!PlatformCapabilities.isDesktop) {
+              unawaited(HapticFeedback.lightImpact());
+            }
+            _showNotice(nextCollected ? '已加入书架' : '已取消收藏');
+          }
+        } catch (error) {
+          final String message = error is SiteApiException
+              ? error.message
+              : error.toString();
+          if (message.contains('登录已失效')) {
+            await _logout(showFeedback: false);
+          }
+          if (mounted) {
+            _showNotice(message.isEmpty ? '收藏操作失败，请稍后重试。' : message);
+          }
         }
-      }
-      final DetailPageData updatedPage = page.copyWith(
-        isCollected: nextCollected,
-      );
-      _mutateSessionState(() {
-        _tabSessionStore.updatePage(sourceTabIndex, updatedPage);
-      }, syncSearch: sourceTabIndex == _nav.selectedIndex);
-      unawaited(_persistDetailPageCache(updatedPage));
-      if (mounted) {
-        if (!PlatformCapabilities.isDesktop) {
-          unawaited(HapticFeedback.lightImpact());
-        }
-        _showNotice(nextCollected ? '已加入书架' : '已取消收藏');
-      }
-    } catch (error) {
-      final String message = error is SiteApiException
-          ? error.message
-          : error.toString();
-      if (message.contains('登录已失效')) {
-        await _logout(showFeedback: false);
-      }
-      if (mounted) {
-        _showNotice(message.isEmpty ? '收藏操作失败，请稍后重试。' : message);
-      }
-    } finally {
-      if (mounted) {
-        _mutateSessionState(() {
-          _shell.isUpdatingCollection = false;
-        }, syncSearch: false);
-      } else {
-        _shell.isUpdatingCollection = false;
-      }
-    }
+      },
+    );
   }
 
   Future<void> _openAuthFlow() async {
@@ -328,7 +319,7 @@ extension _AppScreenTabNavigation on _AppScreenState {
     try {
       await _services.siteApiClient.loadUserInfo();
     } catch (_) {
-      // Best-effort user binding only.
+      // 用户信息绑定失败不影响登录态。
     }
     await _syncHostCookies();
     await _loadProfilePage(
@@ -480,8 +471,7 @@ extension _AppScreenTabNavigation on _AppScreenState {
             preserveVisiblePage: true,
             skipPersistVisiblePageState: true,
             skipIfTargetTabInactive: true,
-            // Restoring a tab should keep the tab's own stack ownership even when
-            // the visible route is a shared detail or reader URI like `/comic/...`.
+            // 恢复标签页时保留该标签自己的栈归属。
             targetTabIndexOverride: index,
             historyMode: NavigationIntent.preserve,
           ),

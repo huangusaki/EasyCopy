@@ -67,7 +67,27 @@ extension _AppScreenHostActions on _AppScreenState {
         _shell.appBuildNumber = packageInfo.buildNumber.trim();
       });
     } catch (_) {
-      // Keep placeholder values when package info is unavailable.
+      // 包信息不可用时保留占位值。
+    }
+  }
+
+  Future<void> _runExclusive({
+    required bool Function() isBusy,
+    required void Function(bool value) setBusy,
+    required Future<void> Function() action,
+  }) async {
+    if (isBusy()) {
+      return;
+    }
+    _mutateSessionState(() => setBusy(true), syncSearch: false);
+    try {
+      await action();
+    } finally {
+      if (mounted) {
+        _mutateSessionState(() => setBusy(false), syncSearch: false);
+      } else {
+        setBusy(false);
+      }
     }
   }
 
@@ -84,57 +104,36 @@ extension _AppScreenHostActions on _AppScreenState {
       return;
     }
 
-    _mutateSessionState(() {
-      _shell.isCheckingForUpdates = true;
-    }, syncSearch: false);
-    try {
-      final AppUpdateInfo updateInfo = await AppUpdateChecker.instance
-          .checkForUpdates(currentVersion: currentVersion);
-      if (!mounted) {
-        return;
-      }
-      if (!updateInfo.hasUpdate) {
-        _showNotice('已是最新版本');
-        return;
-      }
-
-      final bool? shouldOpenRelease = await showDialog<bool>(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            title: const Text('发现新版本'),
-            content: Text(
-              '${updateInfo.currentVersion} -> ${updateInfo.latestVersion}',
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('前往'),
-              ),
-            ],
+    await _runExclusive(
+      isBusy: () => _shell.isCheckingForUpdates,
+      setBusy: (bool value) => _shell.isCheckingForUpdates = value,
+      action: () async {
+        try {
+          final AppUpdateInfo updateInfo = await AppUpdateChecker.instance
+              .checkForUpdates(currentVersion: currentVersion);
+          if (!mounted) {
+            return;
+          }
+          if (!updateInfo.hasUpdate) {
+            _showNotice('已是最新版本');
+            return;
+          }
+          final bool shouldOpenRelease = await _confirmDialog(
+            title: '发现新版本',
+            content:
+                '${updateInfo.currentVersion} -> ${updateInfo.latestVersion}',
+            confirmLabel: '前往',
           );
-        },
-      );
-      if (shouldOpenRelease == true) {
-        await _launchExternalUri(updateInfo.releaseUri);
-      }
-    } catch (_) {
-      if (mounted) {
-        _showNotice('检查更新失败');
-      }
-    } finally {
-      if (mounted) {
-        _mutateSessionState(() {
-          _shell.isCheckingForUpdates = false;
-        }, syncSearch: false);
-      } else {
-        _shell.isCheckingForUpdates = false;
-      }
-    }
+          if (shouldOpenRelease) {
+            await _launchExternalUri(updateInfo.releaseUri);
+          }
+        } catch (_) {
+          if (mounted) {
+            _showNotice('检查更新失败');
+          }
+        }
+      },
+    );
   }
 
   Future<void> _openProjectRepository() async {
@@ -157,99 +156,78 @@ extension _AppScreenHostActions on _AppScreenState {
     }
   }
 
-  Future<void> _refreshHostSettings() async {
-    if (_shell.isUpdatingHostSettings) {
-      return;
-    }
-    _mutateSessionState(() {
-      _shell.isUpdatingHostSettings = true;
-    }, syncSearch: false);
-    try {
-      await _services.hostManager.refreshProbes(force: true);
-      await _syncHostCookies();
-      if (!mounted) {
-        return;
-      }
-      final bool isPinned = _services.hostManager.sessionPinnedHost != null;
-      _showNotice(
-        isPinned
-            ? '测速完成，当前仍手动锁定到域名 ${_services.hostManager.currentHost}'
-            : '测速完成，已自动选择 ${_services.hostManager.currentHost}',
-      );
-    } catch (_) {
-      if (mounted) {
-        _showNotice('测速失败，请稍后重试');
-      }
-    } finally {
-      if (mounted) {
-        _mutateSessionState(() {
-          _shell.isUpdatingHostSettings = false;
-        }, syncSearch: false);
-      } else {
-        _shell.isUpdatingHostSettings = false;
-      }
-    }
+  Future<void> _refreshHostSettings() {
+    return _runExclusive(
+      isBusy: () => _shell.isUpdatingHostSettings,
+      setBusy: (bool value) => _shell.isUpdatingHostSettings = value,
+      action: () async {
+        try {
+          await _services.hostManager.refreshProbes(force: true);
+          await _syncHostCookies();
+          if (!mounted) {
+            return;
+          }
+          final bool isPinned = _services.hostManager.sessionPinnedHost != null;
+          _showNotice(
+            isPinned
+                ? '测速完成，当前仍手动锁定到域名 ${_services.hostManager.currentHost}'
+                : '测速完成，已自动选择 ${_services.hostManager.currentHost}',
+          );
+        } catch (_) {
+          if (mounted) {
+            _showNotice('测速失败，请稍后重试');
+          }
+        }
+      },
+    );
   }
 
-  Future<void> _selectHost(String host) async {
+  Future<void> _selectHost(String host) {
     final String normalizedHost = host.trim().toLowerCase();
-    if (normalizedHost.isEmpty || _shell.isUpdatingHostSettings) {
-      return;
+    if (normalizedHost.isEmpty) {
+      return Future<void>.value();
     }
-    _mutateSessionState(() {
-      _shell.isUpdatingHostSettings = true;
-    }, syncSearch: false);
-    try {
-      await _services.hostManager.pinSessionHost(normalizedHost);
-      await _syncHostCookies();
-      if (mounted) {
-        _showNotice('已切换到 $normalizedHost');
-      }
-    } catch (error) {
-      if (mounted) {
-        final String message = error is StateError
-            ? error.message.toString()
-            : '切换域名失败，请稍后重试';
-        _showNotice(message);
-      }
-    } finally {
-      if (mounted) {
-        _mutateSessionState(() {
-          _shell.isUpdatingHostSettings = false;
-        }, syncSearch: false);
-      } else {
-        _shell.isUpdatingHostSettings = false;
-      }
-    }
+    return _runExclusive(
+      isBusy: () => _shell.isUpdatingHostSettings,
+      setBusy: (bool value) => _shell.isUpdatingHostSettings = value,
+      action: () async {
+        try {
+          await _services.hostManager.pinSessionHost(normalizedHost);
+          await _syncHostCookies();
+          if (mounted) {
+            _showNotice('已切换到 $normalizedHost');
+          }
+        } catch (error) {
+          if (mounted) {
+            final String message = error is StateError
+                ? error.message.toString()
+                : '切换域名失败，请稍后重试';
+            _showNotice(message);
+          }
+        }
+      },
+    );
   }
 
-  Future<void> _useAutomaticHostSelection() async {
-    if (_shell.isUpdatingHostSettings) {
-      return;
-    }
-    _mutateSessionState(() {
-      _shell.isUpdatingHostSettings = true;
-    }, syncSearch: false);
-    try {
-      await _services.hostManager.clearSessionPin();
-      await _services.hostManager.refreshProbes(force: true);
-      await _syncHostCookies();
-      if (mounted) {
-        _showNotice('已恢复自动选择，当前域名 ${_services.hostManager.currentHost}');
-      }
-    } catch (_) {
-      if (mounted) {
-        _showNotice('恢复自动选择失败，请稍后重试');
-      }
-    } finally {
-      if (mounted) {
-        _mutateSessionState(() {
-          _shell.isUpdatingHostSettings = false;
-        }, syncSearch: false);
-      } else {
-        _shell.isUpdatingHostSettings = false;
-      }
-    }
+  Future<void> _useAutomaticHostSelection() {
+    return _runExclusive(
+      isBusy: () => _shell.isUpdatingHostSettings,
+      setBusy: (bool value) => _shell.isUpdatingHostSettings = value,
+      action: () async {
+        try {
+          await _services.hostManager.clearSessionPin();
+          await _services.hostManager.refreshProbes(force: true);
+          await _syncHostCookies();
+          if (mounted) {
+            _showNotice('已恢复自动选择，当前域名 ${_services.hostManager.currentHost}');
+          }
+        } catch (_) {
+          if (mounted) {
+            _showNotice('恢复自动选择失败，请稍后重试');
+          }
+        }
+      },
+    );
   }
 
   void _showNotice(String message) {
@@ -410,7 +388,7 @@ extension _AppScreenHostActions on _AppScreenState {
     if (cookieManager == null) {
       return;
     }
-    // 未变化则跳过 CookieManager 平台调用。
+    // 未变化时跳过 CookieManager 平台调用。
     final String fingerprint = _hostCookieFingerprint();
     if (fingerprint == _shell.syncedHostCookieFingerprint) {
       return;

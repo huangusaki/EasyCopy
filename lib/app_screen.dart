@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:file_selector/file_selector.dart';
@@ -51,6 +50,7 @@ import 'package:reader/services/site_api_client.dart';
 import 'package:reader/services/site_html_page_loader.dart';
 import 'package:reader/services/standard_page_load_controller.dart';
 import 'package:reader/services/tab_activation_policy.dart';
+import 'package:reader/services/uri_keys.dart';
 import 'package:reader/utils/platform_capabilities.dart';
 import 'package:reader/webview/page_extractor_script.dart';
 import 'package:reader/widgets/auth_webview_screen.dart';
@@ -90,6 +90,7 @@ part 'app_screen/webview_pipeline.dart';
 
 const Duration _pageFadeTransitionDuration = Duration(milliseconds: 320);
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
+const Duration _backToExitConfirmWindow = Duration(seconds: 2);
 
 Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
   return FadeTransition(
@@ -288,6 +289,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
               Future<void>.value(),
         );
         return;
+      // 上方已处理 resumed。
       case AppLifecycleState.resumed:
         return;
     }
@@ -466,13 +468,28 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
                             page: page,
                             isExitTransitionActive:
                                 _shell.isReaderExitTransitionActive,
+                            openAtEnd:
+                                _shell.pendingReaderOpenAtEndKey.isNotEmpty &&
+                                _chapterKeys.pathKey(page.uri) ==
+                                    _shell.pendingReaderOpenAtEndKey,
+                            onOpenAtEndConsumed: () =>
+                                _shell.pendingReaderOpenAtEndKey = '',
                             onRequestChapterNavigation:
                                 (
                                   String href, {
                                   String prevHref = '',
                                   String nextHref = '',
                                   String catalogHref = '',
+                                  bool openAtEnd = false,
                                 }) async {
+                                  _shell.pendingReaderOpenAtEndKey = openAtEnd
+                                      ? _chapterKeys.pathKey(
+                                          AppConfig.resolveNavigationUri(
+                                            href,
+                                            currentUri: _currentUri,
+                                          ).toString(),
+                                        )
+                                      : '';
                                   await _openHref(
                                     href,
                                     prevHref: prevHref,

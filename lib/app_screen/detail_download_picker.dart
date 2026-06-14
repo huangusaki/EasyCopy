@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:reader/app_screen/models.dart';
-import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/reader_progress_store.dart';
+import 'package:reader/services/uri_keys.dart';
 import 'package:reader/theme/app_theme.dart';
 
 class ChapterPathResolver {
@@ -11,13 +11,7 @@ class ChapterPathResolver {
 
   final ReaderProgressStore _readerProgressStore;
 
-  String pathKey(String href) {
-    final Uri? uri = Uri.tryParse(href);
-    if (uri == null) {
-      return '';
-    }
-    return Uri(path: AppConfig.rewriteToCurrentHost(uri).path).toString();
-  }
+  String pathKey(String href) => UriKeys.pathKey(href);
 
   String lastReadKey(DetailPageData page) {
     return _readerProgressStore.latestChapterPathKeyForCatalog(page.uri) ?? '';

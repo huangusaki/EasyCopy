@@ -1,5 +1,6 @@
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/link_action_selection.dart';
 
 RankPageData applyRankFilterSelection(
   RankPageData page, {
@@ -7,50 +8,28 @@ RankPageData applyRankFilterSelection(
   required Uri targetUri,
 }) {
   final String targetRouteKey = AppConfig.routeKeyForUri(targetUri);
-  bool didChange = false;
+  final ({List<LinkAction> options, bool changed}) categoriesResult =
+      selectActiveLinkByRouteKey(
+        page.categories,
+        currentUri: currentUri,
+        targetRouteKey: targetRouteKey,
+      );
+  final ({List<LinkAction> options, bool changed}) periodsResult =
+      selectActiveLinkByRouteKey(
+        page.periods,
+        currentUri: currentUri,
+        targetRouteKey: targetRouteKey,
+      );
 
-  List<LinkAction> updateOptions(List<LinkAction> options) {
-    final int selectedIndex = options.indexWhere((LinkAction option) {
-      if (!option.isNavigable) {
-        return false;
-      }
-      final Uri resolvedUri = currentUri.resolve(option.href);
-      return AppConfig.routeKeyForUri(resolvedUri) == targetRouteKey;
-    });
-    if (selectedIndex == -1) {
-      return options;
-    }
-
-    bool groupChanged = false;
-    final List<LinkAction> nextOptions = <LinkAction>[
-      for (int index = 0; index < options.length; index += 1)
-        if (options[index].active != (index == selectedIndex))
-          (() {
-            groupChanged = true;
-            return options[index].copyWith(active: index == selectedIndex);
-          })()
-        else
-          options[index],
-    ];
-
-    if (groupChanged) {
-      didChange = true;
-    }
-    return nextOptions;
-  }
-
-  final List<LinkAction> nextCategories = updateOptions(page.categories);
-  final List<LinkAction> nextPeriods = updateOptions(page.periods);
-
-  if (!didChange) {
+  if (!categoriesResult.changed && !periodsResult.changed) {
     return page;
   }
 
   return RankPageData(
     title: page.title,
     uri: page.uri,
-    categories: nextCategories,
-    periods: nextPeriods,
+    categories: categoriesResult.options,
+    periods: periodsResult.options,
     items: page.items,
   );
 }

@@ -31,6 +31,7 @@ typedef ReaderChapterNavigationCallback =
       String prevHref,
       String nextHref,
       String catalogHref,
+      bool openAtEnd,
     });
 
 String readerChapterIdForPage(ReaderPageData page) {
@@ -64,7 +65,7 @@ class ReaderController extends ChangeNotifier {
       currentPage: () => _page,
       chapterIdForPage: readerChapterIdForPage,
       isDisposed: () => _disposed,
-      notify: _notifyControllerListeners,
+      notify: notifyListeners,
       onRequestAuth: onRequestAuth,
       onLogoutForExpiredSession: onLogoutForExpiredSession,
       onShowMessage: onShowMessage,
@@ -78,7 +79,7 @@ class ReaderController extends ChangeNotifier {
       onRequestChapterNavigation: onRequestChapterNavigation,
       notify: () {
         if (!_disposed) {
-          _notifyControllerListeners();
+          notifyListeners();
         }
       },
     );
@@ -113,7 +114,6 @@ class ReaderController extends ChangeNotifier {
   StreamSubscription<ReaderVolumeKeyAction>? _volumeKeySubscription;
   Timer? _progressDebounce;
   Timer? _autoTurnTimer;
-  Timer? _clockTimer;
   bool _disposed = false;
 
   ReaderPageData? _page;
@@ -269,6 +269,7 @@ class ReaderController extends ChangeNotifier {
     String? previousUri,
     bool forceRestore = false,
     ReaderRestoreTarget? preferredRestoreTarget,
+    bool openAtEnd = false,
   }) {
     _page = page;
     _handlePageLoaded(
@@ -276,6 +277,7 @@ class ReaderController extends ChangeNotifier {
       previousUri: previousUri,
       forceRestore: forceRestore,
       preferredRestoreTarget: preferredRestoreTarget,
+      openAtEnd: openAtEnd,
     );
     notifyListeners();
   }
@@ -299,7 +301,6 @@ class ReaderController extends ChangeNotifier {
     _disposed = true;
     _progressDebounce?.cancel();
     _autoTurnTimer?.cancel();
-    _clockTimer?.cancel();
     _batterySubscription?.cancel();
     _volumeKeySubscription?.cancel();
     preferencesController.removeListener(_handlePreferencesChanged);
@@ -349,7 +350,14 @@ class ReaderController extends ChangeNotifier {
       if (page == null) return;
       final int totalPageCount = readerPagedPageCount(page);
       final int nextPageIndex = _currentPageIndex + 1;
-      if (nextPageIndex >= totalPageCount) return;
+      if (nextPageIndex >= totalPageCount) {
+        if (page.nextHref.trim().isNotEmpty) {
+          await triggerNextChapter(page);
+        } else {
+          onShowMessage('已经是最后一话');
+        }
+        return;
+      }
       await animateToPage(nextPageIndex);
       return;
     }
@@ -373,7 +381,15 @@ class ReaderController extends ChangeNotifier {
     restoreCoordinator.noteUserInteraction();
     if (preferences.isPaged) {
       final int previousPageIndex = _currentPageIndex - 1;
-      if (previousPageIndex < 0) return;
+      if (previousPageIndex < 0) {
+        final ReaderPageData? page = _page;
+        if (page != null && page.prevHref.trim().isNotEmpty) {
+          await triggerPreviousChapter(page);
+        } else {
+          onShowMessage('已经是第一话');
+        }
+        return;
+      }
       await animateToPage(previousPageIndex);
       return;
     }
@@ -511,26 +527,12 @@ class ReaderController extends ChangeNotifier {
       }
     }
 
-    _syncClockTicker(enabled: page != null && preferences.showClock);
     if (page == null) {
       _autoTurnTimer?.cancel();
       _autoTurnTimer = null;
       return;
     }
     _restartAutoTurn();
-  }
-
-  void _syncClockTicker({required bool enabled}) {
-    if (!enabled) {
-      _clockTimer?.cancel();
-      _clockTimer = null;
-      return;
-    }
-    if (_clockTimer != null) return;
-    _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (_disposed) return;
-      notifyListeners();
-    });
   }
 
   void _restartAutoTurn() {
@@ -576,6 +578,7 @@ class ReaderController extends ChangeNotifier {
     String? previousUri,
     bool forceRestore = false,
     ReaderRestoreTarget? preferredRestoreTarget,
+    bool openAtEnd = false,
   }) {
     final List<String> remoteImages = page.imageUrls
         .where((String imageUrl) {
@@ -613,6 +616,7 @@ class ReaderController extends ChangeNotifier {
           page,
           resetControllers: changedPage || forceRestore,
           preferredRestoreTarget: preferredRestoreTarget,
+          openAtEnd: openAtEnd,
         ),
       );
     }
@@ -630,8 +634,11 @@ class ReaderController extends ChangeNotifier {
     ReaderPageData page, {
     required bool resetControllers,
     ReaderRestoreTarget? preferredRestoreTarget,
+    bool openAtEnd = false,
   }) async {
     final DeferredViewportTicket ticket = restoreCoordinator.beginRequest();
+    final bool restoreAtEnd =
+        openAtEnd && resetControllers && preferredRestoreTarget == null;
     final ReaderPosition? savedPosition = await progressStore.readPosition(
       catalogHref: page.catalogHref,
       chapterHref: page.uri,
@@ -646,12 +653,19 @@ class ReaderController extends ChangeNotifier {
       final int? preferredImageIndex = restoreTarget.imageIndexFor(page);
       final ReaderPosition? sourcePosition =
           restoreTarget.position ?? savedPosition;
-      final int pageIndex = sourcePosition?.isPaged == true
-          ? sourcePosition!.pageIndex.clamp(0, maxPageIndex)
-          : (preferredImageIndex ?? 0);
-      final double? pageOffset = sourcePosition?.isPaged == true
-          ? sourcePosition!.pageOffset
-          : null;
+      final int pageIndex = restoreAtEnd
+          ? (page.imageUrls.isEmpty ? 0 : page.imageUrls.length - 1).clamp(
+              0,
+              maxPageIndex,
+            )
+          : (sourcePosition?.isPaged == true
+                ? sourcePosition!.pageIndex.clamp(0, maxPageIndex)
+                : (preferredImageIndex ?? 0));
+      final double? pageOffset = restoreAtEnd
+          ? null
+          : (sourcePosition?.isPaged == true
+                ? sourcePosition!.pageOffset
+                : null);
       if (resetControllers) {
         _disposePagedScrollControllers();
         _replacePageController(initialPage: pageIndex);
@@ -681,7 +695,9 @@ class ReaderController extends ChangeNotifier {
       return;
     }
 
-    final int? restoreImageIndex = restoreTarget.imageIndexFor(page);
+    final int? restoreImageIndex = restoreAtEnd
+        ? (page.imageUrls.isEmpty ? null : page.imageUrls.length - 1)
+        : restoreTarget.imageIndexFor(page);
     final ReaderPosition? sourcePosition =
         restoreTarget.position ?? savedPosition;
     final double? savedOffset = sourcePosition?.isScroll == true
@@ -698,11 +714,13 @@ class ReaderController extends ChangeNotifier {
           restoreImageIndex,
           attempts: 10,
           ticket: ticket,
-          alignment:
-              preferredRestoreTarget == null &&
-                  preferences.openingPosition == ReaderOpeningPosition.top
-              ? 0
-              : 0.5,
+          alignment: restoreAtEnd
+              ? 1
+              : (preferredRestoreTarget == null &&
+                        preferences.openingPosition ==
+                            ReaderOpeningPosition.top
+                    ? 0
+                    : 0.5),
         );
       } else {
         _jumpToOffset(page.uri, savedOffset ?? 0, attempts: 10, ticket: ticket);
@@ -1167,8 +1185,6 @@ class ReaderController extends ChangeNotifier {
       chapterHref: page.uri,
     );
   }
-
-  void _notifyControllerListeners() => notifyListeners();
 
   void _handlePreferencesChanged() {
     final ReaderPreferences previousPreferences =

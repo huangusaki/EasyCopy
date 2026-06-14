@@ -194,11 +194,5 @@ extension _DownloadPathUtils on ComicDownloadService {
     return Uri(pathSegments: targetSegments).path;
   }
 
-  String _pathKeyForUri(String value) {
-    final Uri? uri = Uri.tryParse(_rewriteAllowedUri(value));
-    if (uri == null) {
-      return '';
-    }
-    return Uri(path: uri.path).toString();
-  }
+  String _pathKeyForUri(String value) => UriKeys.pathKey(value);
 }

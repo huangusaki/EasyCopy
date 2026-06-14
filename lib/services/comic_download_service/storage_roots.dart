@@ -344,13 +344,7 @@ extension _DownloadStorageRoots on ComicDownloadService {
     return _shouldSkipMigrationFileName(fileName);
   }
 
-  String _normalizedPath(String value) {
-    final String normalized = value.trim().replaceAll(
-      '/',
-      Platform.pathSeparator,
-    );
-    return Platform.isWindows ? normalized.toLowerCase() : normalized;
-  }
+  String _normalizedPath(String value) => normalizeStoragePath(value);
 }
 
 class _StorageEntry {

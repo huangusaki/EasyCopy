@@ -296,22 +296,20 @@ class PageCacheStore {
     _entries.sort((CachedPageEnvelope left, CachedPageEnvelope right) {
       return left.lastAccessedAt.compareTo(right.lastAccessedAt);
     });
-    while (_entries.length > maxEntries || _serializedSize() > maxBytes) {
-      if (_entries.isEmpty) {
-        break;
-      }
+    // 预计算单条大小，避免循环里反复编码整表。
+    final List<int> entrySizes = _entries
+        .map(_encodedEntrySize)
+        .toList(growable: true);
+    int totalBytes = entrySizes.fold<int>(0, (int sum, int size) => sum + size);
+    while (_entries.isNotEmpty &&
+        (_entries.length > maxEntries || totalBytes > maxBytes)) {
+      totalBytes -= entrySizes.removeAt(0);
       _entries.removeAt(0);
     }
   }
 
-  int _serializedSize() {
-    return utf8
-        .encode(
-          jsonEncode(
-            _entries.map((CachedPageEnvelope entry) => entry.toJson()).toList(),
-          ),
-        )
-        .length;
+  int _encodedEntrySize(CachedPageEnvelope entry) {
+    return utf8.encode(jsonEncode(entry.toJson())).length;
   }
 
   Future<void> _persist() async {
@@ -324,7 +322,7 @@ class PageCacheStore {
         ),
       );
     } catch (_) {
-      // Best-effort persistence only.
+      // 缓存写入失败不阻断页面加载。
     }
   }
 
@@ -358,8 +356,7 @@ class PageCacheStore {
       page.toJson(),
     );
     if (page is DetailPageData && page.chapterGroups.isNotEmpty) {
-      // `chapterGroups` already contains full chapter metadata. Keeping
-      // duplicated flattened `chapters` significantly increases cache size.
+      // chapterGroups 已含完整章节，移除扁平副本降低缓存体积。
       payload.remove('chapters');
     }
     return _compactMap(payload, isRoot: true);

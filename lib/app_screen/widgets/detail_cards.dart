@@ -429,9 +429,10 @@ class ChapterGrid extends StatelessWidget {
           ),
           itemBuilder: (BuildContext context, int index) {
             final ChapterData chapter = chapters[index];
-            final String chapterPathKey = Uri.tryParse(chapter.href) == null
+            final Uri? chapterUri = Uri.tryParse(chapter.href);
+            final String chapterPathKey = chapterUri == null
                 ? ''
-                : Uri(path: Uri.parse(chapter.href).path).toString();
+                : Uri(path: chapterUri.path).toString();
             final bool isDownloaded = downloadedChapterPathKeys.contains(
               chapterPathKey,
             );

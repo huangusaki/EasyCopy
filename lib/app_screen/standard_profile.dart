@@ -283,26 +283,11 @@ extension _AppScreenProfileSections on _AppScreenState {
       }
     }
     final String title = targetItem?.title.trim() ?? '';
-    final bool? confirmed = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('删除浏览记录'),
-          content: Text(title.isEmpty ? '确认删除这条浏览记录吗？' : '确认删除《$title》的浏览记录吗？'),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('删除'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true || !mounted) {
+    if (!await _confirmDialog(
+      title: '删除浏览记录',
+      content: title.isEmpty ? '确认删除这条浏览记录吗？' : '确认删除《$title》的浏览记录吗？',
+      confirmLabel: '删除',
+    )) {
       return;
     }
 

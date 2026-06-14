@@ -47,11 +47,19 @@ class HomePageData extends SitePage {
         'heroBanners',
         HeroBannerData.fromJson,
       ),
-      sections: _readList<ComicSectionData>(
-        json,
-        'sections',
-        ComicSectionData.fromJson,
-      ).where(_shouldRetainHomeSection).toList(growable: false),
+      sections:
+          _readList<ComicSectionData>(
+                json,
+                'sections',
+                ComicSectionData.fromJson,
+              )
+              .where(
+                (ComicSectionData section) => shouldRetainHomeSection(
+                  title: section.title,
+                  href: section.href,
+                ),
+              )
+              .toList(growable: false),
     );
   }
 

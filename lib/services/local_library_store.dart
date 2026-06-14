@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/uri_keys.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 
 typedef LocalLibraryDirectoryProvider = Future<Directory> Function();
@@ -49,7 +50,7 @@ class LocalLibraryStore {
     try {
       await database.close();
     } catch (_) {
-      // Best-effort cleanup only.
+      // 清理失败不影响后续流程。
     }
   }
 
@@ -362,8 +363,7 @@ class LocalLibraryStore {
       'title': title,
       'cover_url': coverUrl,
       'comic_href': comicHref,
-      // Preserve the last opened chapter so a detail view doesn't wipe
-      // the continue-reading state.
+      // 保留最近章节，详情页写入不覆盖继续阅读。
       'chapter_label': existingChapterLabel,
       'chapter_href': existingChapterHref,
       'visited_at_ms': _now().millisecondsSinceEpoch,
@@ -612,13 +612,7 @@ class LocalLibraryStore {
     return '${scope.trim()}::${comicPathKey.trim()}';
   }
 
-  static String _pathKeyForHref(String href) {
-    final Uri? uri = Uri.tryParse(href.trim());
-    if (uri == null) {
-      return '';
-    }
-    return uri.path.trim();
-  }
+  static String _pathKeyForHref(String href) => UriKeys.rawPathKey(href);
 
   static String _twoDigits(int value) => value >= 10 ? '$value' : '0$value';
 
@@ -629,7 +623,7 @@ class LocalLibraryStore {
     }
     final int? milliseconds = int.tryParse(trimmed);
     if (milliseconds != null && milliseconds > 0) {
-      // Heuristic: treat large values as milliseconds, smaller as seconds.
+      // 大数按毫秒，小数按秒。
       if (milliseconds > 100000000000) {
         return milliseconds;
       }

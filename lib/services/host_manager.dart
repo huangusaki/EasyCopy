@@ -166,7 +166,7 @@ class HostManager {
   List<String> get candidateHosts => List<String>.unmodifiable(_candidateHosts);
 
   List<String> get knownHosts => List<String>.unmodifiable(
-    _mergeHosts(<String>[
+    _normalizeHosts(<String>[
       ..._seedHosts,
       _currentHost,
       if (_sessionPinnedHost != null) _sessionPinnedHost!,
@@ -357,12 +357,15 @@ class HostManager {
     if (!uri.hasScheme) {
       return uri;
     }
-    if (!allowedHosts.contains(uri.host.toLowerCase())) {
+    final String host = uri.host.toLowerCase();
+    final String activeHost = currentHost;
+    // 多数地址已是当前域名，先用字符串短路。
+    if (host != activeHost && !allowedHosts.contains(host)) {
       return uri;
     }
     return uri.replace(
       scheme: baseUri.scheme,
-      host: currentHost,
+      host: activeHost,
       port: baseUri.hasPort ? baseUri.port : null,
     );
   }
@@ -377,7 +380,8 @@ class HostManager {
     if (uri.scheme != 'http' && uri.scheme != 'https') {
       return false;
     }
-    return allowedHosts.contains(uri.host.toLowerCase());
+    final String host = uri.host.toLowerCase();
+    return host == currentHost || allowedHosts.contains(host);
   }
 
   Future<void> _initialize() async {
@@ -392,8 +396,7 @@ class HostManager {
       _candidateHosts = _successfulProbeHosts(_snapshot!.probes);
       _candidateHostAliases = _buildCandidateHostAliases(_snapshot!.probes);
     }
-    // Cold start should reuse the last known host immediately. Fresh probes run
-    // later in the background so the first screen is not blocked on network.
+    // 冷启动先复用上次可用域名，探测放到后台。
   }
 
   Future<HostProbeRecord> _probeKnownHost(String host) async {
@@ -536,7 +539,7 @@ class HostManager {
       for (final HostProbeRecord probe in successful)
         _normalizeHost(probe.host),
     };
-    final List<String> preferenceOrder = _mergeHosts(<String>[
+    final List<String> preferenceOrder = _normalizeHosts(<String>[
       ..._seedHosts,
       if (_sessionPinnedHost != null) _sessionPinnedHost!,
       _currentHost,
@@ -572,15 +575,16 @@ class HostManager {
     final List<_HostAliasGroup> groups = <_HostAliasGroup>[];
     for (final List<HostProbeRecord> groupedProbes in probesByGroup.values) {
       final List<String> groupedHosts =
-          _mergeHosts(groupedProbes.map((HostProbeRecord probe) => probe.host))
-            ..sort((String left, String right) {
-              final int leftIndex = preferenceIndex[left] ?? 1 << 30;
-              final int rightIndex = preferenceIndex[right] ?? 1 << 30;
-              if (leftIndex != rightIndex) {
-                return leftIndex.compareTo(rightIndex);
-              }
-              return left.compareTo(right);
-            });
+          _normalizeHosts(
+            groupedProbes.map((HostProbeRecord probe) => probe.host),
+          )..sort((String left, String right) {
+            final int leftIndex = preferenceIndex[left] ?? 1 << 30;
+            final int rightIndex = preferenceIndex[right] ?? 1 << 30;
+            if (leftIndex != rightIndex) {
+              return leftIndex.compareTo(rightIndex);
+            }
+            return left.compareTo(right);
+          });
       final String primaryHost = groupedHosts.first;
       final int bestLatencyMs = groupedProbes.fold<int>(
         groupedProbes.first.latencyMs,
@@ -679,7 +683,7 @@ class HostManager {
     if (nextHost != null) {
       return _normalizeHost(nextHost.host);
     }
-    final List<String> fallbackHosts = _mergeHosts(<String>[
+    final List<String> fallbackHosts = _normalizeHosts(<String>[
       ..._candidateHosts,
       _currentHost,
       if (_sessionPinnedHost != null) _sessionPinnedHost!,
@@ -731,7 +735,7 @@ class HostManager {
         const JsonEncoder.withIndent('  ').convert(_snapshot?.toJson() ?? {}),
       );
     } catch (_) {
-      // Best-effort persistence only.
+      // 持久化失败不影响当前域名选择。
     }
   }
 
@@ -844,10 +848,6 @@ class HostManager {
       values.add(normalizedHost);
     }
     return values;
-  }
-
-  static List<String> _mergeHosts(Iterable<String> hosts) {
-    return _normalizeHosts(hosts);
   }
 
   static String _firstHost(Iterable<String> hosts) {

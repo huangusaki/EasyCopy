@@ -321,6 +321,17 @@ class _WallpaperSettingsSectionState extends State<_WallpaperSettingsSection> {
           ],
         ),
         if (hasImage) ...<Widget>[
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _isPicking ? null : _handleCrop,
+              icon: const Icon(Icons.crop_rounded),
+              label: const Text('裁剪选区'),
+            ),
+          ),
+        ],
+        if (hasImage) ...<Widget>[
           const SizedBox(height: 14),
           _WallpaperSliderRow(
             icon: Icons.brightness_6_outlined,
@@ -379,6 +390,41 @@ class _WallpaperSettingsSectionState extends State<_WallpaperSettingsSection> {
       }
     }
   }
+
+  Future<void> _handleCrop() async {
+    final WallpaperPreferences w = widget.wallpaper;
+    final String? path = WallpaperStorage.instance.resolvePathSync(
+      w.imageFileName,
+    );
+    if (path == null) {
+      return;
+    }
+    final Rect? result = await Navigator.of(context).push<Rect>(
+      MaterialPageRoute<Rect>(
+        fullscreenDialog: true,
+        builder: (BuildContext context) => WallpaperCropEditorPage(
+          imagePath: path,
+          initialCrop: Rect.fromLTWH(
+            w.cropLeft,
+            w.cropTop,
+            w.cropWidth,
+            w.cropHeight,
+          ),
+        ),
+      ),
+    );
+    if (result == null) {
+      return;
+    }
+    widget.actions.commitPreferences(
+      w.copyWith(
+        cropLeft: result.left,
+        cropTop: result.top,
+        cropWidth: result.width,
+        cropHeight: result.height,
+      ),
+    );
+  }
 }
 
 class _WallpaperPreviewTile extends StatelessWidget {
@@ -412,35 +458,15 @@ class _WallpaperPreviewTile extends StatelessWidget {
         fit: StackFit.expand,
         children: <Widget>[
           Positioned.fill(
-            child: previewBlur < 0.5
-                ? Image.file(
-                    File(path),
-                    fit: BoxFit.cover,
-                    gaplessPlayback: true,
-                    errorBuilder:
-                        (
-                          BuildContext context,
-                          Object error,
-                          StackTrace? stackTrace,
-                        ) => _buildPlaceholder(colorScheme),
-                  )
-                : ImageFiltered(
-                    imageFilter: ui.ImageFilter.blur(
-                      sigmaX: previewBlur,
-                      sigmaY: previewBlur,
-                    ),
-                    child: Image.file(
-                      File(path),
-                      fit: BoxFit.cover,
-                      gaplessPlayback: true,
-                      errorBuilder:
-                          (
-                            BuildContext context,
-                            Object error,
-                            StackTrace? stackTrace,
-                          ) => _buildPlaceholder(colorScheme),
-                    ),
-                  ),
+            child: CroppedWallpaperImage(
+              path: path,
+              cropLeft: wallpaper.cropLeft,
+              cropTop: wallpaper.cropTop,
+              cropWidth: wallpaper.cropWidth,
+              cropHeight: wallpaper.cropHeight,
+              blurSigma: previewBlur,
+              fallback: _buildPlaceholder(colorScheme),
+            ),
           ),
           if (scrimAlpha > 0.001)
             Positioned.fill(

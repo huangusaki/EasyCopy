@@ -68,7 +68,7 @@ extension _DownloadMigrationCoordinator on DownloadQueueManager {
         _storageSwitchPending = false;
         _clearMigrationProgress();
       }
-      _notify('缓存目录迁移失败：${_formatDownloadError(error)}');
+      _notify('缓存目录迁移失败：${formatDownloadError(error)}');
     }
   }
 

@@ -842,6 +842,7 @@ class SiteApiClient {
     return switch (sort) {
       ProfileCollectionSort.readingTime => '-datetime_browse',
       ProfileCollectionSort.latestUpdate => '-datetime_updated',
+        // alphabetical 已归一为 latestUpdate，此处仅补齐 switch。
       ProfileCollectionSort.alphabetical => '-datetime_updated',
     };
   }

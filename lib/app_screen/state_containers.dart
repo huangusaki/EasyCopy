@@ -77,7 +77,12 @@ class AppShellState {
   bool isCheckingForUpdates = false;
   bool isUpdatingCollection = false;
   bool isReaderExitTransitionActive = false;
+  DateTime? backToExitPromptedAt;
   String? readerShortcutFocusRouteKey;
+
+  /// 目标章节 pathKey；下一次打开时定位末页，消费后清空。
+  String pendingReaderOpenAtEndKey = '';
+
   String appVersion = '';
   String appBuildNumber = '';
 

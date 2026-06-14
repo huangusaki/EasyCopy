@@ -105,12 +105,10 @@ List<T> _readList<T>(
       .toList(growable: false);
 }
 
-bool _shouldRetainHomeSection(ComicSectionData section) {
-  final String normalizedTitle = section.title.replaceAll(RegExp(r'\s+'), '');
-  final Uri? hrefUri = Uri.tryParse(section.href.trim());
-  final String normalizedPath = (hrefUri?.path ?? section.href)
-      .trim()
-      .toLowerCase();
+bool shouldRetainHomeSection({required String title, required String href}) {
+  final String normalizedTitle = title.replaceAll(RegExp(r'\s+'), '');
+  final Uri? hrefUri = Uri.tryParse(href.trim());
+  final String normalizedPath = (hrefUri?.path ?? href).trim().toLowerCase();
   return !normalizedTitle.contains('熱門更新') &&
       !normalizedTitle.contains('热门更新') &&
       normalizedPath != '/comics' &&

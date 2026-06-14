@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:reader/services/uri_keys.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 
 typedef ReaderProgressDirectoryProvider = Future<Directory> Function();
@@ -178,14 +179,6 @@ class ReaderProgressStore {
     )
   ''';
 
-  static String progressKeyForComicHref(String catalogHref) {
-    return _pathKeyFromValue(catalogHref);
-  }
-
-  static String progressKeyForChapterHref(String chapterHref) {
-    return _pathKeyFromValue(chapterHref);
-  }
-
   final ReaderProgressDirectoryProvider _directoryProvider;
   final ReaderProgressNowProvider _now;
   final sqflite.DatabaseFactory _databaseFactory;
@@ -218,25 +211,6 @@ class ReaderProgressStore {
     }
     return entry.position;
   }
-
-  Future<double?> readOffset({
-    required String catalogHref,
-    required String chapterHref,
-  }) async {
-    final ReaderPosition? position = await readPosition(
-      catalogHref: catalogHref,
-      chapterHref: chapterHref,
-    );
-    if (position == null || !position.isScroll) {
-      return null;
-    }
-    return position.offset;
-  }
-
-  /// Returns the most recently updated progress entry, or `null` if the
-  /// store is empty.
-  ReaderProgressEntry? get latestEntry =>
-      _entries.isEmpty ? null : _entries.first;
 
   String? latestChapterPathKeyForCatalog(String catalogHref) {
     final String targetComicPathKey = _pathKey(catalogHref);
@@ -361,7 +335,7 @@ class ReaderProgressStore {
     try {
       await _writeQueue;
     } catch (_) {
-      // Best-effort cleanup only.
+      // 清理失败不影响后续流程。
     }
     final sqflite.Database? database = _database;
     _database = null;
@@ -489,7 +463,7 @@ class ReaderProgressStore {
       try {
         await previousWrite;
       } catch (_) {
-        // Keep later writes moving even if an earlier best-effort write failed.
+        // 前一次写入失败也不能阻塞后续写入。
       }
       return await action();
     } finally {
@@ -535,10 +509,4 @@ class ReaderProgressStore {
   }
 }
 
-String _pathKeyFromValue(String href) {
-  final Uri? uri = Uri.tryParse(href.trim());
-  if (uri == null) {
-    return '';
-  }
-  return uri.path.trim();
-}
+String _pathKeyFromValue(String href) => UriKeys.rawPathKey(href);

@@ -13,16 +13,20 @@ class RankCard extends StatelessWidget {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final IconData trendIcon;
     final Color trendColor;
+    final String trendLabel;
     switch (item.trend) {
       case 'up':
         trendIcon = Icons.trending_up_rounded;
         trendColor = const Color(0xFF18A558);
+        trendLabel = '上升';
       case 'down':
         trendIcon = Icons.trending_down_rounded;
         trendColor = const Color(0xFFD64545);
+        trendLabel = '下降';
       default:
         trendIcon = Icons.trending_flat_rounded;
         trendColor = const Color(0xFF7A8494);
+        trendLabel = '持平';
     }
 
     return InkWell(
@@ -116,7 +120,7 @@ class RankCard extends StatelessWidget {
                             Icon(trendIcon, size: 16, color: trendColor),
                             const SizedBox(width: 4),
                             Text(
-                              item.trend,
+                              trendLabel,
                               style: TextStyle(
                                 color: trendColor,
                                 fontSize: 11,

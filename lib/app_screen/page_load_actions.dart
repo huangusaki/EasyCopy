@@ -175,13 +175,6 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     );
   }
 
-  void _finishMatchingRouteLoading(
-    NavigationRequestContext request, {
-    String? message,
-  }) {
-    _finishTabEntryLoading(request, message: message);
-  }
-
   Future<SitePage> _loadStandardPageFresh(
     Uri uri, {
     required String authScope,
@@ -304,7 +297,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       ).authScope;
       await _pageRepository.writeCachedPage(page, authScope: authScope);
     } catch (_) {
-      // Best-effort cache repair only.
+      // 缓存修复失败不影响当前页面。
     }
   }
 
@@ -684,11 +677,11 @@ extension _AppScreenPageLoadActions on _AppScreenState {
         );
         return;
       }
-      _finishMatchingRouteLoading(requestContext);
+      _finishTabEntryLoading(requestContext);
     } on SupersededPageLoadException {
-      _finishMatchingRouteLoading(requestContext);
+      _finishTabEntryLoading(requestContext);
     } catch (_) {
-      _finishMatchingRouteLoading(requestContext);
+      _finishTabEntryLoading(requestContext);
     }
   }
 
@@ -871,7 +864,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
         return;
       }
       if (profilePage is! ProfilePageData) {
-        _finishMatchingRouteLoading(requestContext);
+        _finishTabEntryLoading(requestContext);
         return;
       }
       _applyLoadedPage(
@@ -939,7 +932,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     required NavigationRequestContext requestContext,
   }) async {
     if (error is SupersededPageLoadException) {
-      _finishMatchingRouteLoading(requestContext);
+      _finishTabEntryLoading(requestContext);
       return;
     }
 

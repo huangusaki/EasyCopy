@@ -10,14 +10,16 @@ import 'package:reader/services/host_manager.dart';
 import 'package:reader/services/wallpaper_storage.dart';
 import 'package:reader/widgets/comic_grid.dart';
 import 'package:reader/widgets/cover_image.dart';
+import 'package:reader/widgets/cropped_wallpaper_image.dart';
 import 'package:reader/widgets/responsive_layout.dart';
 import 'package:reader/widgets/settings_ui.dart';
 
 part 'profile_page_view/appearance_wallpaper.dart';
 part 'profile_page_view/host_settings_page.dart';
 part 'profile_page_view/profile_sections.dart';
+part 'profile_page_view/wallpaper_crop_editor.dart';
 
-/// 壁纸设置回调：滑动时仅预览，结束后再保存。
+/// 壁纸设置回调，滑动时预览，结束后保存。
 @immutable
 class WallpaperEditingActions {
   const WallpaperEditingActions({

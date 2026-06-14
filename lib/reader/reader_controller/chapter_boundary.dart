@@ -11,6 +11,7 @@ typedef ReaderBoundaryNavigationCallback =
       String prevHref,
       String nextHref,
       String catalogHref,
+      bool openAtEnd,
     });
 
 class ReaderChapterBoundaryController {
@@ -76,6 +77,7 @@ class ReaderChapterBoundaryController {
         prevHref,
         nextHref: page.uri,
         catalogHref: page.catalogHref,
+        openAtEnd: true,
       );
     } finally {
       reset();

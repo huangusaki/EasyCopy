@@ -1,6 +1,3 @@
-import 'dart:io';
-import 'dart:ui' as ui;
-
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +8,7 @@ import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/wallpaper_storage.dart';
 import 'package:reader/theme/app_theme.dart';
 import 'package:reader/utils/platform_capabilities.dart';
+import 'package:reader/widgets/cropped_wallpaper_image.dart';
 
 class AppRoot extends StatelessWidget {
   const AppRoot({super.key, this.home, this.preferencesController});
@@ -75,7 +73,7 @@ class AppRoot extends StatelessWidget {
                   );
                 }
                 if (PlatformCapabilities.isDesktop) {
-                  // Windows UIA 语义树会持续报错并拖慢帧，先屏蔽。
+                  // 桌面辅助功能语义树会持续报错并拖慢帧，先屏蔽。
                   body = ExcludeSemantics(child: body);
                 }
                 return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -124,26 +122,21 @@ class AppWallpaperBackground extends StatelessWidget {
       0.0,
       WallpaperPreferences.maxBlurSigma,
     );
-    Widget image = Image.file(
-      File(path),
-      fit: BoxFit.cover,
-      gaplessPlayback: true,
-      errorBuilder:
-          (BuildContext context, Object error, StackTrace? stackTrace) =>
-              const SizedBox.shrink(),
-    );
-    if (blur > 0.01) {
-      image = ImageFiltered(
-        imageFilter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-        child: image,
-      );
-    }
     return ColoredBox(
-      color: colorScheme.surface.withValues(alpha: 1.0),
+      color: colorScheme.surface,
       child: Stack(
         fit: StackFit.expand,
         children: <Widget>[
-          Positioned.fill(child: image),
+          Positioned.fill(
+            child: CroppedWallpaperImage(
+              path: path,
+              cropLeft: wallpaper.cropLeft,
+              cropTop: wallpaper.cropTop,
+              cropWidth: wallpaper.cropWidth,
+              cropHeight: wallpaper.cropHeight,
+              blurSigma: blur,
+            ),
+          ),
           if (scrimAlpha > 0.001)
             Positioned.fill(
               child: ColoredBox(

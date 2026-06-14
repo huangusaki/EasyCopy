@@ -1,5 +1,6 @@
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/uri_keys.dart';
 
 typedef ReaderNavigationPageLoader =
     Future<ReaderPageData?> Function(Uri uri, {required String authScope});
@@ -35,7 +36,7 @@ class ReaderNavigationRepairer {
         );
       }
     } catch (_) {
-      // Best-effort repair only.
+      // 修复失败保留原页面。
     }
 
     if (!repairedPage.hasMissingChapterNavigation) {
@@ -133,13 +134,7 @@ class ReaderNavigationRepairer {
     );
   }
 
-  static String _chapterPathKey(String href) {
-    final Uri? uri = Uri.tryParse(href);
-    if (uri == null) {
-      return '';
-    }
-    return Uri(path: AppConfig.rewriteToCurrentHost(uri).path).toString();
-  }
+  static String _chapterPathKey(String href) => UriKeys.pathKey(href);
 }
 
 class _AdjacentChapterLinks {

@@ -320,10 +320,11 @@ extension ComicCacheLibraryOps on ComicDownloadService {
     final List<CachedComicLibraryEntry> comics = await _readCachedLibraryIndex(
       storageKey,
     );
+    final String targetComicKey = _comicKeyForUri(comicHref);
     final int comicIndex = comics.indexWhere(
       (CachedComicLibraryEntry entry) =>
-          _comicKeyForUri(entry.comicHref) == _comicKeyForUri(comicHref) &&
-          _comicKeyForUri(comicHref).isNotEmpty,
+          targetComicKey.isNotEmpty &&
+          _comicKeyForUri(entry.comicHref) == targetComicKey,
     );
     CachedComicLibraryEntry? comic = comicIndex >= 0
         ? comics[comicIndex]
@@ -488,29 +489,5 @@ extension ComicCacheLibraryOps on ComicDownloadService {
           .map((CachedComicLibraryEntry entry) => entry.toJson())
           .toList(growable: false),
     );
-  }
-
-  Future<Set<String>> loadChapterPathKeys(String comicUri) async {
-    final String targetKey = _comicKeyForUri(comicUri);
-    if (targetKey.isEmpty) {
-      return const <String>{};
-    }
-    final List<CachedComicLibraryEntry> library = await loadCachedLibrary();
-    final CachedComicLibraryEntry? match = library
-        .cast<CachedComicLibraryEntry?>()
-        .firstWhere(
-          (CachedComicLibraryEntry? item) =>
-              item != null && _comicKeyForUri(item.comicHref) == targetKey,
-          orElse: () => null,
-        );
-    if (match == null) {
-      return const <String>{};
-    }
-    return match.chapters
-        .map(
-          (CachedChapterEntry chapter) => _pathKeyForUri(chapter.chapterHref),
-        )
-        .where((String key) => key.isNotEmpty)
-        .toSet();
   }
 }
