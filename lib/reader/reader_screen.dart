@@ -28,6 +28,7 @@ import 'package:reader/services/reader_progress_store.dart';
 import 'package:reader/services/site_api_client.dart';
 import 'package:reader/services/site_session.dart';
 import 'package:reader/services/tree_image_provider.dart';
+import 'package:reader/widgets/responsive_layout.dart';
 import 'package:reader/widgets/settings_ui.dart';
 import 'package:reader/widgets/top_notice.dart';
 
@@ -38,6 +39,8 @@ part 'reader_screen/settings_sheet.dart';
 const Duration _readerExitFadeDuration = Duration(milliseconds: 220);
 const double _uiToggleInsetRatio = 0.075;
 const double _settingsDismissDistance = 72;
+const double _instantPageSwipeDistance = 72;
+const double _instantPageSwipeVelocity = 220;
 
 class ReaderScreen extends StatefulWidget {
   const ReaderScreen({
@@ -63,6 +66,7 @@ class ReaderScreen extends StatefulWidget {
 
 class ReaderScreenState extends State<ReaderScreen> {
   late final ReaderController _controller;
+  double _instantPageDragDx = 0;
 
   ReaderController get controller => _controller;
 
@@ -306,6 +310,18 @@ class ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
+  void goToNextChapter() {
+    final ReaderPageData page = widget.page;
+    if (page.nextHref.trim().isEmpty) return;
+    unawaited(_navigateToHref(page.nextHref, page));
+  }
+
+  void goToPreviousChapter() {
+    final ReaderPageData page = widget.page;
+    if (page.prevHref.trim().isEmpty) return;
+    unawaited(_navigateToHref(page.prevHref, page));
+  }
+
   void _seekReaderToImageIndex(
     BuildContext context,
     ReaderPageData page,
@@ -342,7 +358,13 @@ class ReaderScreenState extends State<ReaderScreen> {
     }
 
     double offset = topPadding;
-    final double contentWidth = screenSize.width;
+    final double maxReaderWidth = desktopReaderMaxWidth(
+      context,
+      preferences.pageFit,
+    );
+    final double contentWidth = maxReaderWidth.isFinite
+        ? math.min(screenSize.width, maxReaderWidth)
+        : screenSize.width;
     final Map<String, double> aspectRatios = _controller.imageAspectRatios;
     for (int index = 0; index < imageIndex; index += 1) {
       final String imageUrl = page.imageUrls[index];
@@ -381,7 +403,16 @@ class ReaderScreenState extends State<ReaderScreen> {
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOutCubic,
             opacity: _controller.isChapterControlsVisible ? 1 : 0,
-            child: _buildReaderChapterControls(context, page),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: usesDesktopLayout(context)
+                      ? kDesktopReaderControlsMaxWidth
+                      : double.infinity,
+                ),
+                child: _buildReaderChapterControls(context, page),
+              ),
+            ),
           ),
         ),
       ),
@@ -434,14 +465,21 @@ class ReaderScreenState extends State<ReaderScreen> {
           return Padding(
             key: _controller.imageItemKeyFor(index),
             padding: EdgeInsets.only(bottom: showGap ? 10 : 0),
-            child: _buildReaderImageFrame(
-              context,
-              page: page,
-              imageIndex: index,
-              imageUrl: page.imageUrls[index],
-              viewportHeight: preferences.pageFit == ReaderPageFit.fitScreen
-                  ? MediaQuery.sizeOf(context).height * 0.72
-                  : null,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: desktopReaderMaxWidth(context, preferences.pageFit),
+                ),
+                child: _buildReaderImageFrame(
+                  context,
+                  page: page,
+                  imageIndex: index,
+                  imageUrl: page.imageUrls[index],
+                  viewportHeight: preferences.pageFit == ReaderPageFit.fitScreen
+                      ? MediaQuery.sizeOf(context).height * 0.72
+                      : null,
+                ),
+              ),
             ),
           );
         },
@@ -458,12 +496,87 @@ class ReaderScreenState extends State<ReaderScreen> {
         : 8;
     final bool showCommentTail = _controller.shouldShowCommentTailPage(page);
     final bool hasNextChapter = page.nextHref.trim().isNotEmpty;
-    final ScrollPhysics pagePhysics = _controller.isZoomGestureLocked
+    final bool instantPageSwitch = preferences.disablePageTransitionAnimation;
+    final ScrollPhysics pagePhysics =
+        _controller.isZoomGestureLocked || instantPageSwitch
         ? const NeverScrollableScrollPhysics()
         : const ReaderPagedScrollPhysics(
             triggerPageRatio: 0.65,
             parent: BouncingScrollPhysics(),
           );
+    final Widget pageView = PageView.builder(
+      key: ValueKey<String>(
+        'reader-paged-${page.uri}-${preferences.readingDirection.name}-${preferences.pageFit.name}-${preferences.showPageGap}-$showCommentTail',
+      ),
+      controller: _controller.pageController,
+      physics: pagePhysics,
+      reverse: reverse,
+      itemCount: _controller.readerPagedPageCount(page),
+      onPageChanged: _controller.handlePageChanged,
+      itemBuilder: (BuildContext context, int index) {
+        final ScrollController scrollController = _controller
+            .pagedScrollControllerFor(index);
+        final bool isCommentPage = index >= page.imageUrls.length;
+        return LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final Widget pageBody = isCommentPage
+                ? _buildReaderCommentTailPage(
+                    context,
+                    page,
+                    minHeight: constraints.maxHeight,
+                  )
+                : _buildReaderPagedPageBody(
+                    context,
+                    page: page,
+                    imageIndex: index,
+                    imageUrl: page.imageUrls[index],
+                    constraints: constraints,
+                    showNextChapterFooter:
+                        !showCommentTail &&
+                        hasNextChapter &&
+                        index == page.imageUrls.length - 1,
+                  );
+            final Widget wrappedBody = isCommentPage
+                ? pageBody
+                : NotificationListener<ScrollNotification>(
+                    onNotification: (ScrollNotification notification) {
+                      _handleScrollLifecycle(notification);
+                      if (_isUserDrivenScrollNotification(notification)) {
+                        _controller.noteUserInteraction();
+                      }
+                      return false;
+                    },
+                    child: SingleChildScrollView(
+                      controller: scrollController,
+                      physics: _controller.isZoomGestureLocked
+                          ? const NeverScrollableScrollPhysics()
+                          : const BouncingScrollPhysics(),
+                      child: pageBody,
+                    ),
+                  );
+            return Padding(
+              padding: preferences.showPageGap
+                  ? EdgeInsets.only(top: topPadding, bottom: 8)
+                  : EdgeInsets.zero,
+              child: wrappedBody,
+            );
+          },
+        );
+      },
+    );
+    final Widget pagedContent = instantPageSwitch
+        ? GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragStart: (_) => _instantPageDragDx = 0,
+            onHorizontalDragUpdate: (DragUpdateDetails details) {
+              _instantPageDragDx += details.primaryDelta ?? 0;
+            },
+            onHorizontalDragEnd: (DragEndDetails details) =>
+                _handleInstantPageSwipe(details, reverse: reverse),
+            onHorizontalDragCancel: () => _instantPageDragDx = 0,
+            child: pageView,
+          )
+        : pageView;
     return NotificationListener<ScrollNotification>(
       onNotification: (ScrollNotification notification) {
         _handleScrollLifecycle(notification);
@@ -485,67 +598,32 @@ class ReaderScreenState extends State<ReaderScreen> {
         }
         return false;
       },
-      child: PageView.builder(
-        key: ValueKey<String>(
-          'reader-paged-${page.uri}-${preferences.readingDirection.name}-${preferences.pageFit.name}-${preferences.showPageGap}-$showCommentTail',
-        ),
-        controller: _controller.pageController,
-        physics: pagePhysics,
-        reverse: reverse,
-        itemCount: _controller.readerPagedPageCount(page),
-        onPageChanged: _controller.handlePageChanged,
-        itemBuilder: (BuildContext context, int index) {
-          final ScrollController scrollController = _controller
-              .pagedScrollControllerFor(index);
-          final bool isCommentPage = index >= page.imageUrls.length;
-          return LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final Widget pageBody = isCommentPage
-                  ? _buildReaderCommentTailPage(
-                      context,
-                      page,
-                      minHeight: constraints.maxHeight,
-                    )
-                  : _buildReaderPagedPageBody(
-                      context,
-                      page: page,
-                      imageIndex: index,
-                      imageUrl: page.imageUrls[index],
-                      constraints: constraints,
-                      showNextChapterFooter:
-                          !showCommentTail &&
-                          hasNextChapter &&
-                          index == page.imageUrls.length - 1,
-                    );
-              final Widget wrappedBody = isCommentPage
-                  ? pageBody
-                  : NotificationListener<ScrollNotification>(
-                      onNotification: (ScrollNotification notification) {
-                        _handleScrollLifecycle(notification);
-                        if (_isUserDrivenScrollNotification(notification)) {
-                          _controller.noteUserInteraction();
-                        }
-                        return false;
-                      },
-                      child: SingleChildScrollView(
-                        controller: scrollController,
-                        physics: _controller.isZoomGestureLocked
-                            ? const NeverScrollableScrollPhysics()
-                            : const BouncingScrollPhysics(),
-                        child: pageBody,
-                      ),
-                    );
-              return Padding(
-                padding: preferences.showPageGap
-                    ? EdgeInsets.only(top: topPadding, bottom: 8)
-                    : EdgeInsets.zero,
-                child: wrappedBody,
-              );
-            },
-          );
-        },
-      ),
+      child: pagedContent,
     );
+  }
+
+  void _handleInstantPageSwipe(
+    DragEndDetails details, {
+    required bool reverse,
+  }) {
+    final double dragDx = _instantPageDragDx;
+    _instantPageDragDx = 0;
+    if (_controller.isZoomGestureLocked) {
+      return;
+    }
+    final double velocity = details.primaryVelocity ?? 0;
+    final bool isFling = velocity.abs() >= _instantPageSwipeVelocity;
+    final bool isDrag = dragDx.abs() >= _instantPageSwipeDistance;
+    final double direction = isFling ? velocity : dragDx;
+    if (!isFling && !isDrag) {
+      return;
+    }
+    final bool forward = reverse ? direction > 0 : direction < 0;
+    if (forward) {
+      unawaited(_controller.stepForward());
+    } else {
+      unawaited(_controller.stepBackward());
+    }
   }
 
   Widget _buildReaderImageFrame(
@@ -610,8 +688,10 @@ class ReaderScreenState extends State<ReaderScreen> {
     return ConstrainedBox(
       constraints: BoxConstraints(minHeight: constraints.maxHeight),
       child: Center(
-        child: SizedBox(
-          width: double.infinity,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: desktopReaderMaxWidth(context, preferences.pageFit),
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,

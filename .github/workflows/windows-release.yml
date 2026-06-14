@@ -1,0 +1,169 @@
+name: Windows Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.0.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark this GitHub Release as a prerelease"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-release:
+    runs-on: windows-2022
+    env:
+      FLUTTER_VERSION: "3.41.4"
+      PUB_HOSTED_URL: "https://pub.dev"
+      PUB_CACHE: ${{ github.workspace }}\.pub-cache
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $releaseTag = '${{ github.event.inputs.tag }}'
+            $prereleaseFlag = '${{ github.event.inputs.prerelease }}'
+          }
+          else {
+            $releaseTag = '${{ github.ref_name }}'
+            $prereleaseFlag = 'false'
+          }
+
+          $versionMatch = Select-String -Path 'pubspec.yaml' -Pattern '^\s*version:\s*(\S+)\s*$' | Select-Object -First 1
+          if (-not $versionMatch) {
+            throw 'Could not read version from pubspec.yaml.'
+          }
+
+          $versionLine = $versionMatch.Matches[0].Groups[1].Value
+          $appVersion = ($versionLine -split '\+')[0]
+          $expectedTag = "v$appVersion"
+          $notesPath = ".github/release-notes/$releaseTag.md"
+
+          if ($releaseTag -ne $expectedTag) {
+            throw "Tag $releaseTag does not match pubspec version $appVersion. Expected $expectedTag."
+          }
+
+          $hasCustomNotes = (Test-Path -LiteralPath $notesPath).ToString().ToLowerInvariant()
+          $releaseNotesPath = if ($hasCustomNotes -eq 'true') { $notesPath } else { '' }
+
+          @(
+            "release_tag=$releaseTag"
+            "release_title=EasyCopy $appVersion"
+            "app_version=$appVersion"
+            "prerelease=$prereleaseFlag"
+            "has_custom_notes=$hasCustomNotes"
+            "release_notes_path=$releaseNotesPath"
+          ) | Add-Content -Path $env:GITHUB_OUTPUT -Encoding utf8
+
+      - name: Resolve pub host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $hostMatch = Select-String -Path 'pubspec.lock' -Pattern 'url:\s*"([^"]+)"' | Select-Object -First 1
+          if (-not $hostMatch) {
+            throw 'Could not read hosted package url from pubspec.lock.'
+          }
+
+          $pubHostedUrl = $hostMatch.Matches[0].Groups[1].Value
+          "PUB_HOSTED_URL=$pubHostedUrl" | Add-Content -Path $env:GITHUB_ENV -Encoding utf8
+
+      - name: Install dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Build Windows release
+        run: flutter build windows --release --no-pub
+
+      - name: Prepare release asset
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $version = '${{ steps.meta.outputs.app_version }}'
+          $buildOutputDir = Join-Path $env:GITHUB_WORKSPACE 'build\windows\x64\runner\Release'
+          $sourceExePath = Join-Path $buildOutputDir 'easy_copy.exe'
+          $distDir = Join-Path $env:GITHUB_WORKSPACE 'dist'
+          $artifactDirName = "easy_copy-$version-windows-x64"
+          $artifactDirPath = Join-Path $distDir $artifactDirName
+          $artifactZipPath = Join-Path $distDir "$artifactDirName.zip"
+
+          if (-not (Test-Path -LiteralPath $sourceExePath)) {
+            throw "Build succeeded but easy_copy.exe was not found under $buildOutputDir"
+          }
+
+          if (Test-Path -LiteralPath $distDir) {
+            Remove-Item -LiteralPath $distDir -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path $artifactDirPath | Out-Null
+          Copy-Item -Path (Join-Path $buildOutputDir '*') -Destination $artifactDirPath -Recurse -Force
+          Compress-Archive -LiteralPath $artifactDirPath -DestinationPath $artifactZipPath -Force
+
+          if (-not (Test-Path -LiteralPath $artifactZipPath)) {
+            throw "Failed to create Windows zip: $artifactZipPath"
+          }
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyCopy-${{ steps.meta.outputs.release_tag }}-windows-release
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Create or update GitHub Release with custom notes
+        if: steps.meta.outputs.has_custom_notes == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: ${{ steps.meta.outputs.release_title }}
+          target_commitish: ${{ github.sha }}
+          body_path: ${{ steps.meta.outputs.release_notes_path }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: |
+            dist/*.zip
+          fail_on_unmatched_files: true
+
+      - name: Create or update GitHub Release
+        if: steps.meta.outputs.has_custom_notes != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: ${{ steps.meta.outputs.release_title }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: |
+            dist/*.zip
+          fail_on_unmatched_files: true

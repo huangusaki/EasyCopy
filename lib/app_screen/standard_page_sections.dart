@@ -67,39 +67,13 @@ extension _AppScreenPageSections on _AppScreenState {
   List<Widget> _buildLoadingSections(BuildContext context) {
     return <Widget>[
       SliverFillRemaining(
-        hasScrollBody: false,
-        child: _buildLoadingIndicator(context),
+        // 避免 LayoutBuilder intrinsic 计算。
+        hasScrollBody: true,
+        child: _routes.isDetailRoute
+            ? const PageSkeleton.detail()
+            : const PageSkeleton.grid(),
       ),
     ];
-  }
-
-  Widget _buildLoadingIndicator(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final double height = MediaQuery.sizeOf(context).height * 0.52;
-    return SizedBox(
-      height: height.clamp(260, 480),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const SizedBox(
-              width: 28,
-              height: 28,
-              child: CircularProgressIndicator(strokeWidth: 3),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              '加载中……',
-              style: TextStyle(
-                color: colorScheme.onSurface.withValues(alpha: 0.88),
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   List<Widget> _buildErrorSections(BuildContext context) {
@@ -190,26 +164,49 @@ extension _AppScreenPageSections on _AppScreenState {
     ].join('::');
   }
 
+  void _showComicQuickPreview(ComicCardData item) {
+    unawaited(
+      showComicQuickPreview(
+        context,
+        item: item,
+        onOpenDetail: () => _navigateToHref(item.href),
+      ),
+    );
+  }
+
+  void _previewComicByHref(List<ComicCardData> items, String href) {
+    for (final ComicCardData item in items) {
+      if (item.href == href) {
+        _showComicQuickPreview(item);
+        return;
+      }
+    }
+  }
+
   List<Widget> _buildHomeSections(HomePageData page) {
     final List<Widget> sections = <Widget>[];
 
     for (final ComicSectionData section in page.sections) {
       sections.add(
         _hPaddedBox(
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              SectionHeader(
-                title: section.title,
-                actionLabel: section.href.isNotEmpty ? '更多' : null,
-                onActionTap: section.href.isNotEmpty
-                    ? () {
-                        unawaited(_openHomeSectionHref(section.href));
-                      }
-                    : null,
-              ),
-              ComicGrid(items: section.items, onTap: _navigateToHref),
-            ],
+          SectionHeader(
+            title: section.title,
+            actionLabel: section.href.isNotEmpty ? '更多' : null,
+            onActionTap: section.href.isNotEmpty
+                ? () {
+                    unawaited(_openHomeSectionHref(section.href));
+                  }
+                : null,
+          ),
+        ),
+      );
+      sections.add(
+        _hPaddedSliver(
+          ComicSliverGrid(
+            items: section.items,
+            onTap: _navigateToHref,
+            onLongPress: (String href) =>
+                _previewComicByHref(section.items, href),
           ),
         ),
       );
@@ -306,17 +303,16 @@ extension _AppScreenPageSections on _AppScreenState {
       sections.add(_hPaddedBox(const SizedBox(height: 18)));
     }
 
-    if (_isLoading) {
-      sections.add(_hPaddedBox(_buildInlineLoader()));
-    }
-
     sections.add(
       SliverToBoxAdapter(
         child: SizedBox(key: _discoverListAnchorKey(page), height: 1),
       ),
     );
 
-    if (page.items.isEmpty) {
+    if (_isLoading) {
+      // 切换题材/翻页时统一用骨架屏占位，避免和顶栏进度条叠出两条读条。
+      sections.add(const SliverToBoxAdapter(child: PageSkeleton.grid()));
+    } else if (page.items.isEmpty) {
       sections.add(
         _hPaddedBox(
           const Padding(
@@ -329,69 +325,82 @@ extension _AppScreenPageSections on _AppScreenState {
       final ({bool hasSubtitle, bool hasSecondary}) meta = comicMetaCoverage(
         page.items,
       );
-      final double availableWidth = MediaQuery.sizeOf(context).width - 32;
-      final double itemWidth = (availableWidth - 24) / 3;
-      final double itemHeight = comicCardHeightFor(
-        itemWidth: itemWidth,
-        hasSubtitle: meta.hasSubtitle,
-        hasSecondary: meta.hasSecondary,
-      );
-      final double aspectRatio = itemHeight <= 0
-          ? 0.50
-          : (itemWidth / itemHeight);
       sections.add(
         _hPaddedSliver(
-          SliverGrid(
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 10,
-              childAspectRatio: aspectRatio,
-            ),
-            delegate: SliverChildBuilderDelegate(
-              (BuildContext context, int index) {
-                final ComicCardData item = page.items[index];
-                return RepaintBoundary(
-                  child: ComicCardTile(
-                    key: ValueKey<String>(item.href),
-                    item: item,
-                    onTap: _navigateToHref,
-                  ),
-                );
-              },
-              childCount: page.items.length,
-              addAutomaticKeepAlives: false,
-            ),
+          SliverLayoutBuilder(
+            builder: (BuildContext context, constraints) {
+              const double crossAxisSpacing = 12;
+              final double availableWidth = constraints.crossAxisExtent;
+              final int crossAxisCount = responsiveComicCrossAxisCount(
+                context,
+                availableWidth,
+                spacing: crossAxisSpacing,
+              );
+              final double spacingWidth =
+                  crossAxisSpacing * (crossAxisCount - 1);
+              final double itemWidth =
+                  (availableWidth - spacingWidth) / crossAxisCount;
+              final double itemHeight = comicCardHeightFor(
+                itemWidth: itemWidth,
+                hasSubtitle: meta.hasSubtitle,
+                hasSecondary: meta.hasSecondary,
+                isDesktop: usesDesktopLayout(context),
+              );
+              final double aspectRatio = itemHeight <= 0
+                  ? 0.50
+                  : (itemWidth / itemHeight);
+              return SliverGrid(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  crossAxisSpacing: crossAxisSpacing,
+                  mainAxisSpacing: 10,
+                  childAspectRatio: aspectRatio,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (BuildContext context, int index) {
+                    final ComicCardData item = page.items[index];
+                    return RepaintBoundary(
+                      child: StaggerIn(
+                        key: ValueKey<String>(item.href),
+                        index: index % (crossAxisCount * 2),
+                        enabled: usesDesktopLayout(context),
+                        child: ComicCardTile(
+                          item: item,
+                          onTap: _navigateToHref,
+                          onLongPress: (_) => _showComicQuickPreview(item),
+                        ),
+                      ),
+                    );
+                  },
+                  childCount: page.items.length,
+                  addAutomaticKeepAlives: false,
+                ),
+              );
+            },
           ),
         ),
       );
     }
 
-    if (hasPager) {
+    if (hasPager && !_isLoading) {
       sections.add(_hPaddedBox(const SizedBox(height: 18)));
       sections.add(
         _hPaddedBox(
-          IgnorePointer(
-            ignoring: _isLoading,
-            child: Opacity(
-              opacity: _isLoading ? 0.72 : 1,
-              child: PagerCard(
-                pager: page.pager,
-                onPrev: page.pager.hasPrev
-                    ? () {
-                        unawaited(_openDiscoverPagerHref(page.pager.prevHref));
-                      }
-                    : null,
-                onNext: page.pager.hasNext
-                    ? () {
-                        unawaited(_openDiscoverPagerHref(page.pager.nextHref));
-                      }
-                    : null,
-                onJumpToPage: (int targetPage) {
-                  unawaited(_jumpDiscoverToPage(page, targetPage));
-                },
-              ),
-            ),
+          PagerCard(
+            pager: page.pager,
+            onPrev: page.pager.hasPrev
+                ? () {
+                    unawaited(_openDiscoverPagerHref(page.pager.prevHref));
+                  }
+                : null,
+            onNext: page.pager.hasNext
+                ? () {
+                    unawaited(_openDiscoverPagerHref(page.pager.nextHref));
+                  }
+                : null,
+            onJumpToPage: (int targetPage) {
+              unawaited(_jumpDiscoverToPage(page, targetPage));
+            },
           ),
         ),
       );
@@ -450,24 +459,37 @@ extension _AppScreenPageSections on _AppScreenState {
           children: <Widget>[
             const SectionHeader(title: '榜单列表'),
             if (_isLoading) _buildInlineLoader(),
-            _buildAnimatedSectionContent(
-              contentKey: _rankListContentKey(page),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: page.items
-                    .map(
-                      (RankEntryData item) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: RankCard(
-                          item: item,
-                          onTap: () => _navigateToHref(item.href),
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
-            ),
           ],
+        ),
+      ),
+    );
+    sections.add(
+      _hPaddedSliver(
+        SliverList(
+          key: ValueKey<String>(_rankListContentKey(page)),
+          delegate: SliverChildBuilderDelegate(
+            (BuildContext context, int index) {
+              final RankEntryData item = page.items[index];
+              return Padding(
+                padding: EdgeInsets.only(
+                  bottom: index == page.items.length - 1 ? 0 : 12,
+                ),
+                child: RepaintBoundary(
+                  child: StaggerIn(
+                    key: ValueKey<String>(item.href),
+                    index: index,
+                    enabled: usesDesktopLayout(context),
+                    child: RankCard(
+                      item: item,
+                      onTap: () => _navigateToHref(item.href),
+                    ),
+                  ),
+                ),
+              );
+            },
+            childCount: page.items.length,
+            addAutomaticKeepAlives: false,
+          ),
         ),
       ),
     );

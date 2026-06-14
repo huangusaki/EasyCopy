@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:http/http.dart' as http;
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/debug_trace.dart';
+import 'package:reader/services/frame_jank_logger.dart';
 import 'package:reader/services/host_manager.dart';
 import 'package:reader/services/network_client.dart';
 import 'package:reader/services/site_html_page_parser.dart';
@@ -53,11 +55,30 @@ class SiteHtmlPageLoader {
             'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       ),
     );
-    return _parser.parsePage(
-      response.uri,
-      response.body,
-      loadDetailChapterResults: _loadDetailChapterResults,
+    if (_isDetailPageUri(response.uri)) {
+      return _parser.parsePage(
+        response.uri,
+        response.body,
+        loadDetailChapterResults: _loadDetailChapterResults,
+      );
+    }
+    // 详情页外的 HTML 解析移到后台 isolate。
+    final Uri responseUri = response.uri;
+    final String responseBody = response.body;
+    final Stopwatch parseStopwatch = Stopwatch()..start();
+    final SitePage page = await Isolate.run(() {
+      return const SiteHtmlPageParser().parsePage(responseUri, responseBody);
+    });
+    perfLog(
+      '[parse] off-main ${parseStopwatch.elapsedMilliseconds}ms '
+      'type=${page.type.name} path=${responseUri.path}',
     );
+    return page;
+  }
+
+  bool _isDetailPageUri(Uri uri) {
+    final String path = uri.path.toLowerCase();
+    return path.startsWith('/comic/') && !path.contains('/chapter/');
   }
 
   Future<String> _loadDetailChapterResults(DetailChapterRequest request) async {

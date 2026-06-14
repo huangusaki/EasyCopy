@@ -91,5 +91,42 @@ extension _AppScreenBootstrapActions on _AppScreenState {
       });
     }
     await _ensureDownloadQueueRunning();
+    unawaited(_prefetchPrimaryTabRoots());
+  }
+
+  /// 后台预热「发现 / 排行」根页。
+  Future<void> _prefetchPrimaryTabRoots() async {
+    await Future<void>.delayed(const Duration(seconds: 4));
+    for (final int tabIndex in <int>[1, 2]) {
+      if (!mounted || _isReaderMode) {
+        return;
+      }
+      if (_standardPageLoadController.pendingLoad != null) {
+        return;
+      }
+      final Uri rootUri = AppConfig.rewriteToCurrentHost(
+        appDestinations[tabIndex].uri,
+      );
+      final PageQueryKey key = _pageQueryKeyForUri(rootUri);
+      try {
+        final CachedPageHit? cached = await _pageRepository.readCached(key);
+        if (cached != null && !cached.envelope.isSoftExpired(DateTime.now())) {
+          continue;
+        }
+        if (!mounted ||
+            _isReaderMode ||
+            _standardPageLoadController.pendingLoad != null) {
+          return;
+        }
+        DebugTrace.log('prefetch.tab_root', <String, Object?>{
+          'bootId': _shell.bootId,
+          'uri': rootUri.toString(),
+        });
+        await _pageRepository.loadFresh(rootUri, authScope: key.authScope);
+      } catch (_) {
+        // 预取失败走前台错误路径。
+      }
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
   }
 }

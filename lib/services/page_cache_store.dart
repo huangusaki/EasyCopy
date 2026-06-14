@@ -17,9 +17,10 @@ class PageCachePolicy {
   final Duration softTtl;
   final Duration hardTtl;
 
+  // 列表软过期别太短，移动端后台刷新会抢平台主线程。
   static const PageCachePolicy listPage = PageCachePolicy(
-    softTtl: Duration(minutes: 3),
-    hardTtl: Duration(minutes: 30),
+    softTtl: Duration(minutes: 12),
+    hardTtl: Duration(hours: 2),
   );
   static const PageCachePolicy detailPage = PageCachePolicy(
     softTtl: Duration(minutes: 10),
@@ -30,8 +31,8 @@ class PageCachePolicy {
     hardTtl: Duration(days: 30),
   );
   static const PageCachePolicy profilePage = PageCachePolicy(
-    softTtl: Duration(minutes: 1),
-    hardTtl: Duration(minutes: 5),
+    softTtl: Duration(minutes: 5),
+    hardTtl: Duration(minutes: 30),
   );
 
   static PageCachePolicy forPage(SitePage page) {

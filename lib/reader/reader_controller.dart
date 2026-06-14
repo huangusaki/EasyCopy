@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/chapter_comment.dart';
 import 'package:reader/models/page_models.dart';
@@ -289,12 +288,7 @@ class ReaderController extends ChangeNotifier {
   }
 
   Future<void> restoreDefaultEnvironment() async {
-    await SystemChrome.setPreferredOrientations(const <DeviceOrientation>[
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    await platformBridge.restoreDefaultPresentation();
     await platformBridge.setKeepScreenOn(false);
     await platformBridge.setVolumePagingEnabled(false);
     _appliedEnvironment = const AppliedReaderEnvironment.standard();
@@ -397,8 +391,40 @@ class ReaderController extends ChangeNotifier {
     _restartAutoTurn();
   }
 
+  Future<void> scrollCurrentPageDown() => _scrollCurrentPageBy(1);
+
+  Future<void> scrollCurrentPageUp() => _scrollCurrentPageBy(-1);
+
+  Future<void> _scrollCurrentPageBy(int direction) async {
+    if (isZoomGestureLocked) return;
+    restoreCoordinator.noteUserInteraction();
+    final ScrollController? controller = preferences.isPaged
+        ? _pagedScrollControllers[_currentPageIndex]
+        : scrollController;
+    if (controller == null || !controller.hasClients) return;
+    final ScrollPosition position = controller.position;
+    final double delta = position.viewportDimension * 0.72 * direction;
+    final double targetOffset = (controller.offset + delta)
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+    if ((targetOffset - controller.offset).abs() < 1) return;
+    await controller.animateTo(
+      targetOffset,
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOutCubic,
+    );
+    _restartAutoTurn();
+  }
+
   Future<void> animateToPage(int pageIndex) async {
     if (!pageController.hasClients) return;
+    if (preferences.disablePageTransitionAnimation) {
+      pageController.jumpToPage(pageIndex);
+      if (_currentPageIndex != pageIndex) {
+        handlePageChanged(pageIndex);
+      }
+      return;
+    }
     await pageController.animateToPage(
       pageIndex,
       duration: const Duration(milliseconds: 220),
@@ -473,18 +499,9 @@ class ReaderController extends ChangeNotifier {
       if (page == null) {
         await restoreDefaultEnvironment();
       } else {
-        await SystemChrome.setPreferredOrientations(
-          nextEnvironment.orientation == ReaderScreenOrientation.landscape
-              ? const <DeviceOrientation>[
-                  DeviceOrientation.landscapeLeft,
-                  DeviceOrientation.landscapeRight,
-                ]
-              : const <DeviceOrientation>[DeviceOrientation.portraitUp],
-        );
-        await SystemChrome.setEnabledSystemUIMode(
-          nextEnvironment.fullscreen
-              ? SystemUiMode.immersiveSticky
-              : SystemUiMode.edgeToEdge,
+        await platformBridge.applyReaderPresentation(
+          orientation: nextEnvironment.orientation,
+          fullscreen: nextEnvironment.fullscreen,
         );
         await platformBridge.setKeepScreenOn(nextEnvironment.keepScreenOn);
         await platformBridge.setVolumePagingEnabled(

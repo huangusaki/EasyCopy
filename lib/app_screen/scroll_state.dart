@@ -99,13 +99,13 @@ class AppScrollState {
   void resetStandardScrollPosition() {
     final DeferredViewportTicket ticket = _restore.beginRequest();
     _suspendTracking = true;
-    if (standardScrollController.hasClients) {
+    if (_canJumpScroll) {
       standardScrollController.jumpTo(0);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_restore.isActive(ticket) ||
           !isMounted() ||
-          !standardScrollController.hasClients) {
+          !_canJumpScroll) {
         _finishRestore(ticket);
         return;
       }
@@ -115,6 +115,11 @@ class AppScrollState {
       _finishRestore(ticket);
     });
   }
+
+  /// hasClients 早于布局完成，jumpTo 前必须确认 extent。
+  bool get _canJumpScroll =>
+      standardScrollController.hasClients &&
+      standardScrollController.position.hasContentDimensions;
 
   void restoreStandardScrollPosition(
     double offset, {
@@ -137,7 +142,7 @@ class AppScrollState {
   Future<void> scrollCurrentStandardPageToTop({
     required VoidCallback onUserInteraction,
   }) async {
-    if (!standardScrollController.hasClients) {
+    if (!_canJumpScroll) {
       return;
     }
     onUserInteraction();
@@ -214,7 +219,7 @@ class AppScrollState {
       _finishRestore(ticket);
       return;
     }
-    if (!standardScrollController.hasClients) {
+    if (!_canJumpScroll) {
       if (attempts > 0) {
         Future<void>.delayed(
           const Duration(milliseconds: 120),

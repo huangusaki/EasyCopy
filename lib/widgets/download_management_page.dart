@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
+import 'package:reader/widgets/responsive_layout.dart';
 import 'package:reader/widgets/settings_ui.dart';
 import 'package:reader/widgets/top_notice.dart';
 
@@ -113,6 +114,7 @@ class _DownloadManagementPageState extends State<DownloadManagementPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: opaquePageBackground(context),
       appBar: AppBar(title: const Text('下载管理')),
       body: SafeArea(
         child: ValueListenableBuilder<DownloadQueueSnapshot>(
@@ -158,7 +160,7 @@ class _DownloadManagementPageState extends State<DownloadManagementPage> {
                                         cachedComicMap = _cachedComicMap(
                                           widget.cachedComics,
                                         );
-                                        return ListView(
+                                        Widget content = ListView(
                                           padding: const EdgeInsets.fromLTRB(
                                             16,
                                             16,
@@ -209,6 +211,18 @@ class _DownloadManagementPageState extends State<DownloadManagementPage> {
                                             ),
                                           ],
                                         );
+                                        if (usesDesktopLayout(context)) {
+                                          content = Align(
+                                            alignment: Alignment.topCenter,
+                                            child: ConstrainedBox(
+                                              constraints: const BoxConstraints(
+                                                maxWidth: 920,
+                                              ),
+                                              child: content,
+                                            ),
+                                          );
+                                        }
+                                        return content;
                                       },
                                 );
                               },

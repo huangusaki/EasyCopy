@@ -777,10 +777,10 @@ packages:
     dependency: transitive
     description:
       name: sqlite3
-      sha256: "9488c7d2cdb1091c91cacf7e207cff81b28bff8e366f042bad3afe7d34afe189"
+      sha256: "37356bcb56ce0d9404d602c41e4bdb7765e7e9732a3e47adb3d98c556a6abdad"
       url: "https://pub.dev"
     source: hosted
-    version: "3.3.2"
+    version: "3.3.3"
   stack_trace:
     dependency: transitive
     description:
@@ -937,10 +937,10 @@ packages:
     dependency: "direct main"
     description:
       name: webview_flutter
-      sha256: a3da219916aba44947d3a5478b1927876a09781174b5a2b67fa5be0555154bf9
+      sha256: e4d3474277c5043f5f3100ed27d94ad693abfd5c602b0221c719a4497e4ba1e4
       url: "https://pub.dev"
     source: hosted
-    version: "4.13.1"
+    version: "4.14.0"
   webview_flutter_android:
     dependency: transitive
     description:

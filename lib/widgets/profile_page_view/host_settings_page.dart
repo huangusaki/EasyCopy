@@ -197,6 +197,7 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
         });
 
     return Scaffold(
+      backgroundColor: opaquePageBackground(context),
       appBar: AppBar(title: const Text('访问域名')),
       body: SafeArea(
         child: ListView(

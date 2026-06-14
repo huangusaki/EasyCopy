@@ -47,40 +47,49 @@ extension _ReaderSettingsSheet on ReaderScreenState {
                               children: <Widget>[
                                 SettingsSection(
                                   children: <Widget>[
-                                    SettingsSelectRow<ReaderScreenOrientation>(
-                                      label: '屏幕方向',
-                                      value: preferences.screenOrientation,
-                                      items: ReaderScreenOrientation.values
-                                          .map((ReaderScreenOrientation value) {
-                                            return DropdownMenuItem<
-                                              ReaderScreenOrientation
-                                            >(
-                                              value: value,
-                                              child: Text(
-                                                value ==
-                                                        ReaderScreenOrientation
-                                                            .portrait
-                                                    ? '竖屏'
-                                                    : '横屏',
-                                              ),
-                                            );
-                                          })
-                                          .toList(growable: false),
-                                      onChanged:
-                                          (ReaderScreenOrientation? value) {
-                                            if (value == null) return;
-                                            unawaited(
-                                              preferencesController
-                                                  .updateReaderPreferences(
-                                                    (
-                                                      ReaderPreferences current,
-                                                    ) => current.copyWith(
-                                                      screenOrientation: value,
+                                    if (_controller
+                                        .platformBridge
+                                        .supportsOrientationLock)
+                                      SettingsSelectRow<
+                                        ReaderScreenOrientation
+                                      >(
+                                        label: '屏幕方向',
+                                        value: preferences.screenOrientation,
+                                        items: ReaderScreenOrientation.values
+                                            .map((
+                                              ReaderScreenOrientation value,
+                                            ) {
+                                              return DropdownMenuItem<
+                                                ReaderScreenOrientation
+                                              >(
+                                                value: value,
+                                                child: Text(
+                                                  value ==
+                                                          ReaderScreenOrientation
+                                                              .portrait
+                                                      ? '竖屏'
+                                                      : '横屏',
+                                                ),
+                                              );
+                                            })
+                                            .toList(growable: false),
+                                        onChanged:
+                                            (ReaderScreenOrientation? value) {
+                                              if (value == null) return;
+                                              unawaited(
+                                                preferencesController
+                                                    .updateReaderPreferences(
+                                                      (
+                                                        ReaderPreferences
+                                                        current,
+                                                      ) => current.copyWith(
+                                                        screenOrientation:
+                                                            value,
+                                                      ),
                                                     ),
-                                                  ),
-                                            );
-                                          },
-                                    ),
+                                              );
+                                            },
+                                      ),
                                     SettingsSelectRow<ReaderReadingDirection>(
                                       label: '阅读方向',
                                       value: preferences.readingDirection,
@@ -225,20 +234,41 @@ extension _ReaderSettingsSheet on ReaderScreenState {
                                       },
                                     ),
                                     SettingsSwitchRow(
-                                      label: '屏幕常亮',
-                                      value: preferences.keepScreenOn,
+                                      label: '关闭翻页动画',
+                                      value: preferences
+                                          .disablePageTransitionAnimation,
                                       onChanged: (bool value) {
                                         unawaited(
                                           preferencesController
                                               .updateReaderPreferences(
-                                                (ReaderPreferences current) =>
-                                                    current.copyWith(
-                                                      keepScreenOn: value,
-                                                    ),
+                                                (
+                                                  ReaderPreferences current,
+                                                ) => current.copyWith(
+                                                  disablePageTransitionAnimation:
+                                                      value,
+                                                ),
                                               ),
                                         );
                                       },
                                     ),
+                                    if (_controller
+                                        .platformBridge
+                                        .isAndroidSupported)
+                                      SettingsSwitchRow(
+                                        label: '屏幕常亮',
+                                        value: preferences.keepScreenOn,
+                                        onChanged: (bool value) {
+                                          unawaited(
+                                            preferencesController
+                                                .updateReaderPreferences(
+                                                  (ReaderPreferences current) =>
+                                                      current.copyWith(
+                                                        keepScreenOn: value,
+                                                      ),
+                                                ),
+                                          );
+                                        },
+                                      ),
                                     SettingsSwitchRow(
                                       label: '显示时钟',
                                       value: preferences.showClock,

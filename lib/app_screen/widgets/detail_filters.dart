@@ -92,37 +92,68 @@ class DetailChapterControlChip extends StatelessWidget {
         ? colorScheme.onPrimaryContainer
         : colorScheme.onSurface;
 
+    final Widget content = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (icon != null) ...<Widget>[
+            Icon(icon, size: 14, color: foregroundColor),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              color: foregroundColor,
+              fontSize: 12,
+              fontWeight: active ? FontWeight.w800 : FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+
     return Opacity(
       opacity: enabled ? 1 : 0.72,
       child: InkWell(
         onTap: interactive ? onTap : null,
         borderRadius: BorderRadius.circular(14),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          decoration: BoxDecoration(
-            color: backgroundColor,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: borderColor),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              if (icon != null) ...<Widget>[
-                Icon(icon, size: 14, color: foregroundColor),
-                const SizedBox(width: 6),
-              ],
-              Text(
-                label,
-                style: TextStyle(
-                  color: foregroundColor,
-                  fontSize: 12,
-                  fontWeight: active ? FontWeight.w800 : FontWeight.w700,
+        child: usesDesktopLayout(context)
+            ? AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 9,
                 ),
-              ),
-            ],
-          ),
-        ),
+                decoration: BoxDecoration(
+                  color: backgroundColor,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: borderColor),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (icon != null) ...<Widget>[
+                      Icon(icon, size: 14, color: foregroundColor),
+                      const SizedBox(width: 6),
+                    ],
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: foregroundColor,
+                        fontSize: 12,
+                        fontWeight: active ? FontWeight.w800 : FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : content,
       ),
     );
   }
@@ -145,6 +176,7 @@ class FilterGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final List<LinkAction> options = group.options;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -158,26 +190,20 @@ class FilterGroup extends StatelessWidget {
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: group.options
-              .map<Widget>(
-                (LinkAction option) => LinkChip(
-                  label: option.label,
-                  active: option.active,
-                  onTap: () => onTap(option.href),
-                ),
-              )
-              .followedBy(
-                actionLabel != null && onActionTap != null
-                    ? <Widget>[
-                        FilterActionChip(
-                          label: actionLabel!,
-                          expanded: actionExpanded,
-                          onTap: onActionTap!,
-                        ),
-                      ]
-                    : const <Widget>[],
-              )
-              .toList(growable: false),
+          children: <Widget>[
+            for (final LinkAction option in options)
+              LinkChip(
+                label: option.label,
+                active: option.active,
+                onTap: () => onTap(option.href),
+              ),
+            if (actionLabel != null && onActionTap != null)
+              FilterActionChip(
+                label: actionLabel!,
+                expanded: actionExpanded,
+                onTap: onActionTap!,
+              ),
+          ],
         ),
       ],
     );
@@ -250,8 +276,7 @@ class LinkChip extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
+      child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
         decoration: BoxDecoration(
           color: backgroundColor,
@@ -291,8 +316,7 @@ class FilterActionChip extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
+      child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
         decoration: BoxDecoration(
           color: colorScheme.primary.withValues(alpha: 0.18),
