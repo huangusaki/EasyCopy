@@ -834,56 +834,11 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     if (!localProfilePage.isLoggedIn) {
       return true;
     }
-    final NavigationRequestContext profileRefreshContext = requestContext
-        .copyWith(sourceKind: NavigationRequestSourceKind.revalidate);
-    unawaited(
-      _runDeferredBackgroundRefresh(profileRefreshContext, () {
-        return _refreshProfilePage(
-          targetUri,
-          key: key,
-          requestContext: profileRefreshContext,
-        );
-      }),
-    );
-    return true;
-  }
-
-  Future<void> _refreshProfilePage(
-    Uri targetUri, {
-    required PageQueryKey key,
-    required NavigationRequestContext requestContext,
-  }) async {
-    try {
-      final SitePage profilePage = await _pageRepository.loadFresh(
-        targetUri,
-        authScope: key.authScope,
-        requestContext: requestContext,
-      );
-      if (!_canCommitRequest(requestContext)) {
-        _recordDiscardedMutation(requestContext, phase: 'profile-refresh');
-        return;
-      }
-      if (profilePage is! ProfilePageData) {
-        _finishTabEntryLoading(requestContext);
-        return;
-      }
-      _applyLoadedPage(
-        profilePage,
-        requestContext: requestContext,
-        switchToTab: _shouldActivateAsyncResultTab(
-          requestContext.targetTabIndex,
-        ),
-        visibleUri: targetUri,
-      );
-    } catch (error) {
-      await _loadFallbackProfilePage(
-        targetUri,
-        error,
-        authScope: key.authScope,
-        requestContext: requestContext,
-        showFailureNotice: false,
-      );
-    }
+    // 登录态但无服务端缓存：本地页仅为占位（user==null、仅本地收藏），
+    // 账号信息与服务端书架只能靠服务端拉取。返回 false 让调用方立即前台拉取，
+    // 不走 1200ms 延迟通道——后者会在用户快速切 Tab 时被 _canCommitRequest 静默丢弃，
+    // 导致已登录却停留在本地占位页不再自动刷新。
+    return false;
   }
 
   Future<void> _loadFallbackProfilePage(
