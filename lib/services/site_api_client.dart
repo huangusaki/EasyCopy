@@ -6,6 +6,7 @@ import 'package:reader/config/app_config.dart';
 import 'package:reader/models/chapter_comment.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/network_client.dart';
+import 'package:reader/services/quic_http_client.dart';
 import 'package:reader/services/site_json_utils.dart';
 import 'package:reader/services/site_session.dart';
 
@@ -46,7 +47,7 @@ class _PagedProfileSection {
 
 class SiteApiClient {
   SiteApiClient({http.Client? client, SiteSession? session})
-    : _client = client ?? http.Client(),
+    : _client = client ?? AppHttpClientFactory.create(),
       _session = session ?? SiteSession.instance;
 
   static final SiteApiClient instance = SiteApiClient();
@@ -842,7 +843,7 @@ class SiteApiClient {
     return switch (sort) {
       ProfileCollectionSort.readingTime => '-datetime_browse',
       ProfileCollectionSort.latestUpdate => '-datetime_updated',
-        // alphabetical 已归一为 latestUpdate，此处仅补齐 switch。
+      // alphabetical 已归一为 latestUpdate，此处仅补齐 switch。
       ProfileCollectionSort.alphabetical => '-datetime_updated',
     };
   }

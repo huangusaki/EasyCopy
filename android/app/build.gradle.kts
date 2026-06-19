@@ -136,6 +136,7 @@ android {
 
 dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation("org.chromium.net:cronet-embedded:113.5672.61")
 }
 
 flutter {

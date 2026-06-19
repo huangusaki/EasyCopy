@@ -8,6 +8,7 @@ import 'package:reader/services/debug_trace.dart';
 import 'package:reader/services/frame_jank_logger.dart';
 import 'package:reader/services/host_manager.dart';
 import 'package:reader/services/network_client.dart';
+import 'package:reader/services/quic_http_client.dart';
 import 'package:reader/services/site_html_page_parser.dart';
 import 'package:reader/services/site_session.dart';
 
@@ -27,7 +28,7 @@ class SiteHtmlPageLoader {
     HostManager? hostManager,
     SiteHtmlPageParser? parser,
     String? userAgent,
-  }) : _client = client ?? http.Client(),
+  }) : _client = client ?? AppHttpClientFactory.create(),
        _session = session ?? SiteSession.instance,
        _hostManager = hostManager ?? HostManager.instance,
        _parser = parser ?? SiteHtmlPageParser.instance,

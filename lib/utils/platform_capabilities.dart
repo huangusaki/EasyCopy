@@ -13,5 +13,7 @@ class PlatformCapabilities {
   static bool get usesMobileWebView =>
       !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
+  static bool get supportsCronetHttp => !kIsWeb && Platform.isAndroid;
+
   static bool get supportsDesktopWebView => isWindows;
 }

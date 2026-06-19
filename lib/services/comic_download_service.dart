@@ -16,6 +16,7 @@ import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
 import 'package:reader/services/migration_delta_journal_store.dart';
 import 'package:reader/services/network_client.dart';
+import 'package:reader/services/quic_http_client.dart';
 import 'package:reader/services/tree_image_provider.dart';
 import 'package:reader/services/uri_keys.dart';
 
@@ -34,7 +35,7 @@ class ComicDownloadService {
     AndroidDocumentTreeBridge? documentTreeBridge,
     CachedLibraryIndexStore? cachedLibraryIndexStore,
     CachedChapterLocatorStore? cachedChapterLocatorStore,
-  }) : _client = client ?? http.Client(),
+  }) : _client = client ?? AppHttpClientFactory.create(),
        _documentTreeBridge =
            documentTreeBridge ?? AndroidDocumentTreeBridge.instance,
        _cachedLibraryIndexStore =

@@ -328,7 +328,7 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
         return null;
       },
       loadFromLightweightSource: (Uri chapterUri) async {
-        final SitePage page = await SiteHtmlPageLoader.instance.loadPage(
+        final SitePage page = await _loadHtmlPageFresh(
           chapterUri,
           authScope: _authScopeForUri(chapterUri),
         );

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
+import 'package:reader/services/quic_http_client.dart';
 
 const String defaultDesktopUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -123,7 +124,7 @@ class HostManager {
     HostConnectivityRunner? connectivityRunner,
     HostAddressLookup? addressLookup,
     String userAgent = defaultDesktopUserAgent,
-  }) : _client = client ?? http.Client(),
+  }) : _client = client ?? AppHttpClientFactory.create(),
        _seedHosts = _normalizeHosts(
          candidateHosts ?? _buildDefaultCandidateHosts(),
        ),
@@ -246,18 +247,6 @@ class HostManager {
     final List<HostProbeRecord> ranked = _sortProbes(probes);
     _candidateHosts = _successfulProbeHosts(ranked);
     _candidateHostAliases = _buildCandidateHostAliases(ranked);
-    final String? pinnedHost = _sessionPinnedHost == null
-        ? null
-        : _normalizeHost(_sessionPinnedHost!);
-    final bool pinnedIsAvailable =
-        pinnedHost != null &&
-        ranked.any(
-          (HostProbeRecord probe) =>
-              _normalizeHost(probe.host) == pinnedHost && probe.success,
-        );
-    if (pinnedHost != null && !pinnedIsAvailable) {
-      _sessionPinnedHost = null;
-    }
     final String nextHost = _selectAutomaticHost(ranked);
     if (nextHost.isNotEmpty) {
       _currentHost = nextHost;
@@ -275,16 +264,11 @@ class HostManager {
     await ensureInitialized();
     final String normalizedHost = _normalizeHost(host);
     if (normalizedHost.isEmpty) {
-      throw StateError('域名不可用，请选择测速成功的域名。');
+      throw StateError('域名不能为空。');
     }
     final HostProbeRecord? cachedProbe = _probeForHost(normalizedHost);
-    final bool cacheFresh =
-        _snapshot != null &&
-        _now().difference(_snapshot!.checkedAt) < probeCacheTtl;
     final HostProbeRecord probe =
-        cachedProbe != null && cachedProbe.success && cacheFresh
-        ? cachedProbe
-        : await _validateSelectableHost(normalizedHost);
+        cachedProbe ?? await _probeSelectableHost(normalizedHost);
     _sessionPinnedHost = normalizedHost;
     _currentHost = normalizedHost;
     _snapshot = HostProbeSnapshot(
@@ -486,16 +470,12 @@ class HostManager {
     }
   }
 
-  Future<HostProbeRecord> _validateSelectableHost(String host) async {
-    final bool reachable = await _isHostReachable(host);
-    if (!reachable) {
-      throw StateError('域名不可用，请选择测速成功的域名。');
+  Future<HostProbeRecord> _probeSelectableHost(String host) async {
+    try {
+      return await _probeKnownHost(host);
+    } catch (_) {
+      return HostProbeRecord(host: host, success: false, latencyMs: 999999);
     }
-    final HostProbeRecord probe = await _probeHost(host);
-    if (!probe.success) {
-      throw StateError('域名不可用，请选择测速成功的域名。');
-    }
-    return probe;
   }
 
   List<HostProbeRecord> _sortProbes(List<HostProbeRecord> probes) {

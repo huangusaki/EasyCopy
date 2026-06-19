@@ -237,7 +237,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
     );
     _pageRepository = PageRepository(
       standardPageLoader: _loadStandardPageFresh,
-      htmlPageLoader: SiteHtmlPageLoader.instance.loadPage,
+      htmlPageLoader: _loadHtmlPageFresh,
       profilePageLoader: _services.localProfilePageLoader.loadProfile,
     );
     _downloadQueueManager = DownloadQueueManager(

@@ -148,7 +148,6 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
       for (final MapEntry<String, List<String>> entry in aliasGroups.entries)
         for (final String alias in entry.value) alias: entry.key,
     };
-    final Set<String> selectableHosts = aliasGroups.keys.toSet();
     final Map<String, List<HostProbeRecord>> probesByCanonicalHost =
         <String, List<HostProbeRecord>>{};
     for (final HostProbeRecord probe
@@ -176,7 +175,7 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
         canonicalHostByAlias[recommendedHost] ?? recommendedHost;
     final Set<String> seenHosts = <String>{};
     final List<String> rawHosts = <String>[
-      ...selectableHosts,
+      ...aliasGroups.keys,
       ..._knownHosts(),
       if (normalizedCurrentKey.isNotEmpty) normalizedCurrentKey,
       if (normalizedPinnedKey.isNotEmpty) normalizedPinnedKey,
@@ -290,10 +289,7 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
                                 recommendedKey.isNotEmpty &&
                                 host == recommendedKey &&
                                 host != normalizedCurrentKey,
-                            enabled:
-                                !_isBusy &&
-                                widget.onSelectHost != null &&
-                                selectableHosts.contains(host),
+                            enabled: !_isBusy && widget.onSelectHost != null,
                             onTap: widget.onSelectHost == null
                                 ? null
                                 : () => _handleSelectHost(host),

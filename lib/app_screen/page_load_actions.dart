@@ -301,6 +301,15 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     }
   }
 
+  Future<SitePage> _loadHtmlPageFresh(Uri uri, {required String authScope}) {
+    if (PlatformCapabilities.supportsDesktopWebView) {
+      return DesktopPageExtractor.instance.loadPage(
+        AppConfig.rewriteToCurrentHost(uri),
+      );
+    }
+    return SiteHtmlPageLoader.instance.loadPage(uri, authScope: authScope);
+  }
+
   bool _applyLoadedPage(
     SitePage page, {
     NavigationRequestContext? requestContext,

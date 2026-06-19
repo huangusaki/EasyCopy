@@ -91,7 +91,7 @@ extension _AppScreenPageSections on _AppScreenState {
               ),
               const SizedBox(height: 14),
               const Text(
-                '内容整理失败',
+                '源站访问出现了问题，尝试使用魔法吧',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 10),
@@ -120,7 +120,7 @@ extension _AppScreenPageSections on _AppScreenState {
                   Expanded(
                     child: FilledButton(
                       onPressed: _retryCurrentPage,
-                      child: const Text('重新整理'),
+                      child: const Text('重新连接'),
                     ),
                   ),
                 ],

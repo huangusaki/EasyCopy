@@ -20,6 +20,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var batteryEventSink: EventChannel.EventSink? = null
     private var volumeKeyEventSink: EventChannel.EventSink? = null
     private var documentTreeStorageBridge: DocumentTreeStorageBridge? = null
+    private var quicHttpBridge: QuicHttpBridge? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,6 +38,11 @@ class MainActivity : FlutterFragmentActivity() {
         documentTreeStorageBridge =
             DocumentTreeStorageBridge(
                 activity = this,
+                binaryMessenger = flutterEngine.dartExecutor.binaryMessenger,
+            )
+        quicHttpBridge =
+            QuicHttpBridge(
+                context = this,
                 binaryMessenger = flutterEngine.dartExecutor.binaryMessenger,
             )
 
@@ -137,6 +143,8 @@ class MainActivity : FlutterFragmentActivity() {
         volumeKeyEventSink = null
         documentTreeStorageBridge?.dispose()
         documentTreeStorageBridge = null
+        quicHttpBridge?.dispose()
+        quicHttpBridge = null
         super.onDestroy()
     }
 
