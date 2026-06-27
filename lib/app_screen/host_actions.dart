@@ -209,6 +209,82 @@ extension _AppScreenHostActions on _AppScreenState {
     );
   }
 
+  Future<String> _addHost(String value) async {
+    final String input = value.trim();
+    if (input.isEmpty) {
+      return '';
+    }
+    if (_shell.isUpdatingHostSettings) {
+      return '';
+    }
+    _mutateSessionState(
+      () => _shell.isUpdatingHostSettings = true,
+      syncSearch: false,
+    );
+    try {
+      final String normalizedHost = await _services.hostManager.addCustomHost(
+        input,
+      );
+      if (mounted) {
+        _showNotice('已添加 $normalizedHost');
+        _mutateSessionState(() {}, syncSearch: false);
+      }
+      return normalizedHost;
+    } catch (error) {
+      if (mounted) {
+        final String message = error is StateError
+            ? error.message.toString()
+            : '添加域名失败，请稍后重试';
+        _showNotice(message);
+      }
+      return '';
+    } finally {
+      if (mounted) {
+        _mutateSessionState(
+          () => _shell.isUpdatingHostSettings = false,
+          syncSearch: false,
+        );
+      } else {
+        _shell.isUpdatingHostSettings = false;
+      }
+    }
+  }
+
+  Future<void> _deleteHost(String host) {
+    final String normalizedHost = host.trim().toLowerCase();
+    if (normalizedHost.isEmpty) {
+      return Future<void>.value();
+    }
+    return _runExclusive(
+      isBusy: () => _shell.isUpdatingHostSettings,
+      setBusy: (bool value) => _shell.isUpdatingHostSettings = value,
+      action: () async {
+        final String previousHost = _services.hostManager.currentHost;
+        try {
+          await _services.hostManager.deleteHost(normalizedHost);
+          final String currentHost = _services.hostManager.currentHost;
+          if (currentHost != previousHost) {
+            await _syncHostCookies();
+          }
+          if (mounted) {
+            _showNotice(
+              currentHost == previousHost
+                  ? '已删除 $normalizedHost'
+                  : '已删除 $normalizedHost，当前域名 $currentHost',
+            );
+          }
+        } catch (error) {
+          if (mounted) {
+            final String message = error is StateError
+                ? error.message.toString()
+                : '删除域名失败，请稍后重试';
+            _showNotice(message);
+          }
+        }
+      },
+    );
+  }
+
   Future<void> _useAutomaticHostSelection() {
     return _runExclusive(
       isBusy: () => _shell.isUpdatingHostSettings,

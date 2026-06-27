@@ -64,6 +64,8 @@ class ProfilePageView extends StatelessWidget {
     this.onRefreshHosts,
     this.onUseAutomaticHostSelection,
     this.onSelectHost,
+    this.onAddHost,
+    this.onDeleteHost,
     this.themePreference = AppThemePreference.system,
     this.onThemePreferenceChanged,
     this.wallpaperPreferences = const WallpaperPreferences(),
@@ -101,6 +103,8 @@ class ProfilePageView extends StatelessWidget {
   final FutureOr<void> Function()? onRefreshHosts;
   final FutureOr<void> Function()? onUseAutomaticHostSelection;
   final FutureOr<void> Function(String value)? onSelectHost;
+  final FutureOr<String> Function(String value)? onAddHost;
+  final FutureOr<void> Function(String value)? onDeleteHost;
   final AppThemePreference themePreference;
   final ValueChanged<AppThemePreference>? onThemePreferenceChanged;
   final WallpaperPreferences wallpaperPreferences;
@@ -328,6 +332,8 @@ class ProfilePageView extends StatelessWidget {
           onRefresh: onRefreshHosts,
           onUseAutomaticSelection: onUseAutomaticHostSelection,
           onSelectHost: onSelectHost,
+          onAddHost: onAddHost,
+          onDeleteHost: onDeleteHost,
         ),
       );
     }

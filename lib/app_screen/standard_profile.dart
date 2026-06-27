@@ -37,6 +37,8 @@ extension _AppScreenProfileSections on _AppScreenState {
           onRefreshHosts: _refreshHostSettings,
           onUseAutomaticHostSelection: _useAutomaticHostSelection,
           onSelectHost: _selectHost,
+          onAddHost: _addHost,
+          onDeleteHost: _deleteHost,
           themePreference: _preferencesController.themePreference,
           onThemePreferenceChanged: (AppThemePreference preference) {
             unawaited(_preferencesController.setThemePreference(preference));

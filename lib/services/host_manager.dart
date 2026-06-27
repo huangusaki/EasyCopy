@@ -5,7 +5,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
+import 'package:reader/services/host_settings_store.dart';
 import 'package:reader/services/quic_http_client.dart';
+import 'package:sqflite/sqflite.dart' as sqflite;
 
 const String defaultDesktopUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -123,13 +125,25 @@ class HostManager {
     HostProbeRunner? probeRunner,
     HostConnectivityRunner? connectivityRunner,
     HostAddressLookup? addressLookup,
+    HostSettingsStore? hostSettingsStore,
+    sqflite.DatabaseFactory? databaseFactory,
     String userAgent = defaultDesktopUserAgent,
   }) : _client = client ?? AppHttpClientFactory.create(),
+       _defaultHosts = _normalizeHosts(
+         candidateHosts ?? _buildDefaultCandidateHosts(),
+       ),
        _seedHosts = _normalizeHosts(
          candidateHosts ?? _buildDefaultCandidateHosts(),
        ),
        _candidateHosts = const <String>[],
        _directoryProvider = directoryProvider ?? getApplicationSupportDirectory,
+       _hostSettingsStore =
+           hostSettingsStore ??
+           HostSettingsStore(
+             directoryProvider:
+                 directoryProvider ?? getApplicationSupportDirectory,
+             databaseFactory: databaseFactory,
+           ),
        _now = now ?? DateTime.now,
        _probeRunner = probeRunner,
        _connectivityRunner = connectivityRunner,
@@ -146,9 +160,11 @@ class HostManager {
   static const Duration connectTimeout = Duration(seconds: 2);
 
   final http.Client _client;
-  final List<String> _seedHosts;
+  final List<String> _defaultHosts;
+  List<String> _seedHosts;
   List<String> _candidateHosts;
   final HostDirectoryProvider _directoryProvider;
+  final HostSettingsStore _hostSettingsStore;
   final HostNowProvider _now;
   final HostProbeRunner? _probeRunner;
   final HostConnectivityRunner? _connectivityRunner;
@@ -169,13 +185,16 @@ class HostManager {
   List<String> get knownHosts => List<String>.unmodifiable(
     _normalizeHosts(<String>[
       ..._seedHosts,
-      _currentHost,
-      if (_sessionPinnedHost != null) _sessionPinnedHost!,
-      if ((_snapshot?.selectedHost ?? '').trim().isNotEmpty)
+      if (_isActiveRuntimeHost(_currentHost)) _currentHost,
+      if (_sessionPinnedHost != null &&
+          _isActiveRuntimeHost(_sessionPinnedHost!))
+        _sessionPinnedHost!,
+      if ((_snapshot?.selectedHost ?? '').trim().isNotEmpty &&
+          _isActiveRuntimeHost(_snapshot!.selectedHost))
         _snapshot!.selectedHost,
       for (final HostProbeRecord probe
           in _snapshot?.probes ?? const <HostProbeRecord>[])
-        probe.host,
+        if (_isActiveRuntimeHost(probe.host)) probe.host,
     ]),
   );
 
@@ -190,14 +209,16 @@ class HostManager {
   Set<String> get allowedHosts => <String>{
     ..._seedHosts,
     ..._candidateHosts,
-    if (_currentHost.isNotEmpty) _currentHost,
+    if (_isActiveRuntimeHost(_currentHost)) _currentHost,
     if ((_sessionPinnedHost ?? '').trim().isNotEmpty)
-      _normalizeHost(_sessionPinnedHost!),
+      if (_isActiveRuntimeHost(_sessionPinnedHost!))
+        _normalizeHost(_sessionPinnedHost!),
     if ((_snapshot?.selectedHost ?? '').trim().isNotEmpty)
-      _normalizeHost(_snapshot!.selectedHost),
+      if (_isActiveRuntimeHost(_snapshot!.selectedHost))
+        _normalizeHost(_snapshot!.selectedHost),
     for (final HostProbeRecord probe
         in _snapshot?.probes ?? const <HostProbeRecord>[])
-      if (_normalizeHost(probe.host).isNotEmpty) _normalizeHost(probe.host),
+      if (_isActiveRuntimeHost(probe.host)) _normalizeHost(probe.host),
   };
 
   String get currentHost => _sessionPinnedHost ?? _currentHost;
@@ -213,6 +234,22 @@ class HostManager {
 
   Future<void> ensureInitialized() {
     return _initialization ??= _initialize();
+  }
+
+  Future<void> close() async {
+    try {
+      await _probeRefresh;
+    } catch (_) {
+      // 关闭时忽略后台测速失败。
+    }
+    _initialization = null;
+    _probeRefresh = null;
+    _snapshot = null;
+    _candidateHosts = const <String>[];
+    _candidateHostAliases = const <String, List<String>>{};
+    _sessionPinnedHost = null;
+    await _hostSettingsStore.close();
+    _client.close();
   }
 
   Future<void> refreshProbes({bool force = false}) {
@@ -266,6 +303,9 @@ class HostManager {
     if (normalizedHost.isEmpty) {
       throw StateError('域名不能为空。');
     }
+    if (!_isActiveRuntimeHost(normalizedHost)) {
+      throw StateError('域名不存在。');
+    }
     final HostProbeRecord? cachedProbe = _probeForHost(normalizedHost);
     final HostProbeRecord probe =
         cachedProbe ?? await _probeSelectableHost(normalizedHost);
@@ -284,6 +324,65 @@ class HostManager {
     );
     _candidateHosts = _successfulProbeHosts(_snapshot!.probes);
     _candidateHostAliases = _buildCandidateHostAliases(_snapshot!.probes);
+    await _saveSnapshot();
+  }
+
+  Future<String> addCustomHost(String value) async {
+    await ensureInitialized();
+    final String normalizedHost = _normalizeCustomHostInput(value);
+    if (normalizedHost.isEmpty) {
+      throw StateError('域名不能为空。');
+    }
+    if (!_isValidHostName(normalizedHost)) {
+      throw StateError('域名格式不正确。');
+    }
+    await _hostSettingsStore.addCustomHost(normalizedHost);
+    await _reloadStoredHosts();
+    return normalizedHost;
+  }
+
+  Future<void> deleteHost(String host) async {
+    await ensureInitialized();
+    final String normalizedHost = _normalizeHost(host);
+    if (normalizedHost.isEmpty) {
+      throw StateError('域名不能为空。');
+    }
+    if (!_isActiveRuntimeHost(normalizedHost)) {
+      throw StateError('域名不存在。');
+    }
+    final List<String> remainingHosts = _seedHosts
+        .where((String host) => host != normalizedHost)
+        .toList(growable: false);
+    if (remainingHosts.isEmpty) {
+      throw StateError('至少保留一个域名。');
+    }
+
+    await _hostSettingsStore.deleteHost(normalizedHost);
+    await _reloadStoredHosts();
+
+    _candidateHosts = _candidateHosts
+        .where((String host) => _isActiveRuntimeHost(host))
+        .toList(growable: false);
+    if (_normalizeHost(_sessionPinnedHost ?? '') == normalizedHost ||
+        !_isActiveRuntimeHost(_sessionPinnedHost ?? '')) {
+      _sessionPinnedHost = null;
+    }
+    if (_normalizeHost(_currentHost) == normalizedHost ||
+        !_isActiveRuntimeHost(_currentHost)) {
+      _currentHost = _firstHost(_seedHosts);
+    }
+    final List<HostProbeRecord> probes = _activeProbes(
+      _snapshot?.probes ?? const <HostProbeRecord>[],
+    );
+    _candidateHostAliases = _buildCandidateHostAliases(probes);
+    _snapshot = HostProbeSnapshot(
+      selectedHost: _isActiveRuntimeHost(_snapshot?.selectedHost ?? '')
+          ? _normalizeHost(_snapshot!.selectedHost)
+          : _currentHost,
+      checkedAt: _snapshot?.checkedAt ?? _now(),
+      probes: probes,
+      sessionPinnedHost: _sessionPinnedHost,
+    );
     await _saveSnapshot();
   }
 
@@ -370,17 +469,66 @@ class HostManager {
 
   Future<void> _initialize() async {
     _snapshot = await _loadSnapshot();
+    await _hostSettingsStore.ensureInitialized();
+    await _hostSettingsStore.upsertBuiltinHosts(_defaultHosts);
+    await _hostSettingsStore.upsertLegacyHosts(_snapshotHosts(_snapshot));
+    await _reloadStoredHosts();
     if (_snapshot != null) {
-      _currentHost = _snapshot!.selectedHost.isEmpty
+      _currentHost =
+          _snapshot!.selectedHost.isEmpty ||
+              !_isActiveRuntimeHost(_snapshot!.selectedHost)
           ? _currentHost
           : _normalizeHost(_snapshot!.selectedHost);
       _sessionPinnedHost = _snapshot!.sessionPinnedHost == null
           ? null
-          : _normalizeHost(_snapshot!.sessionPinnedHost!);
+          : _isActiveRuntimeHost(_snapshot!.sessionPinnedHost!)
+          ? _normalizeHost(_snapshot!.sessionPinnedHost!)
+          : null;
+      _snapshot = HostProbeSnapshot(
+        selectedHost: _isActiveRuntimeHost(_snapshot!.selectedHost)
+            ? _normalizeHost(_snapshot!.selectedHost)
+            : _currentHost,
+        checkedAt: _snapshot!.checkedAt,
+        probes: _activeProbes(_snapshot!.probes),
+        sessionPinnedHost: _sessionPinnedHost,
+      );
       _candidateHosts = _successfulProbeHosts(_snapshot!.probes);
       _candidateHostAliases = _buildCandidateHostAliases(_snapshot!.probes);
     }
+    if (!_isActiveRuntimeHost(_currentHost)) {
+      _currentHost = _firstHost(_seedHosts);
+    }
     // 冷启动先复用上次可用域名，探测放到后台。
+  }
+
+  Future<void> _reloadStoredHosts() async {
+    _seedHosts = _normalizeHosts(await _hostSettingsStore.activeHosts());
+    if (_seedHosts.isEmpty) {
+      _seedHosts = _normalizeHosts(_defaultHosts);
+    }
+  }
+
+  List<String> _snapshotHosts(HostProbeSnapshot? snapshot) {
+    if (snapshot == null) {
+      return const <String>[];
+    }
+    return _normalizeHosts(<String>[
+      snapshot.selectedHost,
+      if ((snapshot.sessionPinnedHost ?? '').trim().isNotEmpty)
+        snapshot.sessionPinnedHost!,
+      for (final HostProbeRecord probe in snapshot.probes) probe.host,
+    ]);
+  }
+
+  List<HostProbeRecord> _activeProbes(List<HostProbeRecord> probes) {
+    return probes
+        .where((HostProbeRecord probe) => _isActiveRuntimeHost(probe.host))
+        .toList(growable: false);
+  }
+
+  bool _isActiveRuntimeHost(String host) {
+    final String normalizedHost = _normalizeHost(host);
+    return normalizedHost.isNotEmpty && _seedHosts.contains(normalizedHost);
   }
 
   Future<HostProbeRecord> _probeKnownHost(String host) async {
@@ -721,6 +869,54 @@ class HostManager {
 
   static String _normalizeHost(String host) {
     return host.trim().toLowerCase();
+  }
+
+  static String _normalizeCustomHostInput(String value) {
+    String input = value.trim();
+    if (input.isEmpty) {
+      return '';
+    }
+    Uri? uri = Uri.tryParse(input);
+    if (uri != null && uri.hasScheme) {
+      input = uri.host;
+    } else {
+      if (input.startsWith('//')) {
+        uri = Uri.tryParse('https:$input');
+        input = uri?.host ?? input;
+      } else {
+        final int pathStart = input.indexOf(RegExp(r'[/\?#]'));
+        if (pathStart >= 0) {
+          input = input.substring(0, pathStart);
+        }
+        final int userInfoEnd = input.lastIndexOf('@');
+        if (userInfoEnd >= 0) {
+          input = input.substring(userInfoEnd + 1);
+        }
+        final int portStart = input.lastIndexOf(':');
+        if (portStart > 0 && input.indexOf(':') == portStart) {
+          input = input.substring(0, portStart);
+        }
+      }
+    }
+    return _normalizeHost(input);
+  }
+
+  static bool _isValidHostName(String host) {
+    final String normalizedHost = _normalizeHost(host);
+    if (normalizedHost.isEmpty ||
+        normalizedHost.length > 253 ||
+        normalizedHost.contains('..') ||
+        normalizedHost.contains(' ') ||
+        normalizedHost.startsWith('.') ||
+        normalizedHost.endsWith('.')) {
+      return false;
+    }
+    final RegExp labelPattern = RegExp(r'^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$');
+    final List<String> labels = normalizedHost.split('.');
+    return labels.every(
+      (String label) =>
+          label.isNotEmpty && label.length <= 63 && labelPattern.hasMatch(label),
+    );
   }
 
   static List<String> _buildDefaultCandidateHosts() {
