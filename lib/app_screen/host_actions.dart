@@ -204,6 +204,7 @@ extension _AppScreenHostActions on _AppScreenState {
                 : '切换域名失败，请稍后重试';
             _showNotice(message);
           }
+          rethrow;
         }
       },
     );
@@ -280,6 +281,7 @@ extension _AppScreenHostActions on _AppScreenState {
                 : '删除域名失败，请稍后重试';
             _showNotice(message);
           }
+          rethrow;
         }
       },
     );
@@ -301,6 +303,7 @@ extension _AppScreenHostActions on _AppScreenState {
           if (mounted) {
             _showNotice('恢复自动选择失败，请稍后重试');
           }
+          rethrow;
         }
       },
     );

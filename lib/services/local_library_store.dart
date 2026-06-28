@@ -16,7 +16,7 @@ class LocalLibraryStore {
     sqflite.DatabaseFactory? databaseFactory,
   }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory,
        _now = now ?? DateTime.now,
-       _databaseFactory = databaseFactory ?? sqflite.databaseFactory;
+       _databaseFactory = databaseFactory;
 
   static final LocalLibraryStore instance = LocalLibraryStore();
 
@@ -31,7 +31,7 @@ class LocalLibraryStore {
 
   final LocalLibraryDirectoryProvider _directoryProvider;
   final LocalLibraryNowProvider _now;
-  final sqflite.DatabaseFactory _databaseFactory;
+  final sqflite.DatabaseFactory? _databaseFactory;
 
   Future<void>? _initialization;
   sqflite.Database? _database;
@@ -490,7 +490,9 @@ class LocalLibraryStore {
     final Directory directory = await _directoryProvider();
     final String path =
         '${directory.path}${Platform.pathSeparator}$_databaseName';
-    _database = await _databaseFactory.openDatabase(
+    final sqflite.DatabaseFactory databaseFactory =
+        _databaseFactory ?? sqflite.databaseFactory;
+    _database = await databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
         version: 4,

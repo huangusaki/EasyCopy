@@ -90,7 +90,7 @@ class CachedChapterLocatorStore {
     sqflite.DatabaseFactory? databaseFactory,
   }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory,
        _now = now ?? DateTime.now,
-       _databaseFactory = databaseFactory ?? sqflite.databaseFactory;
+       _databaseFactory = databaseFactory;
 
   static final CachedChapterLocatorStore instance = CachedChapterLocatorStore();
 
@@ -99,7 +99,7 @@ class CachedChapterLocatorStore {
 
   final LocatorDirProvider _directoryProvider;
   final CachedChapterLocatorNowProvider _now;
-  final sqflite.DatabaseFactory _databaseFactory;
+  final sqflite.DatabaseFactory? _databaseFactory;
 
   Future<void>? _initialization;
   sqflite.Database? _database;
@@ -312,7 +312,9 @@ class CachedChapterLocatorStore {
 
   Future<void> _initialize() async {
     final String path = await _databasePath();
-    _database = await _databaseFactory.openDatabase(
+    final sqflite.DatabaseFactory databaseFactory =
+        _databaseFactory ?? sqflite.databaseFactory;
+    _database = await databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
         version: 1,

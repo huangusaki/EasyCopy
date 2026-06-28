@@ -14,7 +14,7 @@ class HostSettingsStore {
     sqflite.DatabaseFactory? databaseFactory,
   }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory,
        _now = now ?? DateTime.now,
-       _databaseFactory = databaseFactory ?? sqflite.databaseFactory;
+       _databaseFactory = databaseFactory;
 
   static const String databaseName = 'host_settings.db';
   static const String _tableName = 'hosts';
@@ -24,7 +24,7 @@ class HostSettingsStore {
 
   final HostSettingsDirectoryProvider _directoryProvider;
   final HostSettingsNowProvider _now;
-  final sqflite.DatabaseFactory _databaseFactory;
+  final sqflite.DatabaseFactory? _databaseFactory;
 
   Future<void>? _initialization;
   Future<void> _writeQueue = Future<void>.value();
@@ -65,17 +65,13 @@ class HostSettingsStore {
     await _runWrite(() async {
       final DateTime now = _now();
       final String timestamp = now.toIso8601String();
-      await _database!.insert(
-        _tableName,
-        <String, Object?>{
-          'host': normalizedHost,
-          'source': _sourceCustom,
-          'is_deleted': 0,
-          'created_at': timestamp,
-          'updated_at': timestamp,
-        },
-        conflictAlgorithm: sqflite.ConflictAlgorithm.ignore,
-      );
+      await _database!.insert(_tableName, <String, Object?>{
+        'host': normalizedHost,
+        'source': _sourceCustom,
+        'is_deleted': 0,
+        'created_at': timestamp,
+        'updated_at': timestamp,
+      }, conflictAlgorithm: sqflite.ConflictAlgorithm.ignore);
       await _database!.update(
         _tableName,
         <String, Object?>{
@@ -141,7 +137,9 @@ class HostSettingsStore {
 
   Future<void> _initialize() async {
     final String path = await _databasePath();
-    _database = await _databaseFactory.openDatabase(
+    final sqflite.DatabaseFactory databaseFactory =
+        _databaseFactory ?? sqflite.databaseFactory;
+    _database = await databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
         version: 1,
@@ -174,17 +172,13 @@ class HostSettingsStore {
       final String timestamp = _now().toIso8601String();
       final sqflite.Batch batch = _database!.batch();
       for (final String host in normalizedHosts) {
-        batch.insert(
-          _tableName,
-          <String, Object?>{
-            'host': host,
-            'source': source,
-            'is_deleted': 0,
-            'created_at': timestamp,
-            'updated_at': timestamp,
-          },
-          conflictAlgorithm: sqflite.ConflictAlgorithm.ignore,
-        );
+        batch.insert(_tableName, <String, Object?>{
+          'host': host,
+          'source': source,
+          'is_deleted': 0,
+          'created_at': timestamp,
+          'updated_at': timestamp,
+        }, conflictAlgorithm: sqflite.ConflictAlgorithm.ignore);
       }
       await batch.commit(noResult: true);
     });

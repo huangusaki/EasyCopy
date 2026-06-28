@@ -150,7 +150,7 @@ class ReaderProgressStore {
     sqflite.DatabaseFactory? databaseFactory,
   }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory,
        _now = now ?? DateTime.now,
-       _databaseFactory = databaseFactory ?? sqflite.databaseFactory;
+       _databaseFactory = databaseFactory;
 
   static final ReaderProgressStore instance = ReaderProgressStore();
 
@@ -181,7 +181,7 @@ class ReaderProgressStore {
 
   final ReaderProgressDirectoryProvider _directoryProvider;
   final ReaderProgressNowProvider _now;
-  final sqflite.DatabaseFactory _databaseFactory;
+  final sqflite.DatabaseFactory? _databaseFactory;
 
   Future<void>? _initialization;
   Future<void> _writeQueue = Future<void>.value();
@@ -365,7 +365,9 @@ class ReaderProgressStore {
 
   Future<void> _initialize() async {
     final String path = await _databasePath();
-    _database = await _databaseFactory.openDatabase(
+    final sqflite.DatabaseFactory databaseFactory =
+        _databaseFactory ?? sqflite.databaseFactory;
+    _database = await databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
         version: 2,
