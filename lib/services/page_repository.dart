@@ -422,6 +422,7 @@ class PageRepository {
         path.startsWith('/filter') ||
         path.startsWith('/recommend') ||
         path.startsWith('/newest') ||
+        path.startsWith('/author') ||
         path.startsWith('/rank') ||
         _isDetailUri(uri);
   }

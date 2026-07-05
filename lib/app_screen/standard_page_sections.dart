@@ -535,7 +535,6 @@ extension _AppScreenPageSections on _AppScreenState {
       sections.add(
         _hPaddedBox(
           SurfaceBlock(
-            title: '内容简介',
             child: Text(page.summary, style: const TextStyle(height: 1.7)),
           ),
         ),
@@ -555,7 +554,6 @@ extension _AppScreenPageSections on _AppScreenState {
       sections.add(
         _hPaddedBox(
           SurfaceBlock(
-            title: '作品信息',
             child: Wrap(spacing: 10, runSpacing: 10, children: infoChips),
           ),
         ),

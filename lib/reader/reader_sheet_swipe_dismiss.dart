@@ -1,4 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/widgets.dart';
+
+const double _minimumSheetDismissDistance = 120;
 
 class ReaderSheetSwipeDismissRegion extends StatefulWidget {
   const ReaderSheetSwipeDismissRegion({
@@ -32,8 +36,12 @@ class _SheetSwipeDismissState extends State<ReaderSheetSwipeDismissRegion> {
       return;
     }
     final Offset delta = event.position - pointerDownPosition;
+    final double effectiveDismissDistance = math.max(
+      widget.dismissDistance,
+      _minimumSheetDismissDistance,
+    );
     final bool isDominantDownwardSwipe =
-        delta.dy >= widget.dismissDistance && delta.dy > delta.dx.abs() * 1.2;
+        delta.dy >= effectiveDismissDistance && delta.dy > delta.dx.abs() * 1.2;
     if (!isDominantDownwardSwipe) {
       return;
     }

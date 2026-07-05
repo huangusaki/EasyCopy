@@ -202,7 +202,7 @@ class ReaderScreenState extends State<ReaderScreen> {
       context: context,
       isScrollControlled: true,
       isDismissible: true,
-      enableDrag: true,
+      enableDrag: false,
       showDragHandle: false,
       backgroundColor: Colors.transparent,
       elevation: 0,
