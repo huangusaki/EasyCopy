@@ -33,6 +33,7 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+/test/
 /coverage/
 auth_cookies.txt
 login_headers.txt
@@ -44,6 +45,26 @@ build_arm64.ps1
 build_apk_arm64_v8a.ps1
 package_release.ps1
 docs/workflow.md
+
+# --- Local dev workspace (never push) ---
+CLAUDE.md
+docs/
+
+# --- Secrets / credentials ---
+.env
+.env.*
+proxy/
+
+# --- User data / sessions ---
+userdata/
+session/
+
+# --- Personal documents and exports ---
+*_article
+*.docx
+*.doc
+*.xlsx
+*.csv
 
 # Symbolication related
 app.*.symbols

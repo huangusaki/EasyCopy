@@ -101,6 +101,7 @@ class ReaderScreenState extends State<ReaderScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _controller.setPage(widget.page, openAtEnd: widget.openAtEnd);
+      _showPageNotice(widget.page);
       _consumeOpenAtEndIntent();
     });
   }
@@ -114,6 +115,7 @@ class ReaderScreenState extends State<ReaderScreen> {
         previousUri: oldWidget.page.uri,
         openAtEnd: widget.openAtEnd,
       );
+      _showPageNotice(widget.page);
       _consumeOpenAtEndIntent();
     }
   }
@@ -135,6 +137,14 @@ class ReaderScreenState extends State<ReaderScreen> {
   void _showNotice(String message) {
     if (!mounted) return;
     TopNotice.show(context, message, tone: TopNotice.toneForMessage(message));
+  }
+
+  void _showPageNotice(ReaderPageData page) {
+    final String message = page.noticeMessage.trim();
+    if (message.isEmpty) {
+      return;
+    }
+    _showNotice(message);
   }
 
   void _handleReaderTapUp(TapUpDetails details) {

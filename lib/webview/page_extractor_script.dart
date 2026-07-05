@@ -26,7 +26,7 @@ const String _pageExtractionScriptTemplate = r"""
       .map((value) => cleanText(value))
       .filter((value) => value.length > 0);
   const discoverComicSelector =
-    '.exemptComic-box a[href*="/comic/"], .correlationList a[href*="/comic/"]';
+    '.exemptComic-box a[href*="/comic/"], .exemptComicItem a[href*="/comic/"], .correlationList a[href*="/comic/"]';
   const absoluteUrl = (value) => {
     const next = cleanText(value);
     if (!next || next === '#') {
@@ -195,6 +195,7 @@ const String _pageExtractionScriptTemplate = r"""
   const buildComicCard = (anchor) => {
     const container =
       anchor.closest('.exemptComic_Item') ||
+      anchor.closest('.exemptComicItem') ||
       anchor.closest('.dailyRecommendation-box') ||
       anchor.closest('.col-auto') ||
       anchor.closest('.topThree') ||
@@ -251,6 +252,178 @@ const String _pageExtractionScriptTemplate = r"""
         };
       })
       .filter((value) => value);
+  const sortedQueryString = (params) => {
+    const sortedEntries = Array.from(params.entries()).sort((left, right) =>
+      left[0].localeCompare(right[0]),
+    );
+    return new URLSearchParams(sortedEntries).toString();
+  };
+  const replaceSortedComicsQuery = (params) => {
+    const query = sortedQueryString(params);
+    return `${location.origin}/comics${query ? `?${query}` : ''}`;
+  };
+  const isHotSite = () => location.hostname.toLowerCase().includes('manga2026');
+  const isHotComicsPage = () =>
+    location.pathname.toLowerCase().startsWith('/comics') && isHotSite();
+  const hotComicBaseQuery = (groups) => {
+    const params = new URLSearchParams(location.search);
+    groups.forEach((group) => {
+      group.options.forEach((option) => {
+        if (!option.active || !option.href) {
+          return;
+        }
+        try {
+          const optionUrl = new URL(option.href, location.href);
+          if (!optionUrl.pathname.toLowerCase().startsWith('/comics')) {
+            return;
+          }
+          optionUrl.searchParams.forEach((value, key) => {
+            params.set(key, value);
+          });
+        } catch (_) {
+          return;
+        }
+      });
+    });
+    params.delete('offset');
+    params.delete('page');
+    params.delete('limit');
+    if (!params.has('ordering')) {
+      params.set('ordering', '-datetime_updated');
+    }
+    return params;
+  };
+  const hotComicTypeHref = (groups, type) => {
+    const params = hotComicBaseQuery(groups);
+    params.set('type', type);
+    return replaceSortedComicsQuery(params);
+  };
+  const ensureHotSortFilter = (groups) => {
+    if (groups.some((group) => group.label === '排序')) {
+      return groups;
+    }
+    const baseParams = hotComicBaseQuery(groups);
+    const activeOrdering = baseParams.get('ordering') || '-datetime_updated';
+    const buildOption = (label, ordering) => {
+      const params = new URLSearchParams(baseParams.toString());
+      params.set('ordering', ordering);
+      return {
+        label,
+        href: replaceSortedComicsQuery(params),
+        active: activeOrdering === ordering,
+      };
+    };
+    return [
+      ...groups,
+      {
+        label: '排序',
+        options: [
+          buildOption('最新更新', '-datetime_updated'),
+          buildOption('最新上架', '-datetime_created'),
+          buildOption('人气最高', '-popular'),
+        ],
+      },
+    ];
+  };
+  const withHotComicTypeFilter = (groups) => {
+    if (!isHotComicsPage()) {
+      return groups;
+    }
+    const normalizedGroups = groups.filter((group) => group.label !== '类型');
+    return [
+      {
+        label: '类型',
+        options: [
+          {
+            label: '免费漫画',
+            href: hotComicTypeHref(normalizedGroups, '1'),
+            active: new URLSearchParams(location.search).get('type') !== '2',
+          },
+          {
+            label: '付费漫画',
+            href: hotComicTypeHref(normalizedGroups, '2'),
+            active: new URLSearchParams(location.search).get('type') === '2',
+          },
+        ],
+      },
+      ...ensureHotSortFilter(normalizedGroups),
+    ];
+  };
+  const isHotPaidHomeSection = (title, href) => {
+    if (!isHotSite()) {
+      return false;
+    }
+    const normalizedTitle = title.replace(/\s+/g, '');
+    if (
+      !normalizedTitle.includes('付費漫畫') &&
+      !normalizedTitle.includes('付费漫画')
+    ) {
+      return false;
+    }
+    try {
+      const url = new URL(href, location.href);
+      return (
+        url.pathname.toLowerCase() === '/comics' &&
+        (url.searchParams.get('type') === '2' ||
+          href.toLowerCase().includes('type=2'))
+      );
+    } catch (_) {
+      return href.toLowerCase().includes('/comics') && href.includes('type=2');
+    }
+  };
+  const homeSectionItemsRoot = (header) => {
+    const container = header.parentElement;
+    if (!container) {
+      return null;
+    }
+
+    const siblings = Array.from(container.children);
+    const headerIndex = siblings.indexOf(header);
+    return siblings.slice(headerIndex + 1).reduce((result, element) => {
+      if (result) {
+        return result;
+      }
+      if (element.classList && element.classList.contains('row')) {
+        return element;
+      }
+      return element.querySelector ? element.querySelector('.row') : null;
+    }, null);
+  };
+  const isHotComicRankBlock = (block) => {
+    const normalizedTitle = queryText(block, '.theBoxModel').replace(/\s+/g, '');
+    if (
+      normalizedTitle.includes('動畫') ||
+      normalizedTitle.includes('动画') ||
+      block.classList.contains('cartoon')
+    ) {
+      return false;
+    }
+    if (
+      normalizedTitle.includes('漫畫榜') ||
+      normalizedTitle.includes('漫画榜') ||
+      normalizedTitle.includes('免費漫畫') ||
+      normalizedTitle.includes('免费漫画') ||
+      normalizedTitle.includes('付費漫畫') ||
+      normalizedTitle.includes('付费漫画') ||
+      block.classList.contains('free') ||
+      block.classList.contains('pay')
+    ) {
+      return true;
+    }
+    return (
+      !!block.querySelector('a[href*="/comic/"]') &&
+      !block.querySelector('a[href*="/cartoon/"]')
+    );
+  };
+  const rankEntryScopes = () => {
+    if (!isHotSite()) {
+      return [document];
+    }
+    const blocks = Array.from(document.querySelectorAll('.ranking-item')).filter(
+      isHotComicRankBlock,
+    );
+    return blocks.length > 0 ? blocks : [document];
+  };
   const collectChapterLinks = (root) =>
     uniqueBy(
       Array.from(root.querySelectorAll('a[href*="/chapter/"]'))
@@ -416,7 +589,11 @@ const String _pageExtractionScriptTemplate = r"""
     if (document.querySelector('.comicParticulars-title')) {
       return 'detail';
     }
-    if (document.querySelector('.ranking-box')) {
+    if (
+      document.querySelector('.ranking-box') ||
+      document.querySelector('.ranking') ||
+      path.startsWith('/rank')
+    ) {
       return 'rank';
     }
     if (
@@ -439,7 +616,7 @@ const String _pageExtractionScriptTemplate = r"""
     return 'unknown';
   };
   const pageTitle = () =>
-      cleanText(document.title.replace(/- 拷[^-]+$/, '')) || 'EasyCopy';
+      cleanText(document.title.replace(/- (拷|熱辣|热辣)[^-]+$/, '')) || 'EasyCopy';
   const buildHomePayload = () => {
     const sections = Array.from(document.querySelectorAll('.index-all-icon'))
       .map((header) => {
@@ -455,31 +632,20 @@ const String _pageExtractionScriptTemplate = r"""
             return sectionHref.trim().toLowerCase();
           }
         })();
+        const isHotPaidReplacement = isHotPaidHomeSection(title, sectionHref);
         if (!title || title.includes('排行榜')) {
           return null;
         }
-        if (
+        if (!isHotPaidReplacement && (
           normalizedTitle.includes('熱門更新') ||
           normalizedTitle.includes('热门更新') ||
           normalizedSectionPath === '/comics' ||
           normalizedSectionPath === '/comics/'
-        ) {
+        )) {
           return null;
         }
 
-        const container = header.parentElement;
-        if (!container) {
-          return null;
-        }
-
-        const siblings = Array.from(container.children);
-        const headerIndex = siblings.indexOf(header);
-        const row = siblings
-          .slice(headerIndex + 1)
-          .find(
-            (element) =>
-              element.classList && element.classList.contains('row'),
-          );
+        const row = homeSectionItemsRoot(header);
         if (!row) {
           return null;
         }
@@ -490,7 +656,7 @@ const String _pageExtractionScriptTemplate = r"""
         }
 
         return {
-          title,
+          title: isHotPaidReplacement ? '付費漫畫' : title,
           subtitle: '',
           href: sectionHref,
           items,
@@ -514,7 +680,7 @@ const String _pageExtractionScriptTemplate = r"""
       type: 'discover',
       title: pageTitle(),
       uri: location.href,
-      filters: collectFilterGroups(),
+      filters: withHotComicTypeFilter(collectFilterGroups()),
       items,
       spotlight: collectComicCards(
         document,
@@ -537,8 +703,13 @@ const String _pageExtractionScriptTemplate = r"""
     };
   };
   const buildRankPayload = () => {
+    const rankPageTitle = pageTitle();
+    const scopes = rankEntryScopes();
     const items = uniqueBy(
-      Array.from(document.querySelectorAll('.ranking-all-box'))
+      scopes
+        .flatMap((scope) =>
+          Array.from(scope.querySelectorAll('.ranking-all-box, .ranking-allItem')),
+        )
         .map((card) => {
           const coverAnchor = card.querySelector('a[href*="/comic/"]');
           const trendElement = card.querySelector('.update-icon');
@@ -569,10 +740,21 @@ const String _pageExtractionScriptTemplate = r"""
 
     return {
       type: 'rank',
-      title: queryText(document, '.ranking-box-title span') || pageTitle(),
+      title:
+        queryText(document, '.ranking-box-title span') ||
+        (rankPageTitle !== 'EasyCopy' ? rankPageTitle : '') ||
+        queryText(document, '.ranking .theBoxModel') ||
+        rankPageTitle,
       uri: location.href,
       categories: collectFilterGroups().flatMap((group) => group.options),
-      periods: Array.from(document.querySelectorAll('.rankingTime a'))
+      periods: scopes
+        .flatMap((scope) =>
+          Array.from(
+            scope.querySelectorAll(
+              '.rankingTime a, .ranking .nav-tabs a, .nav-tabs a',
+            ),
+          ),
+        )
         .map((anchor) => ({
           label: text(anchor),
           href: linkUrl(anchor),
@@ -683,6 +865,9 @@ const String _pageExtractionScriptTemplate = r"""
         document.querySelector('.comicContent-prev.list a[href]'),
       ),
       contentKey,
+      noticeMessage: document.querySelector('.upMember')
+        ? '当前账号只能读5页漫画，服务端限制'
+        : '',
     };
   };
   const buildProfilePayload = () => ({
@@ -715,7 +900,10 @@ const String _pageExtractionScriptTemplate = r"""
     }
 
     if (type === 'rank') {
-      return document.querySelectorAll('.ranking-all-box').length === 0 && state.attempts < 6;
+      return (
+        document.querySelectorAll('.ranking-all-box, .ranking-allItem')
+          .length === 0 && state.attempts < 6
+      );
     }
 
     if (type === 'home') {

@@ -157,21 +157,36 @@ extension _AppScreenHostActions on _AppScreenState {
   }
 
   Future<void> _refreshHostSettings() {
+    return _refreshHostSettingsForSite(_services.hostManager.currentSiteKey);
+  }
+
+  Future<void> _refreshHostSettingsForSite(String siteKey) {
+    final String normalizedSiteKey = _normalizeHostSiteKey(siteKey);
     return _runExclusive(
       isBusy: () => _shell.isUpdatingHostSettings,
       setBusy: (bool value) => _shell.isUpdatingHostSettings = value,
       action: () async {
         try {
-          await _services.hostManager.refreshProbes(force: true);
+          await _services.hostManager.refreshProbes(
+            force: true,
+            siteKey: normalizedSiteKey,
+          );
           await _syncHostCookies();
           if (!mounted) {
             return;
           }
-          final bool isPinned = _services.hostManager.sessionPinnedHost != null;
+          final bool isPinned =
+              _services.hostManager.sessionPinnedHostForSite(
+                normalizedSiteKey,
+              ) !=
+              null;
+          final String currentHost = _services.hostManager.currentHostForSite(
+            normalizedSiteKey,
+          );
           _showNotice(
             isPinned
-                ? '测速完成，当前仍手动锁定到域名 ${_services.hostManager.currentHost}'
-                : '测速完成，已自动选择 ${_services.hostManager.currentHost}',
+                ? '测速完成，当前仍手动锁定到域名 $currentHost'
+                : '测速完成，已自动选择 $currentHost',
           );
         } catch (_) {
           if (mounted) {
@@ -183,6 +198,11 @@ extension _AppScreenHostActions on _AppScreenState {
   }
 
   Future<void> _selectHost(String host) {
+    return _selectHostForSite(_services.hostManager.currentSiteKey, host);
+  }
+
+  Future<void> _selectHostForSite(String siteKey, String host) {
+    final String normalizedSiteKey = _normalizeHostSiteKey(siteKey);
     final String normalizedHost = host.trim().toLowerCase();
     if (normalizedHost.isEmpty) {
       return Future<void>.value();
@@ -192,7 +212,10 @@ extension _AppScreenHostActions on _AppScreenState {
       setBusy: (bool value) => _shell.isUpdatingHostSettings = value,
       action: () async {
         try {
-          await _services.hostManager.pinSessionHost(normalizedHost);
+          await _services.hostManager.pinSessionHost(
+            normalizedHost,
+            siteKey: normalizedSiteKey,
+          );
           await _syncHostCookies();
           if (mounted) {
             _showNotice('已切换到 $normalizedHost');
@@ -211,6 +234,11 @@ extension _AppScreenHostActions on _AppScreenState {
   }
 
   Future<String> _addHost(String value) async {
+    return _addHostForSite(_services.hostManager.currentSiteKey, value);
+  }
+
+  Future<String> _addHostForSite(String siteKey, String value) async {
+    final String normalizedSiteKey = _normalizeHostSiteKey(siteKey);
     final String input = value.trim();
     if (input.isEmpty) {
       return '';
@@ -225,6 +253,7 @@ extension _AppScreenHostActions on _AppScreenState {
     try {
       final String normalizedHost = await _services.hostManager.addCustomHost(
         input,
+        siteKey: normalizedSiteKey,
       );
       if (mounted) {
         _showNotice('已添加 $normalizedHost');
@@ -252,6 +281,11 @@ extension _AppScreenHostActions on _AppScreenState {
   }
 
   Future<void> _deleteHost(String host) {
+    return _deleteHostForSite(_services.hostManager.currentSiteKey, host);
+  }
+
+  Future<void> _deleteHostForSite(String siteKey, String host) {
+    final String normalizedSiteKey = _normalizeHostSiteKey(siteKey);
     final String normalizedHost = host.trim().toLowerCase();
     if (normalizedHost.isEmpty) {
       return Future<void>.value();
@@ -260,11 +294,19 @@ extension _AppScreenHostActions on _AppScreenState {
       isBusy: () => _shell.isUpdatingHostSettings,
       setBusy: (bool value) => _shell.isUpdatingHostSettings = value,
       action: () async {
-        final String previousHost = _services.hostManager.currentHost;
+        final String previousHost = _services.hostManager.currentHostForSite(
+          normalizedSiteKey,
+        );
         try {
-          await _services.hostManager.deleteHost(normalizedHost);
-          final String currentHost = _services.hostManager.currentHost;
-          if (currentHost != previousHost) {
+          await _services.hostManager.deleteHost(
+            normalizedHost,
+            siteKey: normalizedSiteKey,
+          );
+          final String currentHost = _services.hostManager.currentHostForSite(
+            normalizedSiteKey,
+          );
+          if (currentHost != previousHost &&
+              _services.hostManager.currentSiteKey == normalizedSiteKey) {
             await _syncHostCookies();
           }
           if (mounted) {
@@ -288,16 +330,30 @@ extension _AppScreenHostActions on _AppScreenState {
   }
 
   Future<void> _useAutomaticHostSelection() {
+    return _useAutomaticHostSelectionForSite(
+      _services.hostManager.currentSiteKey,
+    );
+  }
+
+  Future<void> _useAutomaticHostSelectionForSite(String siteKey) {
+    final String normalizedSiteKey = _normalizeHostSiteKey(siteKey);
     return _runExclusive(
       isBusy: () => _shell.isUpdatingHostSettings,
       setBusy: (bool value) => _shell.isUpdatingHostSettings = value,
       action: () async {
         try {
-          await _services.hostManager.clearSessionPin();
-          await _services.hostManager.refreshProbes(force: true);
+          await _services.hostManager.clearSessionPin(
+            siteKey: normalizedSiteKey,
+          );
+          await _services.hostManager.refreshProbes(
+            force: true,
+            siteKey: normalizedSiteKey,
+          );
           await _syncHostCookies();
           if (mounted) {
-            _showNotice('已恢复自动选择，当前域名 ${_services.hostManager.currentHost}');
+            _showNotice(
+              '已恢复自动选择，当前域名 ${_services.hostManager.currentHostForSite(normalizedSiteKey)}',
+            );
           }
         } catch (_) {
           if (mounted) {
@@ -307,6 +363,27 @@ extension _AppScreenHostActions on _AppScreenState {
         }
       },
     );
+  }
+
+  Future<void> _switchHostSite(String siteKey) {
+    final String normalizedSiteKey = _normalizeHostSiteKey(siteKey);
+    return _runExclusive(
+      isBusy: () => _shell.isUpdatingHostSettings,
+      setBusy: (bool value) => _shell.isUpdatingHostSettings = value,
+      action: () async {
+        await _services.hostManager.switchSite(normalizedSiteKey);
+        await _services.session.switchSite(normalizedSiteKey);
+        await _syncHostCookies();
+        if (mounted) {
+          _mutateSessionState(() {}, syncSearch: false);
+        }
+      },
+    );
+  }
+
+  String _normalizeHostSiteKey(String siteKey) {
+    final String normalized = siteKey.trim().toLowerCase();
+    return normalized.isEmpty ? HostManager.copySiteKey : normalized;
   }
 
   void _showNotice(String message) {
@@ -456,8 +533,13 @@ extension _AppScreenHostActions on _AppScreenState {
   }
 
   Future<void> _syncHostCookies() async {
-    await _services.session.ensureInitialized();
+    await _services.session.switchSite(_services.hostManager.currentSiteKey);
     if (_services.session.cookies.isEmpty) {
+      final String emptyFingerprint = _hostCookieFingerprint();
+      if (_shell.syncedHostCookieFingerprint != emptyFingerprint) {
+        await _clearPlatformCookies();
+        _shell.syncedHostCookieFingerprint = emptyFingerprint;
+      }
       return;
     }
     if (!PlatformCapabilities.usesMobileWebView) {
@@ -495,7 +577,8 @@ extension _AppScreenHostActions on _AppScreenState {
             )
             .toList()
           ..sort();
-    return '${_services.hostManager.currentHost}::${entries.join(';')}';
+    return '${_services.hostManager.currentSiteKey}::'
+        '${_services.hostManager.currentHost}::${entries.join(';')}';
   }
 
   Future<void> _clearPlatformCookies() async {

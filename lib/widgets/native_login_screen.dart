@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:reader/services/host_manager.dart';
 import 'package:reader/services/login_credentials_store.dart';
 import 'package:reader/services/site_api_client.dart';
 import 'package:reader/utils/platform_capabilities.dart';
@@ -11,12 +12,14 @@ import 'package:reader/widgets/responsive_layout.dart';
 class NativeLoginScreen extends StatefulWidget {
   const NativeLoginScreen({
     required this.loginUri,
+    required this.siteKey,
     required this.userAgent,
     this.credentialsStore,
     super.key,
   });
 
   final Uri loginUri;
+  final String siteKey;
   final String userAgent;
   final LoginCredentialsStore? credentialsStore;
 
@@ -35,6 +38,8 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
   bool _rememberPassword = false;
   String? _errorMessage;
 
+  String get _siteKey => normalizeLoginSiteKey(widget.siteKey);
+
   @override
   void initState() {
     super.initState();
@@ -51,7 +56,9 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
   }
 
   Future<void> _restoreSavedCredentials() async {
-    final SavedLoginCredentials? credentials = await _credentialsStore.read();
+    final SavedLoginCredentials? credentials = await _credentialsStore.read(
+      siteKey: _siteKey,
+    );
     if (!mounted) {
       return;
     }
@@ -86,9 +93,13 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
         password: password,
       );
       if (_rememberPassword) {
-        await _credentialsStore.save(username: username, password: password);
+        await _credentialsStore.save(
+          siteKey: _siteKey,
+          username: username,
+          password: password,
+        );
       } else {
-        await _credentialsStore.clear();
+        await _credentialsStore.clear(siteKey: _siteKey);
       }
       if (!mounted) {
         return;
@@ -270,7 +281,9 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
                                 _rememberPassword = nextValue;
                               });
                               if (!nextValue) {
-                                unawaited(_credentialsStore.clear());
+                                unawaited(
+                                  _credentialsStore.clear(siteKey: _siteKey),
+                                );
                               }
                             },
                     ),
@@ -319,4 +332,11 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
       ),
     );
   }
+}
+
+String normalizeLoginSiteKey(String siteKey) {
+  final String normalized = siteKey.trim().toLowerCase();
+  return normalized == HostManager.hotSiteKey
+      ? HostManager.hotSiteKey
+      : HostManager.copySiteKey;
 }

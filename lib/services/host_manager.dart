@@ -116,10 +116,33 @@ class HostProbeSnapshot {
   }
 }
 
+@immutable
+class HostSiteState {
+  const HostSiteState({
+    required this.siteKey,
+    required this.label,
+    required this.currentHost,
+    this.knownHosts = const <String>[],
+    this.candidateHosts = const <String>[],
+    this.candidateHostAliases = const <String, List<String>>{},
+    this.snapshot,
+  });
+
+  final String siteKey;
+  final String label;
+  final String currentHost;
+  final List<String> knownHosts;
+  final List<String> candidateHosts;
+  final Map<String, List<String>> candidateHostAliases;
+  final HostProbeSnapshot? snapshot;
+}
+
 class HostManager {
   HostManager({
     http.Client? client,
     List<String>? candidateHosts,
+    Map<String, List<String>>? candidateHostsBySite,
+    String initialSiteKey = copySiteKey,
     HostDirectoryProvider? directoryProvider,
     HostNowProvider? now,
     HostProbeRunner? probeRunner,
@@ -129,13 +152,15 @@ class HostManager {
     sqflite.DatabaseFactory? databaseFactory,
     String userAgent = defaultDesktopUserAgent,
   }) : _client = client ?? AppHttpClientFactory.create(),
-       _defaultHosts = _normalizeHosts(
-         candidateHosts ?? _buildDefaultCandidateHosts(),
+       _defaultHostsBySite = _buildInitialCandidateHostsBySite(
+         candidateHosts: candidateHosts,
+         candidateHostsBySite: candidateHostsBySite,
        ),
-       _seedHosts = _normalizeHosts(
-         candidateHosts ?? _buildDefaultCandidateHosts(),
+       _seedHostsBySite = _buildInitialCandidateHostsBySite(
+         candidateHosts: candidateHosts,
+         candidateHostsBySite: candidateHostsBySite,
        ),
-       _candidateHosts = const <String>[],
+       _candidateHostsBySite = const <String, List<String>>{},
        _directoryProvider = directoryProvider ?? getApplicationSupportDirectory,
        _hostSettingsStore =
            hostSettingsStore ??
@@ -149,20 +174,33 @@ class HostManager {
        _connectivityRunner = connectivityRunner,
        _addressLookup = addressLookup,
        _userAgent = userAgent,
-       _currentHost = _firstHost(
-         candidateHosts ?? _buildDefaultCandidateHosts(),
+       _currentHostBySite = _firstHostsBySite(
+         _buildInitialCandidateHostsBySite(
+           candidateHosts: candidateHosts,
+           candidateHostsBySite: candidateHostsBySite,
+         ),
+       ),
+       _currentSiteKey = _normalizeSiteKey(
+         initialSiteKey,
+         knownSiteKeys: _buildInitialCandidateHostsBySite(
+           candidateHosts: candidateHosts,
+           candidateHostsBySite: candidateHostsBySite,
+         ).keys,
        );
 
   static final HostManager instance = HostManager();
+
+  static const String copySiteKey = 'copy';
+  static const String hotSiteKey = 'hot';
 
   static const Duration probeCacheTtl = Duration(hours: 12);
   static const Duration probeTimeout = Duration(seconds: 3);
   static const Duration connectTimeout = Duration(seconds: 2);
 
   final http.Client _client;
-  final List<String> _defaultHosts;
-  List<String> _seedHosts;
-  List<String> _candidateHosts;
+  final Map<String, List<String>> _defaultHostsBySite;
+  Map<String, List<String>> _seedHostsBySite;
+  Map<String, List<String>> _candidateHostsBySite;
   final HostDirectoryProvider _directoryProvider;
   final HostSettingsStore _hostSettingsStore;
   final HostNowProvider _now;
@@ -172,65 +210,126 @@ class HostManager {
   final String _userAgent;
 
   Future<void>? _initialization;
-  Future<void>? _probeRefresh;
-  HostProbeSnapshot? _snapshot;
-  String _currentHost;
-  String? _sessionPinnedHost;
-  Map<String, List<String>> _candidateHostAliases =
-      const <String, List<String>>{};
+  final Map<String, Future<void>> _probeRefreshBySite =
+      <String, Future<void>>{};
+  Map<String, HostProbeSnapshot> _snapshotsBySite =
+      <String, HostProbeSnapshot>{};
+  final Map<String, String> _currentHostBySite;
+  Map<String, String?> _sessionPinnedHostBySite = <String, String?>{};
+  Map<String, Map<String, List<String>>> _candidateHostAliasesBySite =
+      const <String, Map<String, List<String>>>{};
+  String _currentSiteKey;
   final Map<String, String> _addressSignatureCache = <String, String>{};
 
-  List<String> get candidateHosts => List<String>.unmodifiable(_candidateHosts);
+  String get currentSiteKey => _currentSiteKey;
 
-  List<String> get knownHosts => List<String>.unmodifiable(
+  List<String> get availableSiteKeys =>
+      List<String>.unmodifiable(_defaultHostsBySite.keys);
+
+  List<HostSiteState> get siteStates {
+    return <HostSiteState>[
+      for (final String siteKey in availableSiteKeys)
+        HostSiteState(
+          siteKey: siteKey,
+          label: siteLabel(siteKey),
+          currentHost: currentHostForSite(siteKey),
+          knownHosts: knownHostsForSite(siteKey),
+          candidateHosts: candidateHostsForSite(siteKey),
+          candidateHostAliases: candidateHostAliasesForSite(siteKey),
+          snapshot: probeSnapshotForSite(siteKey),
+        ),
+    ];
+  }
+
+  List<String> get candidateHosts => candidateHostsForSite(_currentSiteKey);
+
+  List<String> get knownHosts => knownHostsForSite(_currentSiteKey);
+
+  List<String> knownHostsForSite(String siteKey) => List<String>.unmodifiable(
     _normalizeHosts(<String>[
-      ..._seedHosts,
-      if (_isActiveRuntimeHost(_currentHost)) _currentHost,
-      if (_sessionPinnedHost != null &&
-          _isActiveRuntimeHost(_sessionPinnedHost!))
-        _sessionPinnedHost!,
-      if ((_snapshot?.selectedHost ?? '').trim().isNotEmpty &&
-          _isActiveRuntimeHost(_snapshot!.selectedHost))
-        _snapshot!.selectedHost,
+      ..._seedHostsForSite(siteKey),
+      if (_isActiveRuntimeHost(_currentHostForSite(siteKey), siteKey: siteKey))
+        _currentHostForSite(siteKey),
+      if (_sessionPinnedHostForSite(siteKey) != null &&
+          _isActiveRuntimeHost(
+            _sessionPinnedHostForSite(siteKey)!,
+            siteKey: siteKey,
+          ))
+        _sessionPinnedHostForSite(siteKey)!,
+      if ((_snapshotForSite(siteKey)?.selectedHost ?? '').trim().isNotEmpty &&
+          _isActiveRuntimeHost(
+            _snapshotForSite(siteKey)!.selectedHost,
+            siteKey: siteKey,
+          ))
+        _snapshotForSite(siteKey)!.selectedHost,
       for (final HostProbeRecord probe
-          in _snapshot?.probes ?? const <HostProbeRecord>[])
-        if (_isActiveRuntimeHost(probe.host)) probe.host,
+          in _snapshotForSite(siteKey)?.probes ?? const <HostProbeRecord>[])
+        if (_isActiveRuntimeHost(probe.host, siteKey: siteKey)) probe.host,
     ]),
   );
 
-  Map<String, List<String>> get candidateHostAliases =>
-      Map<String, List<String>>.unmodifiable(
-        _candidateHostAliases.map(
-          (String host, List<String> aliases) =>
-              MapEntry(host, List<String>.unmodifiable(aliases)),
-        ),
+  List<String> candidateHostsForSite(String siteKey) =>
+      List<String>.unmodifiable(
+        _candidateHostsBySite[_normalizeKnownSiteKey(siteKey)] ??
+            const <String>[],
       );
 
+  Map<String, List<String>> get candidateHostAliases =>
+      candidateHostAliasesForSite(_currentSiteKey);
+
+  Map<String, List<String>> candidateHostAliasesForSite(String siteKey) {
+    final Map<String, List<String>> aliases =
+        _candidateHostAliasesBySite[_normalizeKnownSiteKey(siteKey)] ??
+        const <String, List<String>>{};
+    return Map<String, List<String>>.unmodifiable(
+      aliases.map(
+        (String host, List<String> aliases) =>
+            MapEntry(host, List<String>.unmodifiable(aliases)),
+      ),
+    );
+  }
+
   Set<String> get allowedHosts => <String>{
-    ..._seedHosts,
-    ..._candidateHosts,
-    if (_isActiveRuntimeHost(_currentHost)) _currentHost,
-    if ((_sessionPinnedHost ?? '').trim().isNotEmpty)
-      if (_isActiveRuntimeHost(_sessionPinnedHost!))
-        _normalizeHost(_sessionPinnedHost!),
-    if ((_snapshot?.selectedHost ?? '').trim().isNotEmpty)
-      if (_isActiveRuntimeHost(_snapshot!.selectedHost))
-        _normalizeHost(_snapshot!.selectedHost),
+    ..._seedHostsForSite(_currentSiteKey),
+    ...candidateHostsForSite(_currentSiteKey),
+    if (_isActiveRuntimeHost(_currentHostForSite(_currentSiteKey)))
+      _currentHostForSite(_currentSiteKey),
+    if ((_sessionPinnedHostForSite(_currentSiteKey) ?? '').trim().isNotEmpty)
+      if (_isActiveRuntimeHost(_sessionPinnedHostForSite(_currentSiteKey)!))
+        _normalizeHost(_sessionPinnedHostForSite(_currentSiteKey)!),
+    if ((_snapshotForSite(_currentSiteKey)?.selectedHost ?? '')
+        .trim()
+        .isNotEmpty)
+      if (_isActiveRuntimeHost(_snapshotForSite(_currentSiteKey)!.selectedHost))
+        _normalizeHost(_snapshotForSite(_currentSiteKey)!.selectedHost),
     for (final HostProbeRecord probe
-        in _snapshot?.probes ?? const <HostProbeRecord>[])
+        in _snapshotForSite(_currentSiteKey)?.probes ??
+            const <HostProbeRecord>[])
       if (_isActiveRuntimeHost(probe.host)) _normalizeHost(probe.host),
   };
 
-  String get currentHost => _sessionPinnedHost ?? _currentHost;
+  String get currentHost => currentHostForSite(_currentSiteKey);
+
+  String currentHostForSite(String siteKey) {
+    final String normalizedSiteKey = _normalizeKnownSiteKey(siteKey);
+    return _sessionPinnedHostForSite(normalizedSiteKey) ??
+        _currentHostForSite(normalizedSiteKey);
+  }
 
   Uri get baseUri => Uri.parse('https://$currentHost/');
 
-  HostProbeSnapshot? get probeSnapshot => _snapshot;
+  HostProbeSnapshot? get probeSnapshot => probeSnapshotForSite(_currentSiteKey);
 
-  String? get sessionPinnedHost => _sessionPinnedHost;
+  HostProbeSnapshot? probeSnapshotForSite(String siteKey) =>
+      _snapshotForSite(siteKey);
+
+  String? get sessionPinnedHost => sessionPinnedHostForSite(_currentSiteKey);
+
+  String? sessionPinnedHostForSite(String siteKey) =>
+      _sessionPinnedHostForSite(siteKey);
 
   @visibleForTesting
-  HostProbeSnapshot? get snapshot => _snapshot;
+  HostProbeSnapshot? get snapshot => _snapshotForSite(_currentSiteKey);
 
   Future<void> ensureInitialized() {
     return _initialization ??= _initialize();
@@ -238,97 +337,163 @@ class HostManager {
 
   Future<void> close() async {
     try {
-      await _probeRefresh;
+      await Future.wait(_probeRefreshBySite.values);
     } catch (_) {
       // 关闭时忽略后台测速失败。
     }
     _initialization = null;
-    _probeRefresh = null;
-    _snapshot = null;
-    _candidateHosts = const <String>[];
-    _candidateHostAliases = const <String, List<String>>{};
-    _sessionPinnedHost = null;
+    _probeRefreshBySite.clear();
+    _snapshotsBySite = <String, HostProbeSnapshot>{};
+    _candidateHostsBySite = const <String, List<String>>{};
+    _candidateHostAliasesBySite = const <String, Map<String, List<String>>>{};
+    _sessionPinnedHostBySite = <String, String?>{};
     await _hostSettingsStore.close();
     _client.close();
   }
 
-  Future<void> refreshProbes({bool force = false}) {
-    final Future<void>? activeRefresh = _probeRefresh;
+  Future<void> switchSite(String siteKey) async {
+    await ensureInitialized();
+    final String normalizedSiteKey = _normalizeKnownSiteKey(siteKey);
+    _currentSiteKey = normalizedSiteKey;
+    await _persistCurrentState(siteKey: normalizedSiteKey);
+  }
+
+  Future<void> refreshProbes({bool force = false, String? siteKey}) async {
+    if (_initialization == null) {
+      await ensureInitialized();
+    }
+    final String targetSiteKey = _effectiveSiteKey(siteKey);
+    final Future<void>? activeRefresh = _probeRefreshBySite[targetSiteKey];
     if (activeRefresh != null) {
       return activeRefresh;
     }
-    final Future<void> refresh = _refreshProbes(force: force);
-    _probeRefresh = refresh;
+    final Future<void> refresh = _refreshProbes(
+      force: force,
+      siteKey: targetSiteKey,
+    );
+    _probeRefreshBySite[targetSiteKey] = refresh;
     return refresh.whenComplete(() {
-      if (identical(_probeRefresh, refresh)) {
-        _probeRefresh = null;
+      if (identical(_probeRefreshBySite[targetSiteKey], refresh)) {
+        _probeRefreshBySite.remove(targetSiteKey);
       }
     });
   }
 
-  Future<void> _refreshProbes({required bool force}) async {
+  Future<void> _refreshProbes({required bool force, String? siteKey}) async {
     if (_initialization == null) {
       await ensureInitialized();
     }
+    final String targetSiteKey = _effectiveSiteKey(siteKey);
+    if (siteKey != null) {
+      _currentSiteKey = targetSiteKey;
+    }
+    final HostProbeSnapshot? currentSnapshot = _snapshotForSite(targetSiteKey);
     if (!force &&
-        _snapshot != null &&
-        _now().difference(_snapshot!.checkedAt) < probeCacheTtl) {
-      _candidateHosts = _successfulProbeHosts(_snapshot!.probes);
-      _candidateHostAliases = _buildCandidateHostAliases(_snapshot!.probes);
+        currentSnapshot != null &&
+        _now().difference(currentSnapshot.checkedAt) < probeCacheTtl) {
+      _candidateHostsBySite = _copyStringListMapWith(
+        _candidateHostsBySite,
+        targetSiteKey,
+        _successfulProbeHosts(currentSnapshot.probes, siteKey: targetSiteKey),
+      );
+      _candidateHostAliasesBySite = _copyAliasMapWith(
+        _candidateHostAliasesBySite,
+        targetSiteKey,
+        _buildCandidateHostAliases(
+          currentSnapshot.probes,
+          siteKey: targetSiteKey,
+        ),
+      );
       return;
     }
-    final List<String> hostsToProbe = knownHosts;
+    final List<String> hostsToProbe = knownHostsForSite(targetSiteKey);
     final List<HostProbeRecord> probes = hostsToProbe.isEmpty
         ? const <HostProbeRecord>[]
         : await Future.wait(hostsToProbe.map(_probeKnownHost));
     final List<HostProbeRecord> ranked = _sortProbes(probes);
-    _candidateHosts = _successfulProbeHosts(ranked);
-    _candidateHostAliases = _buildCandidateHostAliases(ranked);
-    final String nextHost = _selectAutomaticHost(ranked);
+    _candidateHostsBySite = _copyStringListMapWith(
+      _candidateHostsBySite,
+      targetSiteKey,
+      _successfulProbeHosts(ranked, siteKey: targetSiteKey),
+    );
+    _candidateHostAliasesBySite = _copyAliasMapWith(
+      _candidateHostAliasesBySite,
+      targetSiteKey,
+      _buildCandidateHostAliases(ranked, siteKey: targetSiteKey),
+    );
+    final String nextHost = _selectAutomaticHost(
+      ranked,
+      siteKey: targetSiteKey,
+    );
     if (nextHost.isNotEmpty) {
-      _currentHost = nextHost;
+      _currentHostBySite[targetSiteKey] = nextHost;
     }
-    _snapshot = HostProbeSnapshot(
-      selectedHost: nextHost.isEmpty ? _currentHost : nextHost,
+    final HostProbeSnapshot snapshot = HostProbeSnapshot(
+      selectedHost: nextHost.isEmpty
+          ? _currentHostForSite(targetSiteKey)
+          : nextHost,
       checkedAt: _now(),
       probes: ranked,
-      sessionPinnedHost: _sessionPinnedHost,
+      sessionPinnedHost: _sessionPinnedHostForSite(targetSiteKey),
     );
+    _snapshotsBySite = Map<String, HostProbeSnapshot>.from(_snapshotsBySite)
+      ..[targetSiteKey] = snapshot;
     await _saveSnapshot();
   }
 
-  Future<void> pinSessionHost(String host) async {
+  Future<void> pinSessionHost(String host, {String? siteKey}) async {
     await ensureInitialized();
+    final String targetSiteKey = _effectiveSiteKey(siteKey);
+    if (siteKey != null) {
+      _currentSiteKey = targetSiteKey;
+    }
     final String normalizedHost = _normalizeHost(host);
     if (normalizedHost.isEmpty) {
       throw StateError('域名不能为空。');
     }
-    if (!_isActiveRuntimeHost(normalizedHost)) {
+    if (!_isActiveRuntimeHost(normalizedHost, siteKey: targetSiteKey)) {
       throw StateError('域名不存在。');
     }
-    final HostProbeRecord? cachedProbe = _probeForHost(normalizedHost);
+    final HostProbeRecord? cachedProbe = _probeForHost(
+      normalizedHost,
+      siteKey: targetSiteKey,
+    );
     final HostProbeRecord probe =
         cachedProbe ?? await _probeSelectableHost(normalizedHost);
-    _sessionPinnedHost = normalizedHost;
-    _currentHost = normalizedHost;
-    _snapshot = HostProbeSnapshot(
-      selectedHost: (_snapshot?.selectedHost ?? '').trim().isEmpty
+    _sessionPinnedHostBySite = Map<String, String?>.from(
+      _sessionPinnedHostBySite,
+    )..[targetSiteKey] = normalizedHost;
+    _currentHostBySite[targetSiteKey] = normalizedHost;
+    final HostProbeSnapshot? currentSnapshot = _snapshotForSite(targetSiteKey);
+    final HostProbeSnapshot snapshot = HostProbeSnapshot(
+      selectedHost: (currentSnapshot?.selectedHost ?? '').trim().isEmpty
           ? normalizedHost
-          : _normalizeHost(_snapshot!.selectedHost),
+          : _normalizeHost(currentSnapshot!.selectedHost),
       checkedAt: _now(),
       probes: _upsertProbe(
         probe,
-        _snapshot?.probes ?? const <HostProbeRecord>[],
+        currentSnapshot?.probes ?? const <HostProbeRecord>[],
       ),
-      sessionPinnedHost: _sessionPinnedHost,
+      sessionPinnedHost: _sessionPinnedHostForSite(targetSiteKey),
     );
-    _candidateHosts = _successfulProbeHosts(_snapshot!.probes);
-    _candidateHostAliases = _buildCandidateHostAliases(_snapshot!.probes);
+    _snapshotsBySite = Map<String, HostProbeSnapshot>.from(_snapshotsBySite)
+      ..[targetSiteKey] = snapshot;
+    _candidateHostsBySite = _copyStringListMapWith(
+      _candidateHostsBySite,
+      targetSiteKey,
+      _successfulProbeHosts(snapshot.probes, siteKey: targetSiteKey),
+    );
+    _candidateHostAliasesBySite = _copyAliasMapWith(
+      _candidateHostAliasesBySite,
+      targetSiteKey,
+      _buildCandidateHostAliases(snapshot.probes, siteKey: targetSiteKey),
+    );
     await _saveSnapshot();
   }
 
-  Future<String> addCustomHost(String value) async {
+  Future<String> addCustomHost(String value, {String? siteKey}) async {
     await ensureInitialized();
+    final String targetSiteKey = _effectiveSiteKey(siteKey);
     final String normalizedHost = _normalizeCustomHostInput(value);
     if (normalizedHost.isEmpty) {
       throw StateError('域名不能为空。');
@@ -336,67 +501,108 @@ class HostManager {
     if (!_isValidHostName(normalizedHost)) {
       throw StateError('域名格式不正确。');
     }
-    await _hostSettingsStore.addCustomHost(normalizedHost);
+    await _hostSettingsStore.addCustomHost(
+      normalizedHost,
+      siteKey: targetSiteKey,
+    );
     await _reloadStoredHosts();
     return normalizedHost;
   }
 
-  Future<void> deleteHost(String host) async {
+  Future<void> deleteHost(String host, {String? siteKey}) async {
     await ensureInitialized();
+    final String targetSiteKey = _effectiveSiteKey(siteKey);
     final String normalizedHost = _normalizeHost(host);
     if (normalizedHost.isEmpty) {
       throw StateError('域名不能为空。');
     }
-    if (!_isActiveRuntimeHost(normalizedHost)) {
+    if (!_isActiveRuntimeHost(normalizedHost, siteKey: targetSiteKey)) {
       throw StateError('域名不存在。');
     }
-    final List<String> remainingHosts = _seedHosts
-        .where((String host) => host != normalizedHost)
-        .toList(growable: false);
+    final List<String> remainingHosts = _seedHostsForSite(
+      targetSiteKey,
+    ).where((String host) => host != normalizedHost).toList(growable: false);
     if (remainingHosts.isEmpty) {
       throw StateError('至少保留一个域名。');
     }
 
-    await _hostSettingsStore.deleteHost(normalizedHost);
+    await _hostSettingsStore.deleteHost(normalizedHost, siteKey: targetSiteKey);
     await _reloadStoredHosts();
 
-    _candidateHosts = _candidateHosts
-        .where((String host) => _isActiveRuntimeHost(host))
-        .toList(growable: false);
-    if (_normalizeHost(_sessionPinnedHost ?? '') == normalizedHost ||
-        !_isActiveRuntimeHost(_sessionPinnedHost ?? '')) {
-      _sessionPinnedHost = null;
+    _candidateHostsBySite = _copyStringListMapWith(
+      _candidateHostsBySite,
+      targetSiteKey,
+      candidateHostsForSite(targetSiteKey)
+          .where(
+            (String host) => _isActiveRuntimeHost(host, siteKey: targetSiteKey),
+          )
+          .toList(growable: false),
+    );
+    if (_normalizeHost(_sessionPinnedHostForSite(targetSiteKey) ?? '') ==
+            normalizedHost ||
+        !_isActiveRuntimeHost(
+          _sessionPinnedHostForSite(targetSiteKey) ?? '',
+          siteKey: targetSiteKey,
+        )) {
+      _sessionPinnedHostBySite = Map<String, String?>.from(
+        _sessionPinnedHostBySite,
+      )..[targetSiteKey] = null;
     }
-    if (_normalizeHost(_currentHost) == normalizedHost ||
-        !_isActiveRuntimeHost(_currentHost)) {
-      _currentHost = _firstHost(_seedHosts);
+    if (_normalizeHost(_currentHostForSite(targetSiteKey)) == normalizedHost ||
+        !_isActiveRuntimeHost(
+          _currentHostForSite(targetSiteKey),
+          siteKey: targetSiteKey,
+        )) {
+      _currentHostBySite[targetSiteKey] = _firstHost(
+        _seedHostsForSite(targetSiteKey),
+      );
     }
     final List<HostProbeRecord> probes = _activeProbes(
-      _snapshot?.probes ?? const <HostProbeRecord>[],
+      _snapshotForSite(targetSiteKey)?.probes ?? const <HostProbeRecord>[],
+      siteKey: targetSiteKey,
     );
-    _candidateHostAliases = _buildCandidateHostAliases(probes);
-    _snapshot = HostProbeSnapshot(
-      selectedHost: _isActiveRuntimeHost(_snapshot?.selectedHost ?? '')
-          ? _normalizeHost(_snapshot!.selectedHost)
-          : _currentHost,
-      checkedAt: _snapshot?.checkedAt ?? _now(),
+    _candidateHostAliasesBySite = _copyAliasMapWith(
+      _candidateHostAliasesBySite,
+      targetSiteKey,
+      _buildCandidateHostAliases(probes, siteKey: targetSiteKey),
+    );
+    final HostProbeSnapshot? currentSnapshot = _snapshotForSite(targetSiteKey);
+    final HostProbeSnapshot snapshot = HostProbeSnapshot(
+      selectedHost:
+          _isActiveRuntimeHost(
+            currentSnapshot?.selectedHost ?? '',
+            siteKey: targetSiteKey,
+          )
+          ? _normalizeHost(currentSnapshot!.selectedHost)
+          : _currentHostForSite(targetSiteKey),
+      checkedAt: currentSnapshot?.checkedAt ?? _now(),
       probes: probes,
-      sessionPinnedHost: _sessionPinnedHost,
+      sessionPinnedHost: _sessionPinnedHostForSite(targetSiteKey),
     );
+    _snapshotsBySite = Map<String, HostProbeSnapshot>.from(_snapshotsBySite)
+      ..[targetSiteKey] = snapshot;
     await _saveSnapshot();
   }
 
-  Future<void> clearSessionPin() async {
+  Future<void> clearSessionPin({String? siteKey}) async {
     await ensureInitialized();
-    _sessionPinnedHost = null;
-    await _persistCurrentState();
+    final String targetSiteKey = _effectiveSiteKey(siteKey);
+    if (siteKey != null) {
+      _currentSiteKey = targetSiteKey;
+    }
+    _sessionPinnedHostBySite = Map<String, String?>.from(
+      _sessionPinnedHostBySite,
+    )..[targetSiteKey] = null;
+    await _persistCurrentState(siteKey: targetSiteKey);
   }
 
   Future<String> failover({Iterable<String> exclude = const <String>[]}) async {
     await refreshProbes(force: true);
     final Set<String> excludedHosts = exclude.map(_normalizeHost).toSet()
       ..add(_normalizeHost(currentHost));
-    final List<HostProbeRecord> ranked = _sortProbes(_snapshot?.probes ?? []);
+    final List<HostProbeRecord> ranked = _sortProbes(
+      _snapshotForSite(_currentSiteKey)?.probes ?? <HostProbeRecord>[],
+    );
     final HostProbeRecord? nextHost = ranked
         .cast<HostProbeRecord?>()
         .firstWhere((HostProbeRecord? probe) {
@@ -407,11 +613,13 @@ class HostManager {
     if (nextHost == null) {
       return currentHost;
     }
-    _currentHost = nextHost.host;
-    if (_sessionPinnedHost != null) {
-      _sessionPinnedHost = nextHost.host;
+    _currentHostBySite[_currentSiteKey] = nextHost.host;
+    if (_sessionPinnedHostForSite(_currentSiteKey) != null) {
+      _sessionPinnedHostBySite = Map<String, String?>.from(
+        _sessionPinnedHostBySite,
+      )..[_currentSiteKey] = nextHost.host;
     }
-    await _persistCurrentState();
+    await _persistCurrentState(siteKey: _currentSiteKey);
     return currentHost;
   }
 
@@ -420,6 +628,15 @@ class HostManager {
         ? path.substring(1)
         : path;
     return baseUri.resolve(normalizedPath);
+  }
+
+  Uri rewriteInternalUriToCurrentHost(Uri uri) {
+    final Uri sourceUri = uri.hasScheme ? uri : baseUri.resolveUri(uri);
+    return baseUri.replace(
+      path: sourceUri.path.isEmpty ? '/' : sourceUri.path,
+      query: sourceUri.hasQuery ? sourceUri.query : null,
+      fragment: sourceUri.hasFragment ? sourceUri.fragment : null,
+    );
   }
 
   Uri resolveNavigationUri(String href, {Uri? currentUri}) {
@@ -463,49 +680,108 @@ class HostManager {
     if (uri.scheme != 'http' && uri.scheme != 'https') {
       return false;
     }
-    final String host = uri.host.toLowerCase();
-    return host == currentHost || allowedHosts.contains(host);
+    return true;
   }
 
   Future<void> _initialize() async {
-    _snapshot = await _loadSnapshot();
+    final _LoadedHostSnapshots loadedSnapshots = await _loadSnapshots();
+    _snapshotsBySite = loadedSnapshots.snapshots;
+    _currentSiteKey = _normalizeKnownSiteKey(
+      loadedSnapshots.currentSiteKey.isEmpty
+          ? _currentSiteKey
+          : loadedSnapshots.currentSiteKey,
+    );
     await _hostSettingsStore.ensureInitialized();
-    await _hostSettingsStore.upsertBuiltinHosts(_defaultHosts);
-    await _hostSettingsStore.upsertLegacyHosts(_snapshotHosts(_snapshot));
-    await _reloadStoredHosts();
-    if (_snapshot != null) {
-      _currentHost =
-          _snapshot!.selectedHost.isEmpty ||
-              !_isActiveRuntimeHost(_snapshot!.selectedHost)
-          ? _currentHost
-          : _normalizeHost(_snapshot!.selectedHost);
-      _sessionPinnedHost = _snapshot!.sessionPinnedHost == null
-          ? null
-          : _isActiveRuntimeHost(_snapshot!.sessionPinnedHost!)
-          ? _normalizeHost(_snapshot!.sessionPinnedHost!)
-          : null;
-      _snapshot = HostProbeSnapshot(
-        selectedHost: _isActiveRuntimeHost(_snapshot!.selectedHost)
-            ? _normalizeHost(_snapshot!.selectedHost)
-            : _currentHost,
-        checkedAt: _snapshot!.checkedAt,
-        probes: _activeProbes(_snapshot!.probes),
-        sessionPinnedHost: _sessionPinnedHost,
+    for (final MapEntry<String, List<String>> entry
+        in _defaultHostsBySite.entries) {
+      await _hostSettingsStore.upsertBuiltinHosts(
+        entry.value,
+        siteKey: entry.key,
       );
-      _candidateHosts = _successfulProbeHosts(_snapshot!.probes);
-      _candidateHostAliases = _buildCandidateHostAliases(_snapshot!.probes);
     }
-    if (!_isActiveRuntimeHost(_currentHost)) {
-      _currentHost = _firstHost(_seedHosts);
+    for (final MapEntry<String, HostProbeSnapshot> entry
+        in _snapshotsBySite.entries) {
+      await _hostSettingsStore.upsertLegacyHosts(
+        _snapshotHosts(entry.value),
+        siteKey: entry.key,
+      );
     }
+    await _reloadStoredHosts();
+
+    final Map<String, HostProbeSnapshot> normalizedSnapshots =
+        <String, HostProbeSnapshot>{};
+    final Map<String, List<String>> candidateHostsBySite =
+        <String, List<String>>{};
+    final Map<String, Map<String, List<String>>> aliasesBySite =
+        <String, Map<String, List<String>>>{};
+    final Map<String, String?> pinnedBySite = <String, String?>{};
+
+    for (final String siteKey in availableSiteKeys) {
+      final HostProbeSnapshot? snapshot = _snapshotForSite(siteKey);
+      if (snapshot != null) {
+        final String selectedHost =
+            snapshot.selectedHost.isEmpty ||
+                !_isActiveRuntimeHost(snapshot.selectedHost, siteKey: siteKey)
+            ? _currentHostForSite(siteKey)
+            : _normalizeHost(snapshot.selectedHost);
+        _currentHostBySite[siteKey] = selectedHost;
+        final String? pinnedHost = snapshot.sessionPinnedHost == null
+            ? null
+            : _isActiveRuntimeHost(
+                snapshot.sessionPinnedHost!,
+                siteKey: siteKey,
+              )
+            ? _normalizeHost(snapshot.sessionPinnedHost!)
+            : null;
+        pinnedBySite[siteKey] = pinnedHost;
+        final List<HostProbeRecord> probes = _activeProbes(
+          snapshot.probes,
+          siteKey: siteKey,
+        );
+        final HostProbeSnapshot normalizedSnapshot = HostProbeSnapshot(
+          selectedHost:
+              _isActiveRuntimeHost(snapshot.selectedHost, siteKey: siteKey)
+              ? _normalizeHost(snapshot.selectedHost)
+              : _currentHostForSite(siteKey),
+          checkedAt: snapshot.checkedAt,
+          probes: probes,
+          sessionPinnedHost: pinnedHost,
+        );
+        normalizedSnapshots[siteKey] = normalizedSnapshot;
+        candidateHostsBySite[siteKey] = _successfulProbeHosts(
+          probes,
+          siteKey: siteKey,
+        );
+        aliasesBySite[siteKey] = _buildCandidateHostAliases(
+          probes,
+          siteKey: siteKey,
+        );
+      }
+      if (!_isActiveRuntimeHost(
+        _currentHostForSite(siteKey),
+        siteKey: siteKey,
+      )) {
+        _currentHostBySite[siteKey] = _firstHost(_seedHostsForSite(siteKey));
+      }
+    }
+    _sessionPinnedHostBySite = pinnedBySite;
+    _snapshotsBySite = normalizedSnapshots;
+    _candidateHostsBySite = candidateHostsBySite;
+    _candidateHostAliasesBySite = aliasesBySite;
     // 冷启动先复用上次可用域名，探测放到后台。
   }
 
   Future<void> _reloadStoredHosts() async {
-    _seedHosts = _normalizeHosts(await _hostSettingsStore.activeHosts());
-    if (_seedHosts.isEmpty) {
-      _seedHosts = _normalizeHosts(_defaultHosts);
+    final Map<String, List<String>> nextSeedHosts = <String, List<String>>{};
+    for (final String siteKey in availableSiteKeys) {
+      final List<String> activeHosts = _normalizeHosts(
+        await _hostSettingsStore.activeHosts(siteKey: siteKey),
+      );
+      nextSeedHosts[siteKey] = activeHosts.isEmpty
+          ? _defaultHostsForSite(siteKey)
+          : activeHosts;
     }
+    _seedHostsBySite = nextSeedHosts;
   }
 
   List<String> _snapshotHosts(HostProbeSnapshot? snapshot) {
@@ -520,15 +796,24 @@ class HostManager {
     ]);
   }
 
-  List<HostProbeRecord> _activeProbes(List<HostProbeRecord> probes) {
+  List<HostProbeRecord> _activeProbes(
+    List<HostProbeRecord> probes, {
+    String? siteKey,
+  }) {
+    final String targetSiteKey = _effectiveSiteKey(siteKey);
     return probes
-        .where((HostProbeRecord probe) => _isActiveRuntimeHost(probe.host))
+        .where(
+          (HostProbeRecord probe) =>
+              _isActiveRuntimeHost(probe.host, siteKey: targetSiteKey),
+        )
         .toList(growable: false);
   }
 
-  bool _isActiveRuntimeHost(String host) {
+  bool _isActiveRuntimeHost(String host, {String? siteKey}) {
+    final String targetSiteKey = _effectiveSiteKey(siteKey);
     final String normalizedHost = _normalizeHost(host);
-    return normalizedHost.isNotEmpty && _seedHosts.contains(normalizedHost);
+    return normalizedHost.isNotEmpty &&
+        _seedHostsForSite(targetSiteKey).contains(normalizedHost);
   }
 
   Future<HostProbeRecord> _probeKnownHost(String host) async {
@@ -637,23 +922,35 @@ class HostManager {
     return ranked;
   }
 
-  List<String> _successfulProbeHosts(List<HostProbeRecord> probes) {
+  List<String> _successfulProbeHosts(
+    List<HostProbeRecord> probes, {
+    String? siteKey,
+  }) {
     return _buildHostAliasGroups(
       probes,
+      siteKey: siteKey,
     ).map((_HostAliasGroup group) => group.primaryHost).toList(growable: false);
   }
 
   Map<String, List<String>> _buildCandidateHostAliases(
-    List<HostProbeRecord> probes,
-  ) {
+    List<HostProbeRecord> probes, {
+    String? siteKey,
+  }) {
     final Map<String, List<String>> aliases = <String, List<String>>{};
-    for (final _HostAliasGroup group in _buildHostAliasGroups(probes)) {
+    for (final _HostAliasGroup group in _buildHostAliasGroups(
+      probes,
+      siteKey: siteKey,
+    )) {
       aliases[group.primaryHost] = List<String>.unmodifiable(group.aliases);
     }
     return aliases;
   }
 
-  List<_HostAliasGroup> _buildHostAliasGroups(List<HostProbeRecord> probes) {
+  List<_HostAliasGroup> _buildHostAliasGroups(
+    List<HostProbeRecord> probes, {
+    String? siteKey,
+  }) {
+    final String targetSiteKey = _effectiveSiteKey(siteKey);
     final List<HostProbeRecord> successful = probes
         .where(
           (HostProbeRecord probe) =>
@@ -668,14 +965,18 @@ class HostManager {
         _normalizeHost(probe.host),
     };
     final List<String> preferenceOrder = _normalizeHosts(<String>[
-      ..._seedHosts,
-      if (_sessionPinnedHost != null) _sessionPinnedHost!,
-      _currentHost,
-      ..._candidateHosts,
-      if ((_snapshot?.selectedHost ?? '').trim().isNotEmpty)
-        _snapshot!.selectedHost,
+      ..._seedHostsForSite(targetSiteKey),
+      if (_sessionPinnedHostForSite(targetSiteKey) != null)
+        _sessionPinnedHostForSite(targetSiteKey)!,
+      _currentHostForSite(targetSiteKey),
+      ...candidateHostsForSite(targetSiteKey),
+      if ((_snapshotForSite(targetSiteKey)?.selectedHost ?? '')
+          .trim()
+          .isNotEmpty)
+        _snapshotForSite(targetSiteKey)!.selectedHost,
       for (final HostProbeRecord probe
-          in _snapshot?.probes ?? const <HostProbeRecord>[])
+          in _snapshotForSite(targetSiteKey)?.probes ??
+              const <HostProbeRecord>[])
         probe.host,
       for (final HostProbeRecord probe in successful) probe.host,
     ]);
@@ -777,9 +1078,12 @@ class HostManager {
     return null;
   }
 
-  HostProbeRecord? _probeForHost(String host) {
+  HostProbeRecord? _probeForHost(String host, {String? siteKey}) {
+    final String targetSiteKey = _effectiveSiteKey(siteKey);
     final String normalizedHost = _normalizeHost(host);
-    return _snapshot?.probes.cast<HostProbeRecord?>().firstWhere(
+    return _snapshotForSite(
+      targetSiteKey,
+    )?.probes.cast<HostProbeRecord?>().firstWhere(
       (HostProbeRecord? probe) =>
           probe != null && _normalizeHost(probe.host) == normalizedHost,
       orElse: () => null,
@@ -801,7 +1105,8 @@ class HostManager {
     return _sortProbes(updated);
   }
 
-  String _selectAutomaticHost(List<HostProbeRecord> ranked) {
+  String _selectAutomaticHost(List<HostProbeRecord> ranked, {String? siteKey}) {
+    final String targetSiteKey = _effectiveSiteKey(siteKey);
     final HostProbeRecord? nextHost = ranked
         .cast<HostProbeRecord?>()
         .firstWhere(
@@ -812,10 +1117,11 @@ class HostManager {
       return _normalizeHost(nextHost.host);
     }
     final List<String> fallbackHosts = _normalizeHosts(<String>[
-      ..._candidateHosts,
-      _currentHost,
-      if (_sessionPinnedHost != null) _sessionPinnedHost!,
-      ..._seedHosts,
+      ...candidateHostsForSite(targetSiteKey),
+      _currentHostForSite(targetSiteKey),
+      if (_sessionPinnedHostForSite(targetSiteKey) != null)
+        _sessionPinnedHostForSite(targetSiteKey)!,
+      ..._seedHostsForSite(targetSiteKey),
     ]);
     return fallbackHosts.isEmpty ? '' : fallbackHosts.first;
   }
@@ -825,33 +1131,61 @@ class HostManager {
     return File('${directory.path}${Platform.pathSeparator}host_probe.json');
   }
 
-  Future<HostProbeSnapshot?> _loadSnapshot() async {
+  Future<_LoadedHostSnapshots> _loadSnapshots() async {
     try {
       final File file = await _snapshotFile();
       if (!await file.exists()) {
-        return null;
+        return const _LoadedHostSnapshots();
       }
       final Object? decoded = jsonDecode(await file.readAsString());
       if (decoded is! Map) {
-        return null;
+        return const _LoadedHostSnapshots();
       }
-      return HostProbeSnapshot.fromJson(
-        decoded.map(
-          (Object? key, Object? value) => MapEntry(key.toString(), value),
-        ),
+      final Map<String, Object?> json = decoded.map(
+        (Object? key, Object? value) => MapEntry(key.toString(), value),
+      );
+      final Object? rawSites = json['sites'];
+      if (rawSites is Map) {
+        final Map<String, HostProbeSnapshot> snapshots =
+            <String, HostProbeSnapshot>{};
+        for (final MapEntry<Object?, Object?> entry in rawSites.entries) {
+          final String siteKey = _normalizeKnownSiteKey(entry.key.toString());
+          final Object? value = entry.value;
+          if (value is! Map) {
+            continue;
+          }
+          snapshots[siteKey] = HostProbeSnapshot.fromJson(
+            value.map(
+              (Object? key, Object? value) => MapEntry(key.toString(), value),
+            ),
+          );
+        }
+        return _LoadedHostSnapshots(
+          currentSiteKey: (json['currentSiteKey'] as String?)?.trim() ?? '',
+          snapshots: snapshots,
+        );
+      }
+      return _LoadedHostSnapshots(
+        currentSiteKey: copySiteKey,
+        snapshots: <String, HostProbeSnapshot>{
+          copySiteKey: HostProbeSnapshot.fromJson(json),
+        },
       );
     } catch (_) {
-      return null;
+      return const _LoadedHostSnapshots();
     }
   }
 
-  Future<void> _persistCurrentState() async {
-    _snapshot = HostProbeSnapshot(
-      selectedHost: _currentHost,
-      checkedAt: _snapshot?.checkedAt ?? _now(),
-      probes: _snapshot?.probes ?? const <HostProbeRecord>[],
-      sessionPinnedHost: _sessionPinnedHost,
-    );
+  Future<void> _persistCurrentState({required String siteKey}) async {
+    final String targetSiteKey = _normalizeKnownSiteKey(siteKey);
+    final HostProbeSnapshot? snapshot = _snapshotForSite(targetSiteKey);
+    _snapshotsBySite = Map<String, HostProbeSnapshot>.from(_snapshotsBySite)
+      ..[targetSiteKey] = HostProbeSnapshot(
+        selectedHost: _currentHostForSite(targetSiteKey),
+        checkedAt: snapshot?.checkedAt ?? _now(),
+        probes: snapshot?.probes ?? const <HostProbeRecord>[],
+        sessionPinnedHost: _sessionPinnedHostForSite(targetSiteKey),
+      );
     await _saveSnapshot();
   }
 
@@ -860,15 +1194,119 @@ class HostManager {
       final File file = await _snapshotFile();
       await file.parent.create(recursive: true);
       await file.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(_snapshot?.toJson() ?? {}),
+        const JsonEncoder.withIndent('  ').convert(<String, Object?>{
+          'currentSiteKey': _currentSiteKey,
+          'sites': <String, Object?>{
+            for (final MapEntry<String, HostProbeSnapshot> entry
+                in _snapshotsBySite.entries)
+              entry.key: entry.value.toJson(),
+          },
+        }),
       );
     } catch (_) {
       // 持久化失败不影响当前域名选择。
     }
   }
 
+  String _normalizeKnownSiteKey(String? siteKey) {
+    return _normalizeSiteKey(siteKey, knownSiteKeys: _defaultHostsBySite.keys);
+  }
+
+  String _effectiveSiteKey(String? siteKey) {
+    final String requested = (siteKey ?? '').trim();
+    return requested.isEmpty
+        ? _normalizeKnownSiteKey(_currentSiteKey)
+        : _normalizeKnownSiteKey(requested);
+  }
+
+  String _currentHostForSite(String siteKey) {
+    final String targetSiteKey = _normalizeKnownSiteKey(siteKey);
+    final String currentHost = _normalizeHost(
+      _currentHostBySite[targetSiteKey] ?? '',
+    );
+    if (currentHost.isNotEmpty) {
+      return currentHost;
+    }
+    final String fallbackHost = _firstHost(_seedHostsForSite(targetSiteKey));
+    if (fallbackHost.isNotEmpty) {
+      _currentHostBySite[targetSiteKey] = fallbackHost;
+    }
+    return fallbackHost;
+  }
+
+  List<String> _defaultHostsForSite(String siteKey) {
+    return _defaultHostsBySite[_normalizeKnownSiteKey(siteKey)] ??
+        const <String>[];
+  }
+
+  List<String> _seedHostsForSite(String siteKey) {
+    return _seedHostsBySite[_normalizeKnownSiteKey(siteKey)] ??
+        const <String>[];
+  }
+
+  String? _sessionPinnedHostForSite(String siteKey) {
+    return _sessionPinnedHostBySite[_normalizeKnownSiteKey(siteKey)];
+  }
+
+  HostProbeSnapshot? _snapshotForSite(String siteKey) {
+    return _snapshotsBySite[_normalizeKnownSiteKey(siteKey)];
+  }
+
+  static String siteLabel(String siteKey) {
+    return switch (_normalizeSiteKey(siteKey)) {
+      hotSiteKey => '热辣',
+      _ => '拷贝',
+    };
+  }
+
+  static Map<String, List<String>> _copyStringListMapWith(
+    Map<String, List<String>> source,
+    String siteKey,
+    List<String> hosts,
+  ) {
+    return <String, List<String>>{
+      ...source,
+      siteKey: List<String>.unmodifiable(hosts),
+    };
+  }
+
+  static Map<String, Map<String, List<String>>> _copyAliasMapWith(
+    Map<String, Map<String, List<String>>> source,
+    String siteKey,
+    Map<String, List<String>> aliases,
+  ) {
+    return <String, Map<String, List<String>>>{
+      ...source,
+      siteKey: Map<String, List<String>>.unmodifiable(
+        aliases.map(
+          (String host, List<String> values) =>
+              MapEntry(host, List<String>.unmodifiable(values)),
+        ),
+      ),
+    };
+  }
+
   static String _normalizeHost(String host) {
     return host.trim().toLowerCase();
+  }
+
+  static String _normalizeSiteKey(
+    String? siteKey, {
+    Iterable<String>? knownSiteKeys,
+  }) {
+    final String normalized = (siteKey ?? '').trim().toLowerCase();
+    final String resolved = normalized.isEmpty ? copySiteKey : normalized;
+    if (knownSiteKeys == null) {
+      return resolved;
+    }
+    final Set<String> known = knownSiteKeys
+        .map((String value) => value.trim().toLowerCase())
+        .where((String value) => value.isNotEmpty)
+        .toSet();
+    if (known.isEmpty || known.contains(resolved)) {
+      return resolved;
+    }
+    return known.contains(copySiteKey) ? copySiteKey : known.first;
   }
 
   static String _normalizeCustomHostInput(String value) {
@@ -915,8 +1353,57 @@ class HostManager {
     final List<String> labels = normalizedHost.split('.');
     return labels.every(
       (String label) =>
-          label.isNotEmpty && label.length <= 63 && labelPattern.hasMatch(label),
+          label.isNotEmpty &&
+          label.length <= 63 &&
+          labelPattern.hasMatch(label),
     );
+  }
+
+  static Map<String, List<String>> _buildInitialCandidateHostsBySite({
+    List<String>? candidateHosts,
+    Map<String, List<String>>? candidateHostsBySite,
+  }) {
+    final Map<String, List<String>> hostsBySite = <String, List<String>>{};
+    if (candidateHostsBySite != null) {
+      for (final MapEntry<String, List<String>> entry
+          in candidateHostsBySite.entries) {
+        hostsBySite[_normalizeSiteKey(entry.key)] = entry.value;
+      }
+    }
+    hostsBySite.putIfAbsent(
+      copySiteKey,
+      () => candidateHosts ?? _buildDefaultCandidateHosts(),
+    );
+    hostsBySite.putIfAbsent(hotSiteKey, _buildDefaultHotCandidateHosts);
+    return _normalizeHostsBySite(hostsBySite);
+  }
+
+  static Map<String, List<String>> _normalizeHostsBySite(
+    Map<String, List<String>> hostsBySite,
+  ) {
+    final Map<String, List<String>> normalized = <String, List<String>>{};
+    for (final String siteKey in const <String>[copySiteKey, hotSiteKey]) {
+      final List<String> hosts = _normalizeHosts(
+        hostsBySite[siteKey] ?? const <String>[],
+      );
+      if (hosts.isNotEmpty) {
+        normalized[siteKey] = hosts;
+      }
+    }
+    for (final MapEntry<String, List<String>> entry in hostsBySite.entries) {
+      final String siteKey = _normalizeSiteKey(entry.key);
+      normalized.putIfAbsent(siteKey, () => _normalizeHosts(entry.value));
+    }
+    return normalized;
+  }
+
+  static Map<String, String> _firstHostsBySite(
+    Map<String, List<String>> hostsBySite,
+  ) {
+    return <String, String>{
+      for (final MapEntry<String, List<String>> entry in hostsBySite.entries)
+        entry.key: _firstHost(entry.value),
+    };
   }
 
   static List<String> _buildDefaultCandidateHosts() {
@@ -942,6 +1429,10 @@ class HostManager {
       'www.copymanga.tv',
       'copymanga.tv',
     ]);
+  }
+
+  static List<String> _buildDefaultHotCandidateHosts() {
+    return _normalizeHosts(<String>['manga2026.com', 'www.manga2026.xyz']);
   }
 
   Future<List<String>> _lookupHostAddresses(String host) async {
@@ -1037,4 +1528,14 @@ class HostManager {
         normalized.contains('swiperlist') &&
         normalized.contains('comicrank');
   }
+}
+
+class _LoadedHostSnapshots {
+  const _LoadedHostSnapshots({
+    this.currentSiteKey = '',
+    this.snapshots = const <String, HostProbeSnapshot>{},
+  });
+
+  final String currentSiteKey;
+  final Map<String, HostProbeSnapshot> snapshots;
 }

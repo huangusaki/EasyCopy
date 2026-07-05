@@ -37,6 +37,7 @@ import 'package:reader/services/download_queue_manager.dart';
 import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
 import 'package:reader/services/frame_jank_logger.dart';
+import 'package:reader/services/host_manager.dart';
 import 'package:reader/services/local_library_store.dart';
 import 'package:reader/services/navigation_request_guard.dart';
 import 'package:reader/services/network_diagnostics.dart';

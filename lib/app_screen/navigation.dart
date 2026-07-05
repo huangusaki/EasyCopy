@@ -16,10 +16,13 @@ extension _AppScreenNavigation on _AppScreenState {
   String? get _errorMessage => _currentEntry.errorMessage;
 
   String _authScopeForUri(Uri uri) {
-    if (isProfileUri(uri) || _routes.isUserScopedDetailUri(uri)) {
+    final String path = uri.path.toLowerCase();
+    if (isProfileUri(uri) ||
+        path.contains('/chapter/') ||
+        _routes.isUserScopedDetailUri(uri)) {
       return _services.session.authScope;
     }
-    return 'guest';
+    return _services.session.guestAuthScope;
   }
 
   PageQueryKey _pageQueryKeyForUri(Uri uri, {String? authScope}) {

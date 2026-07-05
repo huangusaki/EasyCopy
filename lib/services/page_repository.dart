@@ -201,7 +201,7 @@ class PageRepository {
 
   Future<void> removeAuthenticatedEntries() async {
     _memoryCache.removeWhere(
-      (PageQueryKey key, CachedPageHit _) => key.authScope != 'guest',
+      (PageQueryKey key, CachedPageHit _) => !_isGuestAuthScope(key.authScope),
     );
     await _cacheStore.removeAuthenticatedEntries();
   }
@@ -428,9 +428,26 @@ class PageRepository {
 
   String _authScopeForPage(SitePage page, String requestedAuthScope) {
     if (page is ProfilePageData && !page.isLoggedIn) {
-      return 'guest';
+      return _guestAuthScopeFor(requestedAuthScope);
     }
     return requestedAuthScope;
+  }
+
+  bool _isGuestAuthScope(String authScope) {
+    final String normalized = authScope.trim().toLowerCase();
+    return normalized == 'guest' || normalized.endsWith(':guest');
+  }
+
+  String _guestAuthScopeFor(String authScope) {
+    final String normalized = authScope.trim().toLowerCase();
+    if (normalized.isEmpty || normalized == 'guest') {
+      return 'guest';
+    }
+    final int separatorIndex = normalized.indexOf(':');
+    if (separatorIndex <= 0) {
+      return 'guest';
+    }
+    return '${normalized.substring(0, separatorIndex)}:guest';
   }
 
   String _fingerprintForPage(SitePage page) {

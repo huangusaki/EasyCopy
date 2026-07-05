@@ -302,6 +302,7 @@ extension _AppScreenTabNavigation on _AppScreenState {
         builder: (BuildContext context) {
           return NativeLoginScreen(
             loginUri: AppConfig.resolvePath('/web/login/?url=person/home'),
+            siteKey: _services.hostManager.currentSiteKey,
             userAgent: AppConfig.desktopUserAgent,
           );
         },
@@ -314,6 +315,7 @@ extension _AppScreenTabNavigation on _AppScreenState {
     if ((token ?? '').isEmpty) {
       return;
     }
+    await _services.session.switchSite(_services.hostManager.currentSiteKey);
     await _services.session.updateFromCookieHeader(result.cookieHeader);
     await _services.session.saveToken(token!, cookies: result.cookies);
     try {
@@ -366,10 +368,10 @@ extension _AppScreenTabNavigation on _AppScreenState {
   }
 
   Uri _targetUriForPrimaryTab(int index, {bool resetToRoot = false}) {
-    if (resetToRoot) {
-      return appDestinations[index].uri;
-    }
-    return _tabSessionStore.currentEntry(index).uri;
+    final Uri targetUri = resetToRoot
+        ? appDestinations[index].uri
+        : _tabSessionStore.currentEntry(index).uri;
+    return AppConfig.rewriteInternalUriToCurrentHost(targetUri);
   }
 
   bool _activateRestoredPrimaryTab(int index) {

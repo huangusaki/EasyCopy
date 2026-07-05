@@ -302,6 +302,13 @@ extension _AppScreenPageLoadActions on _AppScreenState {
   }
 
   Future<SitePage> _loadHtmlPageFresh(Uri uri, {required String authScope}) {
+    final String path = AppConfig.rewriteToCurrentHost(uri).path.toLowerCase();
+    final bool needsEncryptedHtmlParser =
+        path.contains('/chapter/') ||
+        (path.startsWith('/comic/') && !path.contains('/chapter/'));
+    if (needsEncryptedHtmlParser) {
+      return SiteHtmlPageLoader.instance.loadPage(uri, authScope: authScope);
+    }
     if (PlatformCapabilities.supportsDesktopWebView) {
       return DesktopPageExtractor.instance.loadPage(
         AppConfig.rewriteToCurrentHost(uri),

@@ -452,6 +452,7 @@ class ReaderPageData extends SitePage {
     required this.nextHref,
     required this.catalogHref,
     this.contentKey = '',
+    this.noticeMessage = '',
   }) : super(type: SitePageType.reader);
 
   factory ReaderPageData.fromJson(Map<String, Object?> json) {
@@ -469,6 +470,7 @@ class ReaderPageData extends SitePage {
       nextHref: _stringValue(json['nextHref']),
       catalogHref: _stringValue(json['catalogHref']),
       contentKey: _stringValue(json['contentKey']),
+      noticeMessage: _stringValue(json['noticeMessage']),
     );
   }
 
@@ -480,6 +482,7 @@ class ReaderPageData extends SitePage {
   final String nextHref;
   final String catalogHref;
   final String contentKey;
+  final String noticeMessage;
 
   bool get hasMissingChapterNavigation =>
       prevHref.trim().isEmpty || nextHref.trim().isEmpty;
@@ -495,6 +498,7 @@ class ReaderPageData extends SitePage {
     String? nextHref,
     String? catalogHref,
     String? contentKey,
+    String? noticeMessage,
   }) {
     return ReaderPageData(
       title: title ?? this.title,
@@ -507,6 +511,7 @@ class ReaderPageData extends SitePage {
       nextHref: nextHref ?? this.nextHref,
       catalogHref: catalogHref ?? this.catalogHref,
       contentKey: contentKey ?? this.contentKey,
+      noticeMessage: noticeMessage ?? this.noticeMessage,
     );
   }
 
@@ -538,6 +543,7 @@ class ReaderPageData extends SitePage {
       'nextHref': nextHref,
       'catalogHref': catalogHref,
       'contentKey': contentKey,
+      'noticeMessage': noticeMessage,
     };
   }
 }

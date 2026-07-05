@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:reader/services/host_manager.dart';
 import 'package:reader/services/key_value_store.dart';
 
 typedef SessionNowProvider = DateTime Function();
@@ -58,21 +59,30 @@ class SiteSession {
   final SessionNowProvider _now;
 
   Future<void>? _initialization;
-  String? _token;
-  String? _userId;
-  Map<String, String> _cookies = <String, String>{};
+  String _activeSiteKey = HostManager.copySiteKey;
+  final Map<String, SiteSessionSnapshot> _sessions =
+      <String, SiteSessionSnapshot>{};
 
   Future<void> ensureInitialized() {
     return _initialization ??= _initialize();
   }
 
-  String? get token => _token;
+  String get activeSiteKey => _activeSiteKey;
 
-  String? get userId => _userId;
+  String? get token {
+    final String token = _activeSnapshot.token.trim();
+    return token.isEmpty ? null : token;
+  }
 
-  bool get isAuthenticated => (_token ?? '').isNotEmpty;
+  String? get userId {
+    final String? userId = _activeSnapshot.userId?.trim();
+    return (userId ?? '').isEmpty ? null : userId;
+  }
 
-  Map<String, String> get cookies => Map<String, String>.unmodifiable(_cookies);
+  bool get isAuthenticated => (token ?? '').isNotEmpty;
+
+  Map<String, String> get cookies =>
+      Map<String, String>.unmodifiable(_activeSnapshot.cookies);
 
   String get cookieHeader => _cookies.entries
       .where((MapEntry<String, String> entry) => entry.value.trim().isNotEmpty)
@@ -80,30 +90,43 @@ class SiteSession {
       .join('; ');
 
   String get authScope {
-    if (!isAuthenticated) {
-      return 'guest';
+    return _authScopeForSnapshot(_activeSiteKey, _activeSnapshot);
+  }
+
+  String get guestAuthScope => '$_activeSiteKey:guest';
+
+  Future<void> switchSite(String siteKey) async {
+    await ensureInitialized();
+    final String normalizedSiteKey = _normalizeSiteKey(siteKey);
+    if (_activeSiteKey == normalizedSiteKey) {
+      return;
     }
-    if ((_userId ?? '').isNotEmpty) {
-      return 'user:${_userId!}';
-    }
-    return 'token:${sha1.convert(utf8.encode(_token!)).toString()}';
+    _activeSiteKey = normalizedSiteKey;
+    await _persist();
   }
 
   Future<void> saveToken(String token, {Map<String, String>? cookies}) async {
     await ensureInitialized();
-    _userId = null;
-    _cookies = <String, String>{};
-    _token = token;
-    _cookies = <String, String>{
-      if (cookies != null) ...cookies,
-      'token': token,
-    };
+    _sessions[_activeSiteKey] = SiteSessionSnapshot(
+      token: token,
+      cookies: <String, String>{
+        if (cookies != null) ...cookies,
+        'token': token,
+      },
+      updatedAt: _now(),
+    );
     await _persist();
   }
 
   Future<void> bindUserId(String? userId) async {
     await ensureInitialized();
-    _userId = (userId ?? '').trim().isEmpty ? null : userId?.trim();
+    final SiteSessionSnapshot current = _activeSnapshot;
+    _sessions[_activeSiteKey] = SiteSessionSnapshot(
+      token: current.token,
+      cookies: current.cookies,
+      updatedAt: _now(),
+      userId: (userId ?? '').trim().isEmpty ? null : userId?.trim(),
+    );
     await _persist();
   }
 
@@ -113,19 +136,25 @@ class SiteSession {
     if (parsedCookies.isEmpty) {
       return;
     }
-    _cookies = <String, String>{..._cookies, ...parsedCookies};
+    final SiteSessionSnapshot current = _activeSnapshot;
+    final Map<String, String> nextCookies = <String, String>{
+      ...current.cookies,
+      ...parsedCookies,
+    };
     final String? nextToken = parsedCookies['token'];
-    if ((nextToken ?? '').isNotEmpty) {
-      _token = nextToken;
-    }
+    _sessions[_activeSiteKey] = SiteSessionSnapshot(
+      token: (nextToken ?? '').isNotEmpty ? nextToken! : current.token,
+      cookies: nextCookies,
+      updatedAt: _now(),
+      userId: current.userId,
+    );
     await _persist();
   }
 
   Future<void> clear() async {
-    _token = null;
-    _userId = null;
-    _cookies = <String, String>{};
-    await _store.delete(_sessionKey);
+    await ensureInitialized();
+    _sessions.remove(_activeSiteKey);
+    await _persist();
   }
 
   Future<void> _initialize() async {
@@ -138,27 +167,172 @@ class SiteSession {
       if (decoded is! Map) {
         return;
       }
-      final SiteSessionSnapshot snapshot = SiteSessionSnapshot.fromJson(
-        decoded.map(
-          (Object? key, Object? value) => MapEntry(key.toString(), value),
-        ),
+      final Map<String, Object?> root = decoded.map(
+        (Object? key, Object? value) => MapEntry(key.toString(), value),
       );
-      _token = snapshot.token.isEmpty ? null : snapshot.token;
-      _cookies = snapshot.cookies;
-      _userId = snapshot.userId;
+      final Map<String, Object?> sessions = _mapValue(root['sessions']);
+      if (sessions.isNotEmpty) {
+        _activeSiteKey = _normalizeSiteKey(root['activeSiteKey'] as String?);
+        for (final MapEntry<String, Object?> entry in sessions.entries) {
+          final Map<String, Object?> snapshotJson = _mapValue(entry.value);
+          if (snapshotJson.isEmpty) {
+            continue;
+          }
+          final SiteSessionSnapshot snapshot = SiteSessionSnapshot.fromJson(
+            snapshotJson,
+          );
+          if (snapshot.token.isEmpty && snapshot.cookies.isEmpty) {
+            continue;
+          }
+          _sessions[_normalizeSiteKey(entry.key)] = snapshot;
+        }
+        return;
+      }
+
+      final SiteSessionSnapshot legacySnapshot = SiteSessionSnapshot.fromJson(
+        root,
+      );
+      if (legacySnapshot.token.isNotEmpty ||
+          legacySnapshot.cookies.isNotEmpty) {
+        _sessions[HostManager.copySiteKey] = legacySnapshot;
+      }
     } catch (_) {
       // Ignore corrupted session storage.
     }
   }
 
   Future<void> _persist() async {
-    final SiteSessionSnapshot snapshot = SiteSessionSnapshot(
-      token: _token ?? '',
-      cookies: _cookies,
-      updatedAt: _now(),
-      userId: _userId,
+    final Map<String, Object?> payload = <String, Object?>{
+      'activeSiteKey': _activeSiteKey,
+      'sessions': _sessions.map((String siteKey, SiteSessionSnapshot snapshot) {
+        return MapEntry(siteKey, snapshot.toJson());
+      }),
+    };
+    await _store.write(_sessionKey, jsonEncode(payload));
+  }
+
+  SiteSessionSnapshot get _activeSnapshot {
+    return _sessions[_activeSiteKey] ??
+        SiteSessionSnapshot(
+          token: '',
+          cookies: const <String, String>{},
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
+        );
+  }
+
+  Map<String, String> get _cookies => _activeSnapshot.cookies;
+
+  static String _normalizeSiteKey(String? siteKey) {
+    final String normalized = (siteKey ?? '').trim().toLowerCase();
+    return normalized == HostManager.hotSiteKey
+        ? HostManager.hotSiteKey
+        : HostManager.copySiteKey;
+  }
+
+  static Map<String, Object?> _mapValue(Object? value) {
+    if (value is Map<String, Object?>) {
+      return value;
+    }
+    if (value is Map) {
+      return value.map(
+        (Object? key, Object? value) => MapEntry(key.toString(), value),
+      );
+    }
+    return const <String, Object?>{};
+  }
+
+  static String _authScopeForSnapshot(
+    String siteKey,
+    SiteSessionSnapshot snapshot,
+  ) {
+    final String prefix = _normalizeSiteKey(siteKey);
+    final String token = snapshot.token.trim();
+    if (token.isEmpty) {
+      return '$prefix:guest';
+    }
+    final String? userId = snapshot.userId?.trim();
+    if ((userId ?? '').isNotEmpty) {
+      return '$prefix:user:$userId';
+    }
+    return '$prefix:token:${sha1.convert(utf8.encode(token)).toString()}';
+  }
+
+  Future<void> clearAll() async {
+    await ensureInitialized();
+    _sessions.clear();
+    await _store.delete(_sessionKey);
+  }
+
+  Future<void> clearSite(String siteKey) async {
+    await ensureInitialized();
+    _sessions.remove(_normalizeSiteKey(siteKey));
+    await _persist();
+  }
+
+  Future<void> saveTokenForSite(
+    String siteKey,
+    String token, {
+    Map<String, String>? cookies,
+  }) async {
+    await switchSite(siteKey);
+    await saveToken(token, cookies: cookies);
+  }
+
+  Future<void> updateFromCookieHeaderForSite(
+    String siteKey,
+    String cookieHeader,
+  ) async {
+    await switchSite(siteKey);
+    await updateFromCookieHeader(cookieHeader);
+  }
+
+  Future<void> bindUserIdForSite(String siteKey, String? userId) async {
+    await switchSite(siteKey);
+    await bindUserId(userId);
+  }
+
+  SiteSessionSnapshot snapshotForSite(String siteKey) {
+    return _sessions[_normalizeSiteKey(siteKey)] ??
+        SiteSessionSnapshot(
+          token: '',
+          cookies: const <String, String>{},
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
+        );
+  }
+
+  String authScopeForSite(String siteKey) {
+    final String normalizedSiteKey = _normalizeSiteKey(siteKey);
+    return _authScopeForSnapshot(
+      normalizedSiteKey,
+      snapshotForSite(normalizedSiteKey),
     );
-    await _store.write(_sessionKey, jsonEncode(snapshot.toJson()));
+  }
+
+  String guestAuthScopeForSite(String siteKey) {
+    return '${_normalizeSiteKey(siteKey)}:guest';
+  }
+
+  bool isAuthenticatedForSite(String siteKey) {
+    return snapshotForSite(siteKey).token.trim().isNotEmpty;
+  }
+
+  String cookieHeaderForSite(String siteKey) {
+    final Map<String, String> targetCookies = snapshotForSite(siteKey).cookies;
+    return targetCookies.entries
+        .where(
+          (MapEntry<String, String> entry) => entry.value.trim().isNotEmpty,
+        )
+        .map((MapEntry<String, String> entry) => '${entry.key}=${entry.value}')
+        .join('; ');
+  }
+
+  String? tokenForSite(String siteKey) {
+    final String token = snapshotForSite(siteKey).token.trim();
+    return token.isEmpty ? null : token;
+  }
+
+  Map<String, String> cookiesForSite(String siteKey) {
+    return Map<String, String>.unmodifiable(snapshotForSite(siteKey).cookies);
   }
 
   static Map<String, String> parseCookieHeader(String cookieHeader) {

@@ -29,6 +29,8 @@ extension _AppScreenProfileSections on _AppScreenState {
               AppConfig.profileSubviewForUri(_currentUri) ==
                   ProfileSubview.collections,
           currentHost: _services.hostManager.currentHost,
+          currentSiteKey: _services.hostManager.currentSiteKey,
+          hostSites: _services.hostManager.siteStates,
           knownHosts: _services.hostManager.knownHosts,
           candidateHosts: _services.hostManager.candidateHosts,
           candidateHostAliases: _services.hostManager.candidateHostAliases,
@@ -39,6 +41,12 @@ extension _AppScreenProfileSections on _AppScreenState {
           onSelectHost: _selectHost,
           onAddHost: _addHost,
           onDeleteHost: _deleteHost,
+          onSwitchHostSite: _switchHostSite,
+          onRefreshHostsForSite: _refreshHostSettingsForSite,
+          onUseAutomaticHostSelectionForSite: _useAutomaticHostSelectionForSite,
+          onSelectHostForSite: _selectHostForSite,
+          onAddHostForSite: _addHostForSite,
+          onDeleteHostForSite: _deleteHostForSite,
           themePreference: _preferencesController.themePreference,
           onThemePreferenceChanged: (AppThemePreference preference) {
             unawaited(_preferencesController.setThemePreference(preference));

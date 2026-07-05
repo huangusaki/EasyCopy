@@ -39,6 +39,7 @@ extension _AppScreenBootstrapActions on _AppScreenState {
       _services.searchHistoryStore.ensureInitialized(),
       PageCacheStore.instance.ensureInitialized(),
     ]);
+    await _services.session.switchSite(_services.hostManager.currentSiteKey);
     _searchActions.replaceHistory(_services.searchHistoryStore.items);
     DebugTrace.log('bootstrap.initialized', <String, Object?>{
       'bootId': _shell.bootId,

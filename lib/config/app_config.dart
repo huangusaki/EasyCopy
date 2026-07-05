@@ -44,6 +44,9 @@ class AppConfig {
     return hostManager.resolveNavigationUri(href, currentUri: currentUri);
   }
 
+  static Uri rewriteInternalUriToCurrentHost(Uri uri) =>
+      hostManager.rewriteInternalUriToCurrentHost(uri);
+
   static Uri rewriteToCurrentHost(Uri uri) =>
       hostManager.rewriteToCurrentHost(uri);
 

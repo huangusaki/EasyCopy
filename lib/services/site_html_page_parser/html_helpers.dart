@@ -1,6 +1,89 @@
 part of '../site_html_page_parser.dart';
 
 extension _SiteHtmlHelpers on SiteHtmlPageParser {
+  bool _isHotSiteUri(Uri uri) {
+    return uri.host.trim().toLowerCase().contains('manga2026');
+  }
+
+  bool _isHotPaidHomeSection(
+    Uri uri, {
+    required String title,
+    required String href,
+  }) {
+    if (!_isHotSiteUri(uri)) {
+      return false;
+    }
+    final String normalizedTitle = title.replaceAll(RegExp(r'\s+'), '');
+    if (!normalizedTitle.contains('付費漫畫') &&
+        !normalizedTitle.contains('付费漫画')) {
+      return false;
+    }
+    final Uri? hrefUri = Uri.tryParse(href.trim());
+    final String path = (hrefUri?.path ?? href).trim().toLowerCase();
+    return path == '/comics' &&
+        (hrefUri?.queryParameters['type'] == '2' ||
+            href.toLowerCase().contains('type=2'));
+  }
+
+  dom.Element? _homeSectionItemsRoot(dom.Element header) {
+    final dom.Element? container = _parentElement(header);
+    if (container == null) {
+      return null;
+    }
+    final int headerIndex = container.children.indexOf(header);
+    if (headerIndex < 0) {
+      return null;
+    }
+
+    for (final dom.Element sibling in container.children.skip(
+      headerIndex + 1,
+    )) {
+      if (sibling.classes.contains('row')) {
+        return sibling;
+      }
+      final dom.Element? nestedRow = _querySelector(sibling, '.row');
+      if (nestedRow != null) {
+        return nestedRow;
+      }
+    }
+    return null;
+  }
+
+  List<Object> _rankEntryScopes(Uri uri, dom.Document document) {
+    if (!_isHotSiteUri(uri)) {
+      return <Object>[document];
+    }
+    final List<dom.Element> comicBlocks = _querySelectorAll(
+      document,
+      '.ranking-item',
+    ).where(_isHotComicRankBlock).toList(growable: false);
+    return comicBlocks.isEmpty ? <Object>[document] : comicBlocks;
+  }
+
+  bool _isHotComicRankBlock(dom.Element block) {
+    final String normalizedTitle = _queryText(
+      block,
+      '.theBoxModel',
+    ).replaceAll(RegExp(r'\s+'), '');
+    if (normalizedTitle.contains('動畫') ||
+        normalizedTitle.contains('动画') ||
+        block.classes.contains('cartoon')) {
+      return false;
+    }
+    if (normalizedTitle.contains('漫畫榜') ||
+        normalizedTitle.contains('漫画榜') ||
+        normalizedTitle.contains('免費漫畫') ||
+        normalizedTitle.contains('免费漫画') ||
+        normalizedTitle.contains('付費漫畫') ||
+        normalizedTitle.contains('付费漫画') ||
+        block.classes.contains('free') ||
+        block.classes.contains('pay')) {
+      return true;
+    }
+    return _querySelector(block, 'a[href*="/comic/"]') != null &&
+        _querySelector(block, 'a[href*="/cartoon/"]') == null;
+  }
+
   List<FilterGroupData> _collectFilterGroups(dom.Document document, Uri uri) {
     return _querySelectorAll(document, '.classify-txt-all')
         .map((dom.Element group) {
@@ -33,6 +116,128 @@ extension _SiteHtmlHelpers on SiteHtmlPageParser {
         })
         .whereType<FilterGroupData>()
         .toList(growable: false);
+  }
+
+  List<FilterGroupData> _withHotComicTypeFilter(
+    Uri uri,
+    List<FilterGroupData> groups,
+  ) {
+    if (!_isHotComicsUri(uri)) {
+      return groups;
+    }
+    final List<FilterGroupData> normalizedGroups = groups
+        .where((FilterGroupData group) => group.label.trim() != '类型')
+        .toList(growable: false);
+    return <FilterGroupData>[
+      FilterGroupData(
+        label: '类型',
+        options: <LinkAction>[
+          LinkAction(
+            label: '免费漫画',
+            href: _hotComicTypeHref(uri, normalizedGroups, '1'),
+            active: uri.queryParameters['type'] != '2',
+          ),
+          LinkAction(
+            label: '付费漫画',
+            href: _hotComicTypeHref(uri, normalizedGroups, '2'),
+            active: uri.queryParameters['type'] == '2',
+          ),
+        ],
+      ),
+      ..._ensureHotSortFilter(uri, normalizedGroups),
+    ];
+  }
+
+  bool _isHotComicsUri(Uri uri) {
+    final String host = uri.host.trim().toLowerCase();
+    final String path = uri.path.trim().toLowerCase();
+    return path.startsWith('/comics') && host.contains('manga2026');
+  }
+
+  String _hotComicTypeHref(Uri uri, List<FilterGroupData> groups, String type) {
+    final Map<String, String> query = _hotComicBaseQuery(uri, groups);
+    query['type'] = type;
+    return _replaceSortedQuery(uri, query).toString();
+  }
+
+  Map<String, String> _hotComicBaseQuery(
+    Uri uri,
+    List<FilterGroupData> groups,
+  ) {
+    final Map<String, String> query = Map<String, String>.from(
+      uri.queryParameters,
+    );
+    for (final FilterGroupData group in groups) {
+      for (final LinkAction option in group.options) {
+        if (!option.active || option.href.trim().isEmpty) {
+          continue;
+        }
+        final Uri? optionUri = Uri.tryParse(option.href);
+        if (optionUri == null ||
+            !optionUri.path.toLowerCase().startsWith('/comics')) {
+          continue;
+        }
+        query.addAll(optionUri.queryParameters);
+      }
+    }
+    query.remove('offset');
+    query.remove('page');
+    query.remove('limit');
+    query.putIfAbsent('ordering', () => '-datetime_updated');
+    return query;
+  }
+
+  List<FilterGroupData> _ensureHotSortFilter(
+    Uri uri,
+    List<FilterGroupData> groups,
+  ) {
+    final bool hasSortGroup = groups.any(
+      (FilterGroupData group) => group.label.trim() == '排序',
+    );
+    if (hasSortGroup) {
+      return groups;
+    }
+    final Map<String, String> baseQuery = _hotComicBaseQuery(uri, groups);
+    final String activeOrdering = baseQuery['ordering'] ?? '-datetime_updated';
+    LinkAction buildOption(String label, String ordering) {
+      final Map<String, String> query = <String, String>{
+        ...baseQuery,
+        'ordering': ordering,
+      };
+      return LinkAction(
+        label: label,
+        href: _replaceSortedQuery(uri, query).toString(),
+        active: activeOrdering == ordering,
+      );
+    }
+
+    return <FilterGroupData>[
+      ...groups,
+      FilterGroupData(
+        label: '排序',
+        options: <LinkAction>[
+          buildOption('最新更新', '-datetime_updated'),
+          buildOption('最新上架', '-datetime_created'),
+          buildOption('人气最高', '-popular'),
+        ],
+      ),
+    ];
+  }
+
+  Uri _replaceSortedQuery(Uri uri, Map<String, String> queryParameters) {
+    final List<MapEntry<String, String>> sortedQuery =
+        queryParameters.entries.toList(growable: false)..sort((
+          MapEntry<String, String> left,
+          MapEntry<String, String> right,
+        ) {
+          return left.key.compareTo(right.key);
+        });
+    return uri.replace(
+      path: '/comics',
+      queryParameters: sortedQuery.isEmpty
+          ? null
+          : Map<String, String>.fromEntries(sortedQuery),
+    );
   }
 
   List<ChapterData> _collectChapterLinks(Object root, Uri uri) {
@@ -187,7 +392,7 @@ extension _SiteHtmlHelpers on SiteHtmlPageParser {
     if (title.isEmpty) {
       return 'EasyCopy';
     }
-    return title.replaceFirst(RegExp(r'\s*-\s*拷[^-]+$'), '');
+    return title.replaceFirst(RegExp(r'\s*-\s*(拷|熱辣|热辣)[^-]+$'), '');
   }
 
   String _attr(dom.Element? node, String name) {

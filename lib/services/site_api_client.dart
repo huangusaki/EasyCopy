@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/chapter_comment.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/host_manager.dart';
 import 'package:reader/services/network_client.dart';
 import 'package:reader/services/quic_http_client.dart';
 import 'package:reader/services/site_json_utils.dart';
@@ -46,24 +47,59 @@ class _PagedProfileSection {
 }
 
 class SiteApiClient {
-  SiteApiClient({http.Client? client, SiteSession? session})
-    : _client = client ?? AppHttpClientFactory.create(),
-      _session = session ?? SiteSession.instance;
+  SiteApiClient({
+    http.Client? client,
+    SiteSession? session,
+    HostManager? hostManager,
+  }) : _client = client ?? AppHttpClientFactory.create(),
+       _session = session ?? SiteSession.instance,
+       _hostManager = hostManager ?? AppConfig.hostManager;
 
   static final SiteApiClient instance = SiteApiClient();
   static const String _chapterCommentApiHost = 'api.mangacopy.com';
 
   final http.Client _client;
   final SiteSession _session;
+  final HostManager _hostManager;
   static const int _searchPageSize = 12;
   static const int _profilePageSize = 20;
 
   int get profilePageSize => _profilePageSize;
 
+  Uri _resolvePath(String path) => _hostManager.resolvePath(path);
+
+  Uri _resolveNavigationUri(String href, {Uri? currentUri}) {
+    return _hostManager.resolveNavigationUri(href, currentUri: currentUri);
+  }
+
+  Uri _buildSearchUri(String query, {int page = 1, String qType = ''}) {
+    final String normalizedQuery = query.trim();
+    final int normalizedPage = page < 1 ? 1 : page;
+    final String normalizedQueryType = qType.trim();
+    if (normalizedQuery.isEmpty) {
+      return _resolvePath('/search');
+    }
+    return _resolvePath('/search').replace(
+      queryParameters: <String, String>{
+        'q': normalizedQuery,
+        if (normalizedPage > 1) 'page': '$normalizedPage',
+        if (normalizedQueryType.isNotEmpty) 'q_type': normalizedQueryType,
+      },
+    );
+  }
+
+  bool get _isHotSite => _hostManager.currentSiteKey == HostManager.hotSiteKey;
+
+  Future<void> _ensureSessionForCurrentSite() async {
+    await _hostManager.ensureInitialized();
+    await _session.switchSite(_hostManager.currentSiteKey);
+  }
+
   Future<SiteLoginResult> login({
     required String username,
     required String password,
   }) async {
+    await _ensureSessionForCurrentSite();
     final String normalizedUsername = username.trim();
     final String normalizedPassword = password.trim();
     if (normalizedUsername.isEmpty || normalizedPassword.isEmpty) {
@@ -71,16 +107,19 @@ class SiteApiClient {
     }
 
     Object? lastError;
-    for (final String path in const <String>[
-      '/api/kb/web/login',
-      '/api/v1/login',
-    ]) {
+    final List<String> loginPaths = _isHotSite
+        ? const <String>['/api/v1/login']
+        : const <String>['/api/kb/web/login', '/api/v1/login'];
+    for (final String path in loginPaths) {
       try {
-        return await _loginWithPath(
+        final SiteLoginResult result = await _loginWithPath(
           path,
           username: normalizedUsername,
           password: normalizedPassword,
+          source: _isHotSite ? '' : 'freeSite',
         );
+        await _session.saveToken(result.token, cookies: result.cookies);
+        return result;
       } catch (error) {
         lastError = error;
       }
@@ -93,9 +132,9 @@ class SiteApiClient {
   }
 
   Future<ProfilePageData> loadProfile({Uri? uri}) async {
-    await _session.ensureInitialized();
-    final Uri targetUri = AppConfig.rewriteToCurrentHost(
-      uri ?? AppConfig.profileUri,
+    await _ensureSessionForCurrentSite();
+    final Uri targetUri = _hostManager.rewriteToCurrentHost(
+      uri ?? _resolvePath(AppConfig.profilePath),
     );
     final ProfileSubview activeSubview = AppConfig.profileSubviewForUri(
       targetUri,
@@ -159,7 +198,7 @@ class SiteApiClient {
   }
 
   Future<ProfileUserData> loadUserInfo() async {
-    await _session.ensureInitialized();
+    await _ensureSessionForCurrentSite();
     if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
       throw SiteApiException('请先登录后再操作。');
     }
@@ -175,7 +214,7 @@ class SiteApiClient {
     int page = 1,
     ProfileCollectionSort sort = AppConfig.defaultProfileCollectionSort,
   }) async {
-    await _session.ensureInitialized();
+    await _ensureSessionForCurrentSite();
     if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
       throw SiteApiException('请先登录后再操作。');
     }
@@ -192,7 +231,7 @@ class SiteApiClient {
   Future<(List<ProfileHistoryItem> items, int total)> loadHistoryPage({
     int page = 1,
   }) async {
-    await _session.ensureInitialized();
+    await _ensureSessionForCurrentSite();
     if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
       throw SiteApiException('请先登录后再操作。');
     }
@@ -208,7 +247,7 @@ class SiteApiClient {
     required String comicId,
     required bool isCollected,
   }) async {
-    await _session.ensureInitialized();
+    await _ensureSessionForCurrentSite();
     if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
       throw SiteApiException('请先登录后再操作收藏。');
     }
@@ -220,7 +259,7 @@ class SiteApiClient {
 
     final http.Response response = await NetworkClient.post(
       _client,
-      AppConfig.resolvePath('/api/v2/web/collect'),
+      _resolvePath('/api/v2/web/collect'),
       headers: <String, String>{
         'Authorization': 'Token ${_session.token}',
         'Accept': 'application/json',
@@ -262,7 +301,7 @@ class SiteApiClient {
       throw SiteApiException('章节评论信息缺失，请刷新后重试。');
     }
 
-    await _session.ensureInitialized();
+    await _ensureSessionForCurrentSite();
     final int normalizedLimit = limit.clamp(1, 120);
     final int normalizedOffset = offset < 0 ? 0 : offset;
     final (:payload, :statusCode) = await _getChapterCommentJson(
@@ -299,7 +338,7 @@ class SiteApiClient {
     required String chapterId,
     required String content,
   }) async {
-    await _session.ensureInitialized();
+    await _ensureSessionForCurrentSite();
     if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
       throw SiteApiException('请先登录后再评论。');
     }
@@ -338,17 +377,25 @@ class SiteApiClient {
     int page = 1,
     String qType = '',
   }) async {
+    await _hostManager.ensureInitialized();
     final String normalizedQuery = query.trim();
     final int normalizedPage = page < 1 ? 1 : page;
     final String normalizedQueryType = qType.trim();
     if (normalizedQuery.isEmpty) {
       return DiscoverPageData(
         title: '搜索',
-        uri: AppConfig.buildSearchUri('', page: normalizedPage).toString(),
+        uri: _buildSearchUri('', page: normalizedPage).toString(),
         filters: const <FilterGroupData>[],
         items: const <ComicCardData>[],
         pager: const PagerData(),
         spotlight: const <ComicCardData>[],
+      );
+    }
+    if (_isHotSite) {
+      return _loadHotSearchResults(
+        query: normalizedQuery,
+        page: normalizedPage,
+        qType: normalizedQueryType,
       );
     }
 
@@ -370,7 +417,7 @@ class SiteApiClient {
 
     return DiscoverPageData(
       title: '搜索',
-      uri: AppConfig.buildSearchUri(
+      uri: _buildSearchUri(
         normalizedQuery,
         page: normalizedPage,
         qType: normalizedQueryType,
@@ -384,14 +431,14 @@ class SiteApiClient {
         currentLabel: '$normalizedPage',
         totalLabel: '共$totalPages页 · $total条',
         prevHref: normalizedPage > 1
-            ? AppConfig.buildSearchUri(
+            ? _buildSearchUri(
                 normalizedQuery,
                 page: normalizedPage - 1,
                 qType: normalizedQueryType,
               ).toString()
             : '',
         nextHref: normalizedPage < totalPages
-            ? AppConfig.buildSearchUri(
+            ? _buildSearchUri(
                 normalizedQuery,
                 page: normalizedPage + 1,
                 qType: normalizedQueryType,
@@ -402,12 +449,183 @@ class SiteApiClient {
     );
   }
 
+  Future<DiscoverPageData> _loadHotSearchResults({
+    required String query,
+    required int page,
+    required String qType,
+  }) async {
+    final int freeType = _hotSearchFreeType(qType);
+    final String normalizedQueryType = _hotSearchQTypeForFreeType(freeType);
+    final Future<int> totalFuture = _getHotSearchComicTotal(
+      query: query,
+      freeType: freeType,
+    );
+    final Future<Map<String, Object?>> listFuture = _getHotSearchComicList(
+      query: query,
+      page: page,
+      freeType: freeType,
+    );
+
+    final List<Object> searchResponses = await Future.wait<Object>(
+      <Future<Object>>[totalFuture, listFuture],
+    );
+    final int total = searchResponses[0] as int;
+    final Map<String, Object?> payload =
+        searchResponses[1] as Map<String, Object?>;
+    final Map<String, Object?> results = asStringKeyMap(payload['results']);
+    final List<Map<String, Object?>> list = _extractList(results);
+    final int totalPages = total <= 0
+        ? 1
+        : (total / _searchPageSize).ceil().clamp(1, 999999);
+
+    return DiscoverPageData(
+      title: '搜索',
+      uri: _buildSearchUri(
+        query,
+        page: page,
+        qType: normalizedQueryType,
+      ).toString(),
+      filters: _buildHotSearchFilters(query: query, activeFreeType: freeType),
+      items: list
+          .map((Map<String, Object?> item) => _parseSearchComic(item))
+          .where((ComicCardData item) => item.title.isNotEmpty)
+          .toList(growable: false),
+      pager: PagerData(
+        currentLabel: '$page',
+        totalLabel: '共$totalPages页 · $total条',
+        prevHref: page > 1
+            ? _buildSearchUri(
+                query,
+                page: page - 1,
+                qType: normalizedQueryType,
+              ).toString()
+            : '',
+        nextHref: page < totalPages
+            ? _buildSearchUri(
+                query,
+                page: page + 1,
+                qType: normalizedQueryType,
+              ).toString()
+            : '',
+      ),
+      spotlight: const <ComicCardData>[],
+    );
+  }
+
+  List<FilterGroupData> _buildHotSearchFilters({
+    required String query,
+    required int activeFreeType,
+  }) {
+    return <FilterGroupData>[
+      FilterGroupData(
+        label: '类型',
+        options: <LinkAction>[
+          LinkAction(
+            label: '免费漫画',
+            href: _buildSearchUri(query).toString(),
+            active: activeFreeType == 1,
+          ),
+          LinkAction(
+            label: '付费漫画',
+            href: _buildSearchUri(query, qType: '2').toString(),
+            active: activeFreeType == 2,
+          ),
+        ],
+      ),
+    ];
+  }
+
+  int _hotSearchFreeType(String qType) {
+    final String normalized = qType.trim().toLowerCase();
+    if (normalized == '2' ||
+        normalized == 'pay' ||
+        normalized == 'paid' ||
+        normalized == 'charge' ||
+        normalized == 'charged') {
+      return 2;
+    }
+    return 1;
+  }
+
+  String _hotSearchQTypeForFreeType(int freeType) {
+    return freeType == 2 ? '2' : '';
+  }
+
+  Future<int> _getHotSearchComicTotal({
+    required String query,
+    required int freeType,
+  }) async {
+    final Map<String, Object?> payload = await _getHotSearchEndpointJson(
+      '/api/v3/search/count2',
+      queryParameters: <String, String>{
+        'offset': '0',
+        'platform': '2',
+        'q': query,
+      },
+      malformedMessage: '搜索统计返回格式异常。',
+      failureMessagePrefix: '搜索统计失败',
+    );
+    final Map<String, Object?> results = asStringKeyMap(payload['results']);
+    return freeType == 2
+        ? pickInt(results, const <String>['comic_charge_count'], fallback: 0)
+        : pickInt(results, const <String>['comic_free_count'], fallback: 0);
+  }
+
+  Future<Map<String, Object?>> _getHotSearchComicList({
+    required String query,
+    required int page,
+    required int freeType,
+  }) {
+    final int offset = (page - 1) * _searchPageSize;
+    return _getHotSearchEndpointJson(
+      '/api/v3/search/comic',
+      queryParameters: <String, String>{
+        'offset': '$offset',
+        'platform': '2',
+        'limit': '$_searchPageSize',
+        'q': query,
+        'free_type': '$freeType',
+      },
+      malformedMessage: '搜索接口返回格式异常。',
+      failureMessagePrefix: '搜索失败',
+    );
+  }
+
+  Future<Map<String, Object?>> _getHotSearchEndpointJson(
+    String path, {
+    required Map<String, String> queryParameters,
+    required String malformedMessage,
+    required String failureMessagePrefix,
+  }) async {
+    await _ensureSessionForCurrentSite();
+    final Uri uri = _resolvePath(
+      path,
+    ).replace(queryParameters: queryParameters);
+    final http.Response response = await NetworkClient.get(
+      _client,
+      uri,
+      headers: _buildRequestHeaders(),
+      label: 'api.hot.search',
+    );
+    final Map<String, Object?>? payload = _tryDecodeJsonMap(response);
+    if (payload == null) {
+      throw SiteApiException(malformedMessage);
+    }
+    final int code = (payload['code'] as num?)?.toInt() ?? response.statusCode;
+    if (code != 200) {
+      throw SiteApiException(
+        (payload['message'] as String?) ?? '$failureMessagePrefix：$code',
+      );
+    }
+    return payload;
+  }
+
   Future<Map<String, Object?>> _getJson(
     String path, {
     Map<String, String>? queryParameters,
   }) async {
-    await _session.ensureInitialized();
-    final Uri baseUri = AppConfig.resolvePath(path);
+    await _ensureSessionForCurrentSite();
+    final Uri baseUri = _resolvePath(path);
     final Uri uri = queryParameters == null || queryParameters.isEmpty
         ? baseUri
         : baseUri.replace(
@@ -452,7 +670,7 @@ class SiteApiClient {
     required Map<String, String> queryParameters,
     required String malformedMessage,
   }) async {
-    await _session.ensureInitialized();
+    await _ensureSessionForCurrentSite();
     Object? lastError;
     for (final String host in _chapterCommentApiHosts()) {
       final Uri uri = Uri.https(host, path, queryParameters);
@@ -488,7 +706,7 @@ class SiteApiClient {
     required Object body,
     required String malformedMessage,
   }) async {
-    await _session.ensureInitialized();
+    await _ensureSessionForCurrentSite();
     Object? lastError;
     for (final String host in _chapterCommentApiHosts()) {
       final Uri uri = Uri.https(host, path);
@@ -527,7 +745,7 @@ class SiteApiClient {
     required int page,
     required String qType,
   }) async {
-    await _session.ensureInitialized();
+    await _ensureSessionForCurrentSite();
     final int offset = (page - 1) * _searchPageSize;
     Object? lastError;
     for (final String path in const <String>[
@@ -535,7 +753,7 @@ class SiteApiClient {
       '/api/kb/web/searchch/comics',
     ]) {
       try {
-        final Uri uri = AppConfig.resolvePath(path).replace(
+        final Uri uri = _resolvePath(path).replace(
           queryParameters: <String, String>{
             'offset': '$offset',
             'platform': '2',
@@ -586,9 +804,11 @@ class SiteApiClient {
     String path, {
     required String username,
     required String password,
+    required String source,
   }) async {
     final int salt = 100000 + Random().nextInt(900000);
-    final Uri uri = AppConfig.resolvePath(path);
+    final Uri uri = _resolvePath(path);
+    final Uri siteBaseUri = _hostManager.baseUri;
     final http.Response response = await NetworkClient.post(
       _client,
       uri,
@@ -597,6 +817,8 @@ class SiteApiClient {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'User-Agent': AppConfig.desktopUserAgent,
         'platform': '2',
+        'Origin': siteBaseUri.origin,
+        'Referer': siteBaseUri.resolve('/web/login/loginByAccount').toString(),
       },
       body: <String, String>{
         'username': username,
@@ -604,21 +826,22 @@ class SiteApiClient {
         'salt': '$salt',
         'platform': '2',
         'version': '2025.12.10',
-        'source': 'freeSite',
+        'source': source,
       },
       label: 'api.login',
     );
 
-    final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    if (decoded is! Map) {
+    final Map<String, Object?>? payload = _tryDecodeJsonMap(response);
+    if (payload == null) {
       throw SiteApiException('登录返回格式异常。');
     }
-    final Map<String, Object?> payload = decoded.map(
-      (Object? key, Object? value) => MapEntry(key.toString(), value),
-    );
     final int code = (payload['code'] as num?)?.toInt() ?? response.statusCode;
     if (code != 200) {
-      throw SiteApiException((payload['message'] as String?) ?? '登录失败：$code');
+      throw SiteApiException(
+        (payload['message'] as String?) ??
+            (payload['detail'] as String?) ??
+            '登录失败：$code',
+      );
     }
 
     final Map<String, Object?> results = asStringKeyMap(payload['results']);
@@ -627,20 +850,53 @@ class SiteApiClient {
       throw SiteApiException('登录成功，但未拿到有效凭证。');
     }
 
+    final Map<String, String> responseCookies = _parseSetCookieHeader(
+      response.headers['set-cookie'],
+    );
     return SiteLoginResult(
       token: token,
       cookies: <String, String>{
+        ...responseCookies,
         'token': token,
         if (pickString(results, <String>['username']).isNotEmpty)
           'name': pickString(results, <String>['username']),
         if (pickString(results, <String>['user_id']).isNotEmpty)
           'user_id': pickString(results, <String>['user_id']),
+        if (pickString(results, <String>['user_id']).isNotEmpty)
+          'uuid': pickString(results, <String>['user_id']),
         if (pickString(results, <String>['avatar']).isNotEmpty)
           'avatar': pickString(results, <String>['avatar']),
         if (pickString(results, <String>['datetime_created']).isNotEmpty)
           'create': pickString(results, <String>['datetime_created']),
+        if (pickString(results, <String>['datetime_created']).isNotEmpty)
+          'create_time': pickString(results, <String>['datetime_created']),
+        if (pickString(results, <String>['vip']).isNotEmpty)
+          'vip': pickString(results, <String>['vip']),
       },
     );
+  }
+
+  Map<String, String> _parseSetCookieHeader(String? setCookieHeader) {
+    final String normalizedHeader = (setCookieHeader ?? '').trim();
+    if (normalizedHeader.isEmpty) {
+      return const <String, String>{};
+    }
+    final Map<String, String> cookies = <String, String>{};
+    for (final String segment in normalizedHeader.split(
+      RegExp(r',\s*(?=[^;,=\s]+=)'),
+    )) {
+      final String cookiePair = segment.split(';').first.trim();
+      final int separatorIndex = cookiePair.indexOf('=');
+      if (separatorIndex <= 0) {
+        continue;
+      }
+      final String key = cookiePair.substring(0, separatorIndex).trim();
+      if (key.isEmpty) {
+        continue;
+      }
+      cookies[key] = cookiePair.substring(separatorIndex + 1).trim();
+    }
+    return cookies;
   }
 
   Future<_PagedProfileSection> _getPagedListOrEmpty(
@@ -793,7 +1049,7 @@ class SiteApiClient {
     String? contentType,
     bool includeSiteContext = false,
   }) {
-    final Uri siteBaseUri = AppConfig.baseUri;
+    final Uri siteBaseUri = _hostManager.baseUri;
     return <String, String>{
       'Accept': accept,
       if (contentType != null) 'Content-Type': contentType,
@@ -808,7 +1064,7 @@ class SiteApiClient {
   }
 
   List<String> _chapterCommentApiHosts() {
-    final String currentHost = AppConfig.baseUri.host.trim().toLowerCase();
+    final String currentHost = _hostManager.baseUri.host.trim().toLowerCase();
     final String bareHost = currentHost.startsWith('www.')
         ? currentHost.substring(4)
         : currentHost;

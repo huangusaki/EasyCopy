@@ -224,15 +224,15 @@ class DetailHeroCard extends StatelessWidget {
               onTap: () => onTagTap(author),
             ),
           ),
-        ...page.tags
-            .take(6)
-            .map(
-              (LinkAction tag) => LinkChip(
-                label: tag.label,
-                active: true,
-                onTap: () => onTagTap(tag.label),
-              ),
-            ),
+        ...page.tags.map(
+          (LinkAction tag) => LinkChip(
+            label: tag.label,
+            active: true,
+            onTap: tag.href.trim().isEmpty
+                ? () => onTagTap(tag.label)
+                : () => onAuthorTap(tag.href),
+          ),
+        ),
       ],
     );
   }

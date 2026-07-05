@@ -252,7 +252,7 @@ class PageCacheStore {
   Future<void> removeAuthenticatedEntries() async {
     await ensureInitialized();
     _entries.removeWhere((CachedPageEnvelope entry) {
-      return entry.authScope != 'guest';
+      return !_isGuestAuthScope(entry.authScope);
     });
     await _persist();
   }
@@ -420,6 +420,11 @@ class PageCacheStore {
     return SitePage.fromJson(
       _rewritePayloadHosts(payload, manager) as Map<String, Object?>,
     );
+  }
+
+  static bool _isGuestAuthScope(String authScope) {
+    final String normalized = authScope.trim().toLowerCase();
+    return normalized == 'guest' || normalized.endsWith(':guest');
   }
 
   static Object? _rewritePayloadHosts(Object? value, HostManager manager) {

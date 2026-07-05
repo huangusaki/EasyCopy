@@ -42,6 +42,7 @@ class SiteHtmlPageParser {
   const SiteHtmlPageParser();
 
   static const SiteHtmlPageParser instance = SiteHtmlPageParser();
+  static const String hotTrialLimitNotice = '当前账号只能读5页漫画，服务端限制';
 
   static final RegExp _spacePattern = RegExp(r'\s+');
   static final RegExp _hexPattern = RegExp(r'^[0-9a-fA-F]+$');
@@ -87,7 +88,9 @@ class SiteHtmlPageParser {
     if (document.querySelector('.comicParticulars-title') != null) {
       return SitePageType.detail;
     }
-    if (document.querySelector('.ranking-box') != null) {
+    if (document.querySelector('.ranking-box') != null ||
+        document.querySelector('.ranking') != null ||
+        path.startsWith('/rank')) {
       return SitePageType.rank;
     }
     if (document.querySelector('.exemptComicList') != null ||
@@ -126,28 +129,17 @@ class SiteHtmlPageParser {
               if (title.isEmpty || title.contains('排行榜')) {
                 return null;
               }
-              if (!shouldRetainHomeSection(title: title, href: sectionHref)) {
+              final bool isHotPaidReplacement = _isHotPaidHomeSection(
+                uri,
+                title: title,
+                href: sectionHref,
+              );
+              if (!isHotPaidReplacement &&
+                  !shouldRetainHomeSection(title: title, href: sectionHref)) {
                 return null;
               }
 
-              final dom.Element? container = _parentElement(header);
-              if (container == null) {
-                return null;
-              }
-              final int headerIndex = container.children.indexOf(header);
-              if (headerIndex < 0) {
-                return null;
-              }
-
-              dom.Element? row;
-              for (final dom.Element sibling in container.children.skip(
-                headerIndex + 1,
-              )) {
-                if (sibling.classes.contains('row')) {
-                  row = sibling;
-                  break;
-                }
-              }
+              final dom.Element? row = _homeSectionItemsRoot(header);
               if (row == null) {
                 return null;
               }
@@ -162,7 +154,7 @@ class SiteHtmlPageParser {
               }
 
               return ComicSectionData(
-                title: title,
+                title: isHotPaidReplacement ? '付費漫畫' : title,
                 subtitle: '',
                 href: sectionHref,
                 items: items,
@@ -184,6 +176,7 @@ class SiteHtmlPageParser {
       document,
       uri,
       '.exemptComic-box a[href*="/comic/"], '
+      '.exemptComicItem a[href*="/comic/"], '
       '.correlationList a[href*="/comic/"]',
     );
     if (items.isEmpty) {
@@ -197,7 +190,10 @@ class SiteHtmlPageParser {
     return DiscoverPageData(
       title: _pageTitle(document),
       uri: uri.toString(),
-      filters: _collectFilterGroups(document, uri),
+      filters: _withHotComicTypeFilter(
+        uri,
+        _collectFilterGroups(document, uri),
+      ),
       items: items,
       pager: PagerData(
         currentLabel: _queryText(pager, '.page-all-item.active a'),
@@ -222,53 +218,75 @@ class SiteHtmlPageParser {
   }
 
   RankPageData _buildRankPage(Uri uri, dom.Document document) {
+    final List<Object> rankScopes = _rankEntryScopes(uri, document);
     final List<RankEntryData> items = _uniqueBy<RankEntryData>(
-      _querySelectorAll(document, '.ranking-all-box').map((dom.Element card) {
-        final dom.Element? coverAnchor = _querySelector(
-          card,
-          'a[href*="/comic/"]',
-        );
-        final String href = _linkUrl(uri, coverAnchor);
-        final String title =
-            _attr(_querySelector(card, '.threeLines'), 'title').isNotEmpty
-            ? _attr(_querySelector(card, '.threeLines'), 'title')
-            : _queryText(card, '.threeLines');
-        if (title.isEmpty || href.isEmpty) {
-          return null;
-        }
+      rankScopes
+          .expand((Object scope) {
+            return _querySelectorAll(
+              scope,
+              '.ranking-all-box, .ranking-allItem',
+            );
+          })
+          .map((dom.Element card) {
+            final dom.Element? coverAnchor = _querySelector(
+              card,
+              'a[href*="/comic/"]',
+            );
+            final String href = _linkUrl(uri, coverAnchor);
+            final String title =
+                _attr(_querySelector(card, '.threeLines'), 'title').isNotEmpty
+                ? _attr(_querySelector(card, '.threeLines'), 'title')
+                : _queryText(card, '.threeLines');
+            if (title.isEmpty || href.isEmpty) {
+              return null;
+            }
 
-        String trend = 'stable';
-        final dom.Element? trendElement = _querySelector(card, '.update-icon');
-        if (trendElement != null) {
-          if (trendElement.classes.contains('up')) {
-            trend = 'up';
-          } else if (trendElement.classes.contains('end')) {
-            trend = 'down';
-          }
-        }
+            String trend = 'stable';
+            final dom.Element? trendElement = _querySelector(
+              card,
+              '.update-icon',
+            );
+            if (trendElement != null) {
+              if (trendElement.classes.contains('up')) {
+                trend = 'up';
+              } else if (trendElement.classes.contains('end')) {
+                trend = 'down';
+              }
+            }
 
-        return RankEntryData(
-          rankLabel: _queryText(card, '.ranking-all-icon'),
-          title: title,
-          authors: _queryText(card, '.oneLines'),
-          heat: _queryText(card, '.update span'),
-          trend: trend,
-          coverUrl: _imageUrl(uri, _querySelector(card, 'img')),
-          href: href,
-        );
-      }).whereType<RankEntryData>(),
+            return RankEntryData(
+              rankLabel: _queryText(card, '.ranking-all-icon'),
+              title: title,
+              authors: _queryText(card, '.oneLines'),
+              heat: _queryText(card, '.update span'),
+              trend: trend,
+              coverUrl: _imageUrl(uri, _querySelector(card, 'img')),
+              href: href,
+            );
+          })
+          .whereType<RankEntryData>(),
       (RankEntryData item) => item.href,
     );
 
     return RankPageData(
       title: _queryText(document, '.ranking-box-title span').isNotEmpty
           ? _queryText(document, '.ranking-box-title span')
+          : _pageTitle(document) != 'EasyCopy'
+          ? _pageTitle(document)
+          : _queryText(document, '.ranking .theBoxModel').isNotEmpty
+          ? _queryText(document, '.ranking .theBoxModel')
           : _pageTitle(document),
       uri: uri.toString(),
       categories: _collectFilterGroups(document, uri)
           .expand((FilterGroupData group) => group.options)
           .toList(growable: false),
-      periods: _querySelectorAll(document, '.rankingTime a')
+      periods: rankScopes
+          .expand((Object scope) {
+            return _querySelectorAll(
+              scope,
+              '.rankingTime a, .ranking .nav-tabs a, .nav-tabs a',
+            );
+          })
           .map((dom.Element anchor) {
             final String label = _text(anchor);
             final String href = _linkUrl(uri, anchor);
@@ -356,6 +374,9 @@ class SiteHtmlPageParser {
         _querySelector(document, '.comicContent-prev.list a[href]'),
       ),
       contentKey: contentKey,
+      noticeMessage: _querySelector(document, '.upMember') == null
+          ? ''
+          : hotTrialLimitNotice,
     );
   }
 
@@ -488,8 +509,16 @@ class SiteHtmlPageParser {
     }
     final String slug = _cleanText(segments[1]);
     final String dnt = _attr(document.querySelector('#dnt'), 'value');
-    final String ccz = _cleanText(extractAssignedJavaScriptString(html, 'ccz'));
-    if (slug.isEmpty || dnt.isEmpty || ccz.isEmpty) {
+    final String assignedCcz = _cleanText(
+      extractAssignedJavaScriptString(html, 'ccz'),
+    );
+    final String disposablePass = _attr(
+      document.querySelector('.disposablePass'),
+      'disposable',
+    );
+    final String ccz = assignedCcz.isNotEmpty ? assignedCcz : disposablePass;
+    final bool allowsEmptyDnt = disposablePass.isNotEmpty;
+    if (slug.isEmpty || ccz.isEmpty || (!allowsEmptyDnt && dnt.isEmpty)) {
       return null;
     }
     return DetailChapterRequest(pageUri: uri, slug: slug, ccz: ccz, dnt: dnt);
@@ -579,8 +608,9 @@ class SiteHtmlPageParser {
                 }
                 return ChapterData(
                   label: label,
-                  href: AppConfig.resolvePath(
+                  href: AppConfig.resolveNavigationUri(
                     '/comic/$pathWord/chapter/$chapterId',
+                    currentUri: request.pageUri,
                   ).toString(),
                   subtitle: _stringValue(chapter['datetime_created']),
                 );
@@ -777,6 +807,7 @@ class SiteHtmlPageParser {
     final dom.Element container =
         _findAncestorWithAnyClass(anchor, <String>[
           'exemptComic_Item',
+          'exemptComicItem',
           'dailyRecommendation-box',
           'col-auto',
           'topThree',

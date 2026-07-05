@@ -2,6 +2,8 @@ part of '../profile_page_view.dart';
 
 class _HostSettingsEntryCard extends StatelessWidget {
   const _HostSettingsEntryCard({
+    required this.currentSiteKey,
+    required this.hostSites,
     required this.currentHost,
     required this.knownHosts,
     required this.candidateHosts,
@@ -13,8 +15,16 @@ class _HostSettingsEntryCard extends StatelessWidget {
     this.onSelectHost,
     this.onAddHost,
     this.onDeleteHost,
+    this.onSwitchSite,
+    this.onRefreshForSite,
+    this.onUseAutomaticSelectionForSite,
+    this.onSelectHostForSite,
+    this.onAddHostForSite,
+    this.onDeleteHostForSite,
   });
 
+  final String currentSiteKey;
+  final List<HostSiteState> hostSites;
   final String currentHost;
   final List<String> knownHosts;
   final List<String> candidateHosts;
@@ -26,6 +36,15 @@ class _HostSettingsEntryCard extends StatelessWidget {
   final FutureOr<void> Function(String value)? onSelectHost;
   final FutureOr<String> Function(String value)? onAddHost;
   final FutureOr<void> Function(String value)? onDeleteHost;
+  final FutureOr<void> Function(String siteKey)? onSwitchSite;
+  final FutureOr<void> Function(String siteKey)? onRefreshForSite;
+  final FutureOr<void> Function(String siteKey)? onUseAutomaticSelectionForSite;
+  final FutureOr<void> Function(String siteKey, String value)?
+  onSelectHostForSite;
+  final FutureOr<String> Function(String siteKey, String value)?
+  onAddHostForSite;
+  final FutureOr<void> Function(String siteKey, String value)?
+  onDeleteHostForSite;
 
   @override
   Widget build(BuildContext context) {
@@ -42,6 +61,8 @@ class _HostSettingsEntryCard extends StatelessWidget {
                   MaterialPageRoute<void>(
                     builder: (BuildContext context) {
                       return _HostSettingsPage(
+                        currentSiteKey: currentSiteKey,
+                        hostSites: hostSites,
                         currentHost: currentHost,
                         knownHosts: knownHosts,
                         candidateHosts: candidateHosts,
@@ -53,6 +74,13 @@ class _HostSettingsEntryCard extends StatelessWidget {
                         onSelectHost: onSelectHost,
                         onAddHost: onAddHost,
                         onDeleteHost: onDeleteHost,
+                        onSwitchSite: onSwitchSite,
+                        onRefreshForSite: onRefreshForSite,
+                        onUseAutomaticSelectionForSite:
+                            onUseAutomaticSelectionForSite,
+                        onSelectHostForSite: onSelectHostForSite,
+                        onAddHostForSite: onAddHostForSite,
+                        onDeleteHostForSite: onDeleteHostForSite,
                       );
                     },
                   ),
@@ -78,6 +106,8 @@ String _formatCheckedAt(DateTime checkedAt) {
 
 class _HostSettingsPage extends StatefulWidget {
   const _HostSettingsPage({
+    required this.currentSiteKey,
+    required this.hostSites,
     required this.currentHost,
     required this.knownHosts,
     required this.candidateHosts,
@@ -89,8 +119,16 @@ class _HostSettingsPage extends StatefulWidget {
     this.onSelectHost,
     this.onAddHost,
     this.onDeleteHost,
+    this.onSwitchSite,
+    this.onRefreshForSite,
+    this.onUseAutomaticSelectionForSite,
+    this.onSelectHostForSite,
+    this.onAddHostForSite,
+    this.onDeleteHostForSite,
   });
 
+  final String currentSiteKey;
+  final List<HostSiteState> hostSites;
   final String currentHost;
   final List<String> knownHosts;
   final List<String> candidateHosts;
@@ -102,6 +140,15 @@ class _HostSettingsPage extends StatefulWidget {
   final FutureOr<void> Function(String value)? onSelectHost;
   final FutureOr<String> Function(String value)? onAddHost;
   final FutureOr<void> Function(String value)? onDeleteHost;
+  final FutureOr<void> Function(String siteKey)? onSwitchSite;
+  final FutureOr<void> Function(String siteKey)? onRefreshForSite;
+  final FutureOr<void> Function(String siteKey)? onUseAutomaticSelectionForSite;
+  final FutureOr<void> Function(String siteKey, String value)?
+  onSelectHostForSite;
+  final FutureOr<String> Function(String siteKey, String value)?
+  onAddHostForSite;
+  final FutureOr<void> Function(String siteKey, String value)?
+  onDeleteHostForSite;
 
   @override
   State<_HostSettingsPage> createState() => _HostSettingsPageState();
@@ -110,20 +157,23 @@ class _HostSettingsPage extends StatefulWidget {
 class _HostSettingsPageState extends State<_HostSettingsPage> {
   static const Object _snapshotSentinel = Object();
 
+  late String _activeSiteKey;
   late String _currentHost;
   late HostProbeSnapshot? _snapshot;
   late bool _isRefreshing;
   final TextEditingController _customHostController = TextEditingController();
-  final Set<String> _localHosts = <String>{};
-  final Set<String> _deletedHosts = <String>{};
+  final Map<String, Set<String>> _localHostsBySite = <String, Set<String>>{};
+  final Map<String, Set<String>> _deletedHostsBySite = <String, Set<String>>{};
   bool _isBusy = false;
 
   @override
   void initState() {
     super.initState();
+    _activeSiteKey = _normalizeSiteKeyValue(widget.currentSiteKey);
     _currentHost = _normalizeHostValue(widget.currentHost);
     _snapshot = _normalizeSnapshot(widget.snapshot);
     _isRefreshing = widget.isRefreshing;
+    _syncActiveSiteFromWidget();
     _syncLocalHostsFromWidget();
   }
 
@@ -139,10 +189,12 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
     if (_isBusy) {
       return;
     }
-    if (oldWidget.currentHost != widget.currentHost ||
+    if (oldWidget.currentSiteKey != widget.currentSiteKey ||
+        oldWidget.hostSites != widget.hostSites ||
+        oldWidget.currentHost != widget.currentHost ||
         oldWidget.snapshot != widget.snapshot) {
-      _currentHost = _normalizeHostValue(widget.currentHost);
-      _snapshot = _normalizeSnapshot(widget.snapshot);
+      _activeSiteKey = _normalizeSiteKeyValue(widget.currentSiteKey);
+      _syncActiveSiteFromWidget();
       _syncLocalHostsFromWidget();
     }
     if (oldWidget.isRefreshing != widget.isRefreshing) {
@@ -152,6 +204,8 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    _ensureActiveSiteKey();
+    final HostSiteState activeSite = _activeSiteState();
     final String normalizedCurrentHost = _currentHost;
     final String? pinnedHost = _snapshot?.sessionPinnedHost
         ?.trim()
@@ -160,8 +214,8 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
     final String recommendedHost =
         _snapshot?.selectedHost.trim().toLowerCase() ?? '';
     final Map<String, List<String>> aliasGroups = _normalizedAliasGroups(
-      widget.candidateHosts,
-      widget.candidateHostAliases,
+      activeSite.candidateHosts,
+      activeSite.candidateHostAliases,
     );
     final Map<String, String> canonicalHostByAlias = <String, String>{
       for (final MapEntry<String, List<String>> entry in aliasGroups.entries)
@@ -229,6 +283,27 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: <Widget>[
+            if (_availableSites().length > 1) ...<Widget>[
+              SegmentedButton<String>(
+                segments: <ButtonSegment<String>>[
+                  for (final HostSiteState site in _availableSites())
+                    ButtonSegment<String>(
+                      value: _normalizeSiteKeyValue(site.siteKey),
+                      label: Text(site.label),
+                    ),
+                ],
+                selected: <String>{_activeSiteKey},
+                onSelectionChanged: _isBusy
+                    ? null
+                    : (Set<String> values) {
+                        if (values.isEmpty) {
+                          return;
+                        }
+                        _handleSwitchSite(values.first);
+                      },
+              ),
+              const SizedBox(height: 16),
+            ],
             AppSurfaceCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -276,7 +351,9 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
                     ],
                   ),
                   if (pinnedHost != null &&
-                      widget.onUseAutomaticSelection != null) ...<Widget>[
+                      (widget.onUseAutomaticSelection != null ||
+                          widget.onUseAutomaticSelectionForSite !=
+                              null)) ...<Widget>[
                     const SizedBox(height: 14),
                     FilledButton.tonalIcon(
                       onPressed: _isBusy ? null : _handleUseAutomaticSelection,
@@ -294,7 +371,10 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
                   Expanded(
                     child: TextField(
                       controller: _customHostController,
-                      enabled: !_isBusy && widget.onAddHost != null,
+                      enabled:
+                          !_isBusy &&
+                          (widget.onAddHost != null ||
+                              widget.onAddHostForSite != null),
                       decoration: const InputDecoration(
                         labelText: '新增域名',
                         hintText: 'example.com',
@@ -307,7 +387,10 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
                   ),
                   const SizedBox(width: 12),
                   FilledButton.tonalIcon(
-                    onPressed: _isBusy || widget.onAddHost == null
+                    onPressed:
+                        _isBusy ||
+                            (widget.onAddHost == null &&
+                                widget.onAddHostForSite == null)
                         ? null
                         : _handleAddHost,
                     icon: const Icon(Icons.add_rounded),
@@ -345,15 +428,23 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
                                 recommendedKey.isNotEmpty &&
                                 host == recommendedKey &&
                                 host != normalizedCurrentKey,
-                            enabled: !_isBusy && widget.onSelectHost != null,
+                            enabled:
+                                !_isBusy &&
+                                (widget.onSelectHost != null ||
+                                    widget.onSelectHostForSite != null),
                             canDelete:
                                 !_isBusy &&
-                                widget.onDeleteHost != null &&
+                                (widget.onDeleteHost != null ||
+                                    widget.onDeleteHostForSite != null) &&
                                 hosts.length > 1,
-                            onTap: widget.onSelectHost == null
+                            onTap:
+                                widget.onSelectHost == null &&
+                                    widget.onSelectHostForSite == null
                                 ? null
                                 : () => _handleSelectHost(host),
-                            onDelete: widget.onDeleteHost == null
+                            onDelete:
+                                widget.onDeleteHost == null &&
+                                    widget.onDeleteHostForSite == null
                                 ? null
                                 : () => _confirmDeleteHost(host),
                           ),
@@ -368,8 +459,86 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
     );
   }
 
+  String _normalizeSiteKeyValue(String value) {
+    final String normalized = value.trim().toLowerCase();
+    return normalized.isEmpty ? HostManager.copySiteKey : normalized;
+  }
+
   String _normalizeHostValue(String value) {
     return value.trim().toLowerCase();
+  }
+
+  List<HostSiteState> _availableSites() {
+    if (widget.hostSites.isNotEmpty) {
+      return widget.hostSites;
+    }
+    return <HostSiteState>[
+      HostSiteState(
+        siteKey: HostManager.copySiteKey,
+        label: HostManager.siteLabel(HostManager.copySiteKey),
+        currentHost: widget.currentHost,
+        knownHosts: widget.knownHosts,
+        candidateHosts: widget.candidateHosts,
+        candidateHostAliases: widget.candidateHostAliases,
+        snapshot: widget.snapshot,
+      ),
+    ];
+  }
+
+  HostSiteState _activeSiteState() {
+    final List<HostSiteState> sites = _availableSites();
+    return sites.cast<HostSiteState?>().firstWhere(
+          (HostSiteState? site) =>
+              site != null &&
+              _normalizeSiteKeyValue(site.siteKey) == _activeSiteKey,
+          orElse: () => sites.isEmpty ? null : sites.first,
+        ) ??
+        const HostSiteState(
+          siteKey: HostManager.copySiteKey,
+          label: '拷贝',
+          currentHost: '',
+        );
+  }
+
+  void _ensureActiveSiteKey() {
+    final List<HostSiteState> sites = _availableSites();
+    if (sites.isEmpty) {
+      _activeSiteKey = HostManager.copySiteKey;
+      return;
+    }
+    final bool hasActiveSite = sites.any(
+      (HostSiteState site) =>
+          _normalizeSiteKeyValue(site.siteKey) == _activeSiteKey,
+    );
+    if (!hasActiveSite) {
+      _activeSiteKey = _normalizeSiteKeyValue(sites.first.siteKey);
+      _syncActiveSiteFromWidget();
+    }
+  }
+
+  void _syncActiveSiteFromWidget() {
+    _ensureActiveSiteKey();
+    final HostSiteState activeSite = _activeSiteState();
+    _currentHost = _normalizeHostValue(activeSite.currentHost);
+    _snapshot = _normalizeSnapshot(activeSite.snapshot);
+  }
+
+  Future<void> _handleSwitchSite(String siteKey) async {
+    final String normalizedSiteKey = _normalizeSiteKeyValue(siteKey);
+    if (normalizedSiteKey == _activeSiteKey) {
+      return;
+    }
+    final FutureOr<void> Function(String siteKey)? onSwitchSite =
+        widget.onSwitchSite;
+    setState(() {
+      _activeSiteKey = normalizedSiteKey;
+      _syncActiveSiteFromWidget();
+      _syncLocalHostsFromWidget();
+    });
+    if (onSwitchSite != null) {
+      await onSwitchSite(normalizedSiteKey);
+      _syncFromHostManager();
+    }
   }
 
   String _activeHostValue(String value) {
@@ -381,7 +550,7 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
   }
 
   bool _isDeletedHost(String host) {
-    return _deletedHosts.contains(_normalizeHostValue(host));
+    return _activeDeletedHosts.contains(_normalizeHostValue(host));
   }
 
   String _canonicalActiveHost(
@@ -396,11 +565,13 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
   }
 
   void _syncLocalHostsFromWidget() {
-    _localHosts.addAll(_widgetHosts());
-    _localHosts.removeWhere(_isDeletedHost);
+    final Set<String> localHosts = _activeLocalHosts;
+    localHosts.addAll(_widgetHosts());
+    localHosts.removeWhere(_isDeletedHost);
   }
 
   Set<String> _widgetHosts() {
+    final HostSiteState activeSite = _activeSiteState();
     final Set<String> hosts = <String>{};
     void addHost(String value) {
       final String activeHost = _activeHostValue(value);
@@ -409,14 +580,14 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
       }
     }
 
-    for (final String host in widget.knownHosts) {
+    for (final String host in activeSite.knownHosts) {
       addHost(host);
     }
-    for (final String host in widget.candidateHosts) {
+    for (final String host in activeSite.candidateHosts) {
       addHost(host);
     }
     for (final MapEntry<String, List<String>> entry
-        in widget.candidateHostAliases.entries) {
+        in activeSite.candidateHostAliases.entries) {
       addHost(entry.key);
       for (final String alias in entry.value) {
         addHost(alias);
@@ -490,7 +661,7 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
 
   Set<String> _knownHosts() {
     final Set<String> hosts = _widgetHosts();
-    for (final String host in _localHosts) {
+    for (final String host in _activeLocalHosts) {
       final String activeHost = _activeHostValue(host);
       if (activeHost.isNotEmpty) {
         hosts.add(activeHost);
@@ -538,11 +709,12 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
 
   void _syncFromHostManager() {
     final Set<String> knownHosts = _knownHosts();
+    final String activeSiteKey = _activeSiteKey;
     final String managerCurrent = _normalizeHostValue(
-      HostManager.instance.currentHost,
+      HostManager.instance.currentHostForSite(activeSiteKey),
     );
     final HostProbeSnapshot? managerSnapshot = _normalizeSnapshot(
-      HostManager.instance.probeSnapshot,
+      HostManager.instance.probeSnapshotForSite(activeSiteKey),
     );
     final bool canUseManagerCurrent =
         managerCurrent.isNotEmpty && knownHosts.contains(managerCurrent);
@@ -589,20 +761,27 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
   }
 
   Future<void> _handleRefresh() async {
+    final FutureOr<void> Function(String siteKey)? onRefreshForSite =
+        widget.onRefreshForSite;
     final FutureOr<void> Function()? onRefresh = widget.onRefresh;
-    if (onRefresh == null) {
+    if (onRefreshForSite == null && onRefresh == null) {
       return;
     }
     await _runBusyAction(() async {
-      await onRefresh();
+      if (onRefreshForSite != null) {
+        await onRefreshForSite(_activeSiteKey);
+      } else {
+        await onRefresh!();
+      }
       _syncFromHostManager();
     }, refreshing: true);
   }
 
   Future<void> _handleAddHost() async {
-    final FutureOr<String> Function(String value)? onAddHost =
-        widget.onAddHost;
-    if (onAddHost == null) {
+    final FutureOr<String> Function(String siteKey, String value)?
+    onAddHostForSite = widget.onAddHostForSite;
+    final FutureOr<String> Function(String value)? onAddHost = widget.onAddHost;
+    if (onAddHostForSite == null && onAddHost == null) {
       return;
     }
     final String input = _customHostController.text.trim();
@@ -610,7 +789,11 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
       return;
     }
     await _runBusyAction(() async {
-      final String normalizedHost = _normalizeHostValue(await onAddHost(input));
+      final String normalizedHost = _normalizeHostValue(
+        onAddHostForSite != null
+            ? await onAddHostForSite(_activeSiteKey, input)
+            : await onAddHost!(input),
+      );
       if (normalizedHost.isEmpty) {
         return;
       }
@@ -618,8 +801,8 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
         return;
       }
       setState(() {
-        _deletedHosts.remove(normalizedHost);
-        _localHosts.add(normalizedHost);
+        _activeDeletedHosts.remove(normalizedHost);
+        _activeLocalHosts.add(normalizedHost);
         _customHostController.clear();
       });
       _syncFromHostManager();
@@ -628,7 +811,8 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
 
   Future<void> _confirmDeleteHost(String host) async {
     final String normalizedHost = _normalizeHostValue(host);
-    if (normalizedHost.isEmpty || widget.onDeleteHost == null) {
+    if (normalizedHost.isEmpty ||
+        (widget.onDeleteHost == null && widget.onDeleteHostForSite == null)) {
       return;
     }
     final bool confirmed =
@@ -659,9 +843,11 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
   }
 
   Future<void> _handleDeleteHost(String host) async {
+    final FutureOr<void> Function(String siteKey, String value)?
+    onDeleteHostForSite = widget.onDeleteHostForSite;
     final FutureOr<void> Function(String value)? onDeleteHost =
         widget.onDeleteHost;
-    if (onDeleteHost == null) {
+    if (onDeleteHostForSite == null && onDeleteHost == null) {
       return;
     }
     final String normalizedHost = _normalizeHostValue(host);
@@ -670,18 +856,27 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
     }
     final String previousCurrentHost = _currentHost;
     final HostProbeSnapshot? previousSnapshot = _snapshot;
-    final Set<String> previousLocalHosts = Set<String>.from(_localHosts);
+    final Set<String> previousLocalHosts = Set<String>.from(_activeLocalHosts);
+    final Set<String> previousDeletedHosts = Set<String>.from(
+      _activeDeletedHosts,
+    );
     await _runBusyAction(() async {
       try {
-        await onDeleteHost(normalizedHost);
+        if (onDeleteHostForSite != null) {
+          await onDeleteHostForSite(_activeSiteKey, normalizedHost);
+        } else {
+          await onDeleteHost!(normalizedHost);
+        }
         if (!mounted) {
           return;
         }
         setState(() {
-          _deletedHosts.add(normalizedHost);
-          _localHosts.remove(normalizedHost);
+          _activeDeletedHosts.add(normalizedHost);
+          _activeLocalHosts.remove(normalizedHost);
           if (_currentHost == normalizedHost) {
-            _currentHost = _localHosts.isEmpty ? '' : _localHosts.first;
+            _currentHost = _activeLocalHosts.isEmpty
+                ? ''
+                : _activeLocalHosts.first;
           }
           _snapshot = _copySnapshot(
             selectedHost: _currentHost,
@@ -698,18 +893,32 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
         setState(() {
           _currentHost = previousCurrentHost;
           _snapshot = previousSnapshot;
-          _localHosts
+          _activeLocalHosts
             ..clear()
             ..addAll(previousLocalHosts);
+          _activeDeletedHosts
+            ..clear()
+            ..addAll(previousDeletedHosts);
         });
       }
     });
   }
 
+  Set<String> get _activeLocalHosts {
+    return _localHostsBySite.putIfAbsent(_activeSiteKey, () => <String>{});
+  }
+
+  Set<String> get _activeDeletedHosts {
+    return _deletedHostsBySite.putIfAbsent(_activeSiteKey, () => <String>{});
+  }
+
   Future<void> _handleUseAutomaticSelection() async {
+    final FutureOr<void> Function(String siteKey)?
+    onUseAutomaticSelectionForSite = widget.onUseAutomaticSelectionForSite;
     final FutureOr<void> Function()? onUseAutomaticSelection =
         widget.onUseAutomaticSelection;
-    if (onUseAutomaticSelection == null) {
+    if (onUseAutomaticSelectionForSite == null &&
+        onUseAutomaticSelection == null) {
       return;
     }
     final String previousCurrentHost = _currentHost;
@@ -728,7 +937,11 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
     });
     await _runBusyAction(() async {
       try {
-        await onUseAutomaticSelection();
+        if (onUseAutomaticSelectionForSite != null) {
+          await onUseAutomaticSelectionForSite(_activeSiteKey);
+        } else {
+          await onUseAutomaticSelection!();
+        }
         _syncFromHostManager();
       } catch (_) {
         if (!mounted) {
@@ -743,9 +956,11 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
   }
 
   Future<void> _handleSelectHost(String host) async {
+    final FutureOr<void> Function(String siteKey, String value)?
+    onSelectHostForSite = widget.onSelectHostForSite;
     final FutureOr<void> Function(String value)? onSelectHost =
         widget.onSelectHost;
-    if (onSelectHost == null) {
+    if (onSelectHostForSite == null && onSelectHost == null) {
       return;
     }
     final String normalizedHost = _normalizeHostValue(host);
@@ -763,7 +978,11 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
     });
     await _runBusyAction(() async {
       try {
-        await onSelectHost(normalizedHost);
+        if (onSelectHostForSite != null) {
+          await onSelectHostForSite(_activeSiteKey, normalizedHost);
+        } else {
+          await onSelectHost!(normalizedHost);
+        }
         _syncFromHostManager();
       } catch (_) {
         if (!mounted) {

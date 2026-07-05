@@ -18,6 +18,7 @@ class HostSettingsStore {
 
   static const String databaseName = 'host_settings.db';
   static const String _tableName = 'hosts';
+  static const String defaultSiteKey = 'copy';
   static const String _sourceBuiltin = 'builtin';
   static const String _sourceCustom = 'custom';
   static const String _activeIndexName = 'idx_hosts_active';
@@ -34,12 +35,14 @@ class HostSettingsStore {
     return _initialization ??= _initialize();
   }
 
-  Future<List<String>> activeHosts() async {
+  Future<List<String>> activeHosts({String siteKey = defaultSiteKey}) async {
     await ensureInitialized();
+    final String normalizedSiteKey = _normalizeSiteKey(siteKey);
     final List<Map<String, Object?>> rows = await _database!.query(
       _tableName,
       columns: const <String>['host'],
-      where: 'is_deleted = 0',
+      where: 'site_key = ? AND is_deleted = 0',
+      whereArgs: <Object>[normalizedSiteKey],
       orderBy: 'rowid ASC',
     );
     return rows
@@ -48,16 +51,26 @@ class HostSettingsStore {
         .toList(growable: false);
   }
 
-  Future<void> upsertBuiltinHosts(Iterable<String> hosts) async {
-    await _insertMissingHosts(hosts, source: _sourceBuiltin);
+  Future<void> upsertBuiltinHosts(
+    Iterable<String> hosts, {
+    String siteKey = defaultSiteKey,
+  }) async {
+    await _insertMissingHosts(hosts, source: _sourceBuiltin, siteKey: siteKey);
   }
 
-  Future<void> upsertLegacyHosts(Iterable<String> hosts) async {
-    await _insertMissingHosts(hosts, source: _sourceBuiltin);
+  Future<void> upsertLegacyHosts(
+    Iterable<String> hosts, {
+    String siteKey = defaultSiteKey,
+  }) async {
+    await _insertMissingHosts(hosts, source: _sourceBuiltin, siteKey: siteKey);
   }
 
-  Future<void> addCustomHost(String host) async {
+  Future<void> addCustomHost(
+    String host, {
+    String siteKey = defaultSiteKey,
+  }) async {
     await ensureInitialized();
+    final String normalizedSiteKey = _normalizeSiteKey(siteKey);
     final String normalizedHost = _normalizeHost(host);
     if (normalizedHost.isEmpty) {
       return;
@@ -66,6 +79,7 @@ class HostSettingsStore {
       final DateTime now = _now();
       final String timestamp = now.toIso8601String();
       await _database!.insert(_tableName, <String, Object?>{
+        'site_key': normalizedSiteKey,
         'host': normalizedHost,
         'source': _sourceCustom,
         'is_deleted': 0,
@@ -79,14 +93,18 @@ class HostSettingsStore {
           'is_deleted': 0,
           'updated_at': timestamp,
         },
-        where: 'host = ?',
-        whereArgs: <Object>[normalizedHost],
+        where: 'site_key = ? AND host = ?',
+        whereArgs: <Object>[normalizedSiteKey, normalizedHost],
       );
     });
   }
 
-  Future<void> deleteHost(String host) async {
+  Future<void> deleteHost(
+    String host, {
+    String siteKey = defaultSiteKey,
+  }) async {
     await ensureInitialized();
+    final String normalizedSiteKey = _normalizeSiteKey(siteKey);
     final String normalizedHost = _normalizeHost(host);
     if (normalizedHost.isEmpty) {
       return;
@@ -98,14 +116,18 @@ class HostSettingsStore {
           'is_deleted': 1,
           'updated_at': _now().toIso8601String(),
         },
-        where: 'host = ?',
-        whereArgs: <Object>[normalizedHost],
+        where: 'site_key = ? AND host = ?',
+        whereArgs: <Object>[normalizedSiteKey, normalizedHost],
       );
     });
   }
 
-  Future<bool> isActiveHost(String host) async {
+  Future<bool> isActiveHost(
+    String host, {
+    String siteKey = defaultSiteKey,
+  }) async {
     await ensureInitialized();
+    final String normalizedSiteKey = _normalizeSiteKey(siteKey);
     final String normalizedHost = _normalizeHost(host);
     if (normalizedHost.isEmpty) {
       return false;
@@ -113,8 +135,8 @@ class HostSettingsStore {
     final List<Map<String, Object?>> rows = await _database!.query(
       _tableName,
       columns: const <String>['host'],
-      where: 'host = ? AND is_deleted = 0',
-      whereArgs: <Object>[normalizedHost],
+      where: 'site_key = ? AND host = ? AND is_deleted = 0',
+      whereArgs: <Object>[normalizedSiteKey, normalizedHost],
       limit: 1,
     );
     return rows.isNotEmpty;
@@ -142,9 +164,14 @@ class HostSettingsStore {
     _database = await databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
-        version: 1,
+        version: 2,
         onCreate: (sqflite.Database db, int version) async {
           await _ensureDatabaseSchema(db);
+        },
+        onUpgrade: (sqflite.Database db, int oldVersion, int newVersion) async {
+          if (oldVersion < 2) {
+            await _migrateLegacyHostsToSiteSchema(db);
+          }
         },
         onOpen: (sqflite.Database db) async {
           await _ensureDatabaseSchema(db);
@@ -162,8 +189,10 @@ class HostSettingsStore {
   Future<void> _insertMissingHosts(
     Iterable<String> hosts, {
     required String source,
+    required String siteKey,
   }) async {
     await ensureInitialized();
+    final String normalizedSiteKey = _normalizeSiteKey(siteKey);
     final List<String> normalizedHosts = _normalizeHosts(hosts);
     if (normalizedHosts.isEmpty) {
       return;
@@ -173,6 +202,7 @@ class HostSettingsStore {
       final sqflite.Batch batch = _database!.batch();
       for (final String host in normalizedHosts) {
         batch.insert(_tableName, <String, Object?>{
+          'site_key': normalizedSiteKey,
           'host': host,
           'source': source,
           'is_deleted': 0,
@@ -185,19 +215,75 @@ class HostSettingsStore {
   }
 
   Future<void> _ensureDatabaseSchema(sqflite.Database db) async {
+    if (await _needsLegacyMigration(db)) {
+      await _migrateLegacyHostsToSiteSchema(db);
+    }
+    await _createHostsTable(db);
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS $_activeIndexName
+      ON $_tableName (site_key, is_deleted, host)
+    ''');
+  }
+
+  Future<void> _createHostsTable(sqflite.Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $_tableName (
-        host TEXT PRIMARY KEY,
+        site_key TEXT NOT NULL DEFAULT '$defaultSiteKey',
+        host TEXT NOT NULL,
         source TEXT NOT NULL DEFAULT '$_sourceBuiltin',
         is_deleted INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT '',
-        updated_at TEXT NOT NULL DEFAULT ''
+        updated_at TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (site_key, host)
       )
     ''');
+  }
+
+  Future<bool> _needsLegacyMigration(sqflite.Database db) async {
+    final List<Map<String, Object?>> tables = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      <Object>[_tableName],
+    );
+    if (tables.isEmpty) {
+      return false;
+    }
+    final List<Map<String, Object?>> columns = await db.rawQuery(
+      'PRAGMA table_info($_tableName)',
+    );
+    return !columns.any(
+      (Map<String, Object?> column) => column['name'] == 'site_key',
+    );
+  }
+
+  Future<void> _migrateLegacyHostsToSiteSchema(sqflite.Database db) async {
+    if (!await _needsLegacyMigration(db)) {
+      await _createHostsTable(db);
+      return;
+    }
+    const String legacyTableName = 'hosts_legacy_v1';
+    await db.execute('DROP INDEX IF EXISTS $_activeIndexName');
+    await db.execute('ALTER TABLE $_tableName RENAME TO $legacyTableName');
+    await _createHostsTable(db);
     await db.execute('''
-      CREATE INDEX IF NOT EXISTS $_activeIndexName
-      ON $_tableName (is_deleted, host)
+      INSERT OR IGNORE INTO $_tableName (
+        site_key,
+        host,
+        source,
+        is_deleted,
+        created_at,
+        updated_at
+      )
+      SELECT
+        '$defaultSiteKey',
+        host,
+        source,
+        is_deleted,
+        created_at,
+        updated_at
+      FROM $legacyTableName
+      ORDER BY rowid ASC
     ''');
+    await db.execute('DROP TABLE $legacyTableName');
   }
 
   Future<T> _runWrite<T>(Future<T> Function() action) async {
@@ -220,6 +306,11 @@ class HostSettingsStore {
 
   static String _normalizeHost(String host) {
     return host.trim().toLowerCase();
+  }
+
+  static String _normalizeSiteKey(String siteKey) {
+    final String normalized = siteKey.trim().toLowerCase();
+    return normalized.isEmpty ? defaultSiteKey : normalized;
   }
 
   static List<String> _normalizeHosts(Iterable<String> hosts) {

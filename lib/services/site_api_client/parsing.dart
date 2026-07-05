@@ -276,15 +276,15 @@ extension _SiteApiParsing on SiteApiClient {
     Map<String, Object?> fallback,
   ) {
     if (pathWord.isNotEmpty) {
-      return AppConfig.resolvePath('/comic/$pathWord').toString();
+      return _resolvePath('/comic/$pathWord').toString();
     }
     final String directHref = pickString(primary, <String>['href', 'url']);
     if (directHref.isNotEmpty) {
-      return AppConfig.resolveNavigationUri(directHref).toString();
+      return _resolveNavigationUri(directHref).toString();
     }
     final String fallbackHref = pickString(fallback, <String>['href', 'url']);
     if (fallbackHref.isNotEmpty) {
-      return AppConfig.resolveNavigationUri(fallbackHref).toString();
+      return _resolveNavigationUri(fallbackHref).toString();
     }
     return '';
   }
@@ -293,9 +293,7 @@ extension _SiteApiParsing on SiteApiClient {
     if (pathWord.isEmpty || chapterUuid.isEmpty) {
       return '';
     }
-    return AppConfig.resolvePath(
-      '/comic/$pathWord/chapter/$chapterUuid',
-    ).toString();
+    return _resolvePath('/comic/$pathWord/chapter/$chapterUuid').toString();
   }
 
   String _searchAuthorLabel(Map<String, Object?> source) {

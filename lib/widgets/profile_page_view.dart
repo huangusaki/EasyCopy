@@ -55,6 +55,8 @@ class ProfilePageView extends StatelessWidget {
     this.isCheckingForUpdates = false,
     this.onCheckForUpdates,
     this.onOpenProjectRepository,
+    this.currentSiteKey = HostManager.copySiteKey,
+    this.hostSites = const <HostSiteState>[],
     this.currentHost = '',
     this.knownHosts = const <String>[],
     this.candidateHosts = const <String>[],
@@ -66,6 +68,12 @@ class ProfilePageView extends StatelessWidget {
     this.onSelectHost,
     this.onAddHost,
     this.onDeleteHost,
+    this.onSwitchHostSite,
+    this.onRefreshHostsForSite,
+    this.onUseAutomaticHostSelectionForSite,
+    this.onSelectHostForSite,
+    this.onAddHostForSite,
+    this.onDeleteHostForSite,
     this.themePreference = AppThemePreference.system,
     this.onThemePreferenceChanged,
     this.wallpaperPreferences = const WallpaperPreferences(),
@@ -94,6 +102,8 @@ class ProfilePageView extends StatelessWidget {
   final bool isCheckingForUpdates;
   final VoidCallback? onCheckForUpdates;
   final VoidCallback? onOpenProjectRepository;
+  final String currentSiteKey;
+  final List<HostSiteState> hostSites;
   final String currentHost;
   final List<String> knownHosts;
   final List<String> candidateHosts;
@@ -105,6 +115,16 @@ class ProfilePageView extends StatelessWidget {
   final FutureOr<void> Function(String value)? onSelectHost;
   final FutureOr<String> Function(String value)? onAddHost;
   final FutureOr<void> Function(String value)? onDeleteHost;
+  final FutureOr<void> Function(String siteKey)? onSwitchHostSite;
+  final FutureOr<void> Function(String siteKey)? onRefreshHostsForSite;
+  final FutureOr<void> Function(String siteKey)?
+  onUseAutomaticHostSelectionForSite;
+  final FutureOr<void> Function(String siteKey, String value)?
+  onSelectHostForSite;
+  final FutureOr<String> Function(String siteKey, String value)?
+  onAddHostForSite;
+  final FutureOr<void> Function(String siteKey, String value)?
+  onDeleteHostForSite;
   final AppThemePreference themePreference;
   final ValueChanged<AppThemePreference>? onThemePreferenceChanged;
   final WallpaperPreferences wallpaperPreferences;
@@ -118,6 +138,7 @@ class ProfilePageView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool showsHostSettings =
+        hostSites.isNotEmpty ||
         currentHost.trim().isNotEmpty ||
         knownHosts.isNotEmpty ||
         candidateHosts.isNotEmpty ||
@@ -323,6 +344,8 @@ class ProfilePageView extends StatelessWidget {
     if (showsHostSettings) {
       addSection(
         _HostSettingsEntryCard(
+          currentSiteKey: currentSiteKey,
+          hostSites: hostSites,
           currentHost: currentHost,
           knownHosts: knownHosts,
           candidateHosts: candidateHosts,
@@ -334,6 +357,12 @@ class ProfilePageView extends StatelessWidget {
           onSelectHost: onSelectHost,
           onAddHost: onAddHost,
           onDeleteHost: onDeleteHost,
+          onSwitchSite: onSwitchHostSite,
+          onRefreshForSite: onRefreshHostsForSite,
+          onUseAutomaticSelectionForSite: onUseAutomaticHostSelectionForSite,
+          onSelectHostForSite: onSelectHostForSite,
+          onAddHostForSite: onAddHostForSite,
+          onDeleteHostForSite: onDeleteHostForSite,
         ),
       );
     }
