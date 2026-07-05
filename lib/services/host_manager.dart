@@ -925,22 +925,11 @@ class HostManager {
       '2026copy.com',
       'www.2025copy.com',
       '2025copy.com',
-      'www.copy20.com',
-      'copy20.com',
       'www.mangacopy.com',
       'mangacopy.com',
-      'copy2000.site',
-      'www.copy2000.site',
-      'copy-manga.com',
-      'www.copy-manga.com',
-      'copy2000.online',
-      'www.copy2000.online',
+      'www.copy3000.com',
       'www.2027copy.com',
       '2027copy.com',
-      'www.2024copy.com',
-      '2024copy.com',
-      'www.copymanga.tv',
-      'copymanga.tv',
     ]);
   }
 
