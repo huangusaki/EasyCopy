@@ -114,9 +114,11 @@ class PageRepository {
   final Map<PageQueryKey, Future<void>> _inFlightRevalidations =
       <PageQueryKey, Future<void>>{};
 
+  static const String _readerCacheFingerprintVersion = 'reader-v2';
+
   Future<CachedPageHit?> readCached(PageQueryKey key) async {
     final CachedPageHit? inMemory = _memoryCache.remove(key);
-    if (inMemory != null) {
+    if (inMemory != null && _isSupportedCache(inMemory.envelope)) {
       _memoryCache[key] = inMemory.copyWith(fromMemory: true);
       return _memoryCache[key];
     }
@@ -126,6 +128,9 @@ class PageRepository {
       authScope: key.authScope,
     );
     if (envelope == null) {
+      return null;
+    }
+    if (!_isSupportedCache(envelope)) {
       return null;
     }
 
@@ -503,6 +508,7 @@ class PageRepository {
         ].join('::');
       case ReaderPageData readerPage:
         return <String>[
+          _readerCacheFingerprintVersion,
           Uri.parse(readerPage.uri).path,
           readerPage.title,
           readerPage.progressLabel,
@@ -518,5 +524,12 @@ class PageRepository {
       case UnknownPageData unknownPage:
         return <String>[unknownPage.uri, unknownPage.message].join('::');
     }
+  }
+
+  bool _isSupportedCache(CachedPageEnvelope envelope) {
+    return envelope.pageType != SitePageType.reader ||
+        envelope.fingerprint.startsWith(
+          '$_readerCacheFingerprintVersion::',
+        );
   }
 }

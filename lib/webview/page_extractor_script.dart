@@ -657,15 +657,18 @@ const String _pageExtractionScriptTemplate = r"""
         .filter((url) => url.length > 0),
       (url) => url,
     );
-    const contentKey = (() => {
-      if (typeof window.contentKey === 'string') {
-        return cleanText(window.contentKey);
+    const allScriptText = Array.from(document.scripts)
+      .map((script) => script.textContent || '')
+      .join('\n');
+    const scriptStringValue = (name) => {
+      const globalValue = window[name];
+      if (typeof globalValue === 'string' && cleanText(globalValue)) {
+        return cleanText(globalValue);
       }
-      const allScriptText = Array.from(document.scripts)
-        .map((script) => script.textContent || '')
-        .join('\n');
-      return extractAssignedString(allScriptText, 'contentKey');
-    })();
+      return extractAssignedString(allScriptText, name);
+    };
+    const contentKey = scriptStringValue('contentKey');
+    const readerCipherKey = scriptStringValue('cct');
 
     return {
       type: 'reader',
@@ -683,6 +686,7 @@ const String _pageExtractionScriptTemplate = r"""
         document.querySelector('.comicContent-prev.list a[href]'),
       ),
       contentKey,
+      readerCipherKey,
     };
   };
   const buildProfilePayload = () => ({

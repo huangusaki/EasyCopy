@@ -251,7 +251,7 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
       }
 
       payload.remove('loadId');
-      final SitePage page = PageCacheStore.restorePagePayload(payload);
+      final SitePage page = WebViewPagePayloadDecoder.restore(payload);
       final Uri pageUri = AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
       if (!pendingLoad.accepts(
         pageUri,
@@ -295,7 +295,7 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
       }
 
       payload.remove('loadId');
-      final SitePage page = PageCacheStore.restorePagePayload(payload);
+      final SitePage page = WebViewPagePayloadDecoder.restore(payload);
       if (page is ReaderPageData) {
         completer.complete(page);
       } else {

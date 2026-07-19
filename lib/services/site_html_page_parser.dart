@@ -306,7 +306,7 @@ class SiteHtmlPageParser {
     List<String> imageUrls = const <String>[];
     if (contentKey.isNotEmpty && cct.isNotEmpty) {
       try {
-        imageUrls = _parseEncryptedReaderImageUrls(
+        imageUrls = parseEncryptedReaderImageUrls(
           uri,
           contentKey: contentKey,
           cct: cct,
@@ -495,7 +495,7 @@ class SiteHtmlPageParser {
     return DetailChapterRequest(pageUri: uri, slug: slug, ccz: ccz, dnt: dnt);
   }
 
-  List<String> _parseEncryptedReaderImageUrls(
+  List<String> parseEncryptedReaderImageUrls(
     Uri uri, {
     required String contentKey,
     required String cct,

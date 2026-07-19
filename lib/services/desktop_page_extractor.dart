@@ -4,8 +4,8 @@ import 'dart:convert';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/desktop_webview_environment.dart';
-import 'package:reader/services/page_cache_store.dart';
 import 'package:reader/services/site_session.dart';
+import 'package:reader/services/webview_page_payload_decoder.dart';
 import 'package:reader/utils/platform_capabilities.dart';
 import 'package:reader/webview/page_extractor_script.dart';
 import 'package:webview_windows/webview_windows.dart';
@@ -183,7 +183,7 @@ class DesktopPageExtractor {
         return;
       }
       payload.remove('loadId');
-      completer.complete(PageCacheStore.restorePagePayload(payload));
+      completer.complete(WebViewPagePayloadDecoder.restore(payload));
     } catch (error, stackTrace) {
       completer.completeError(error, stackTrace);
     }
