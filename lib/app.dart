@@ -1,4 +1,3 @@
-import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:reader/app_screen.dart';
@@ -26,72 +25,50 @@ class AppRoot extends StatelessWidget {
         final WallpaperPreferences wallpaper =
             controller.preferences.wallpaperPreferences;
         final bool wallpaperActive = wallpaper.isActive;
-        return DynamicColorBuilder(
-          builder: (ColorScheme? lightDynamic, ColorScheme? darkDynamic) {
-            ThemeData lightTheme = controller.preferences.buildLightTheme();
-            ThemeData darkTheme = controller.preferences.buildDarkTheme();
-            if (controller.preferences.themePreference ==
-                AppThemePreference.dynamicColor) {
-              if (lightDynamic != null) {
-                lightTheme = AppTheme.buildDynamicTheme(
-                  lightDynamic.harmonized(),
-                );
-              }
-              if (darkDynamic != null) {
-                darkTheme = AppTheme.buildDynamicTheme(
-                  darkDynamic.harmonized(),
-                );
-              }
+        final ThemeData lightTheme = controller.preferences.buildLightTheme();
+        final ThemeData darkTheme = controller.preferences.buildDarkTheme();
+        return MaterialApp(
+          title: AppConfig.appName,
+          debugShowCheckedModeBanner: false,
+          theme: lightTheme.applyWallpaperOverlay(active: wallpaperActive),
+          darkTheme: darkTheme.applyWallpaperOverlay(active: wallpaperActive),
+          themeMode: controller.preferences.materialThemeMode,
+          builder: (BuildContext context, Widget? child) {
+            final ThemeData theme = Theme.of(context);
+            final Brightness brightness = theme.brightness;
+            final Brightness iconBrightness = brightness == Brightness.dark
+                ? Brightness.light
+                : Brightness.dark;
+            final Gradient? backgroundGradient = theme
+                .extension<AppSemanticColors>()
+                ?.backgroundGradient;
+            Widget body = child ?? const SizedBox.shrink();
+            if (wallpaperActive) {
+              body = AppWallpaperBackground(wallpaper: wallpaper, child: body);
+            } else if (backgroundGradient != null) {
+              body = DecoratedBox(
+                decoration: BoxDecoration(gradient: backgroundGradient),
+                child: body,
+              );
             }
-            return MaterialApp(
-              title: AppConfig.appName,
-              debugShowCheckedModeBanner: false,
-              theme: lightTheme.applyWallpaperOverlay(active: wallpaperActive),
-              darkTheme: darkTheme.applyWallpaperOverlay(
-                active: wallpaperActive,
+            if (PlatformCapabilities.isDesktop) {
+              // 桌面辅助功能语义树会持续报错并拖慢帧，先屏蔽。
+              body = ExcludeSemantics(child: body);
+            }
+            return AnnotatedRegion<SystemUiOverlayStyle>(
+              value: SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarIconBrightness: iconBrightness,
+                statusBarBrightness: brightness,
+                systemNavigationBarColor: Colors.transparent,
+                systemNavigationBarIconBrightness: iconBrightness,
+                systemNavigationBarDividerColor: Colors.transparent,
+                systemNavigationBarContrastEnforced: false,
               ),
-              themeMode: controller.preferences.materialThemeMode,
-              builder: (BuildContext context, Widget? child) {
-                final ThemeData theme = Theme.of(context);
-                final Brightness brightness = theme.brightness;
-                final Brightness iconBrightness = brightness == Brightness.dark
-                    ? Brightness.light
-                    : Brightness.dark;
-                final Gradient? backgroundGradient = theme
-                    .extension<AppSemanticColors>()
-                    ?.backgroundGradient;
-                Widget body = child ?? const SizedBox.shrink();
-                if (wallpaperActive) {
-                  body = AppWallpaperBackground(
-                    wallpaper: wallpaper,
-                    child: body,
-                  );
-                } else if (backgroundGradient != null) {
-                  body = DecoratedBox(
-                    decoration: BoxDecoration(gradient: backgroundGradient),
-                    child: body,
-                  );
-                }
-                if (PlatformCapabilities.isDesktop) {
-                  // 桌面辅助功能语义树会持续报错并拖慢帧，先屏蔽。
-                  body = ExcludeSemantics(child: body);
-                }
-                return AnnotatedRegion<SystemUiOverlayStyle>(
-                  value: SystemUiOverlayStyle(
-                    statusBarColor: Colors.transparent,
-                    statusBarIconBrightness: iconBrightness,
-                    statusBarBrightness: brightness,
-                    systemNavigationBarColor: Colors.transparent,
-                    systemNavigationBarIconBrightness: iconBrightness,
-                    systemNavigationBarDividerColor: Colors.transparent,
-                    systemNavigationBarContrastEnforced: false,
-                  ),
-                  child: body,
-                );
-              },
-              home: home ?? AppScreen(preferencesController: controller),
+              child: body,
             );
           },
+          home: home ?? AppScreen(preferencesController: controller),
         );
       },
     );

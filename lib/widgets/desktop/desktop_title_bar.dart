@@ -36,13 +36,11 @@ class DesktopTitleBar extends StatelessWidget {
           Positioned.fill(
             child: Row(
               children: <Widget>[
-                // 左侧：品牌 + 返回 + 页面标题，占据等宽弹性区。
+                // 左侧：返回 + 页面标题，占据等宽弹性区。
                 Expanded(
                   child: Row(
                     children: <Widget>[
                       const SizedBox(width: 16),
-                      const IgnorePointer(child: _BrandMark()),
-                      const SizedBox(width: 14),
                       _AnimatedBackButton(
                         visible: showBackButton,
                         onBack: onBack,
@@ -71,7 +69,10 @@ class DesktopTitleBar extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                       ],
-                      _RefreshButton(isLoading: isLoading, onRefresh: onRefresh),
+                      _RefreshButton(
+                        isLoading: isLoading,
+                        onRefresh: onRefresh,
+                      ),
                       const SizedBox(width: 10),
                       const DesktopWindowControls(),
                       const SizedBox(width: 8),
@@ -120,43 +121,6 @@ class _DragToMoveSurface extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onPanStart: (_) => windowManager.startDragging(),
       onDoubleTap: _toggleMaximize,
-    );
-  }
-}
-
-class _BrandMark extends StatelessWidget {
-  const _BrandMark();
-
-  static const String _assetPath = 'assets/icons/app_icon_rounded_1024.png';
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      width: 30,
-      height: 30,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(9),
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: colorScheme.primary.withValues(alpha: 0.22),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(9),
-        child: Image.asset(
-          _assetPath,
-          width: 30,
-          height: 30,
-          cacheWidth: 96,
-          cacheHeight: 96,
-          fit: BoxFit.cover,
-          filterQuality: FilterQuality.high,
-        ),
-      ),
     );
   }
 }

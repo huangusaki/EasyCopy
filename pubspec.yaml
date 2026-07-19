@@ -49,7 +49,6 @@ dependencies:
   file_selector: ^1.1.0
   sqflite_common_ffi: ^2.4.0+3
   window_manager: ^0.5.1
-  dynamic_color: ^1.8.1
 
 dev_dependencies:
   flutter_test:

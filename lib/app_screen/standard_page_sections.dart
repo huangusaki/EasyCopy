@@ -416,13 +416,11 @@ extension _AppScreenPageSections on _AppScreenState {
       sections.add(
         _hPaddedBox(
           SurfaceBlock(
-            title: '榜单切换',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 if (page.categories.isNotEmpty)
                   RankFilterGroup(
-                    label: '榜单类型',
                     items: page.categories,
                     onTap: _navigateRankFilter,
                   ),
@@ -440,7 +438,6 @@ extension _AppScreenPageSections on _AppScreenState {
                   ),
                 if (page.periods.isNotEmpty)
                   RankFilterGroup(
-                    label: '统计周期',
                     items: page.periods,
                     onTap: _navigateRankFilter,
                   ),
@@ -564,13 +561,6 @@ extension _AppScreenPageSections on _AppScreenState {
     sections.add(
       _hPaddedBox(
         SurfaceBlock(
-          title: '章节目录',
-          actionLabel: page.chapters.isNotEmpty || page.chapterGroups.isNotEmpty
-              ? '选择下载'
-              : null,
-          onActionTap: page.chapters.isNotEmpty || page.chapterGroups.isNotEmpty
-              ? () => _showDetailDownloadPicker(page)
-              : null,
           child: chapterTabs.isEmpty
               ? const Text('章节还在整理中，向下刷新可重试。')
               : Column(

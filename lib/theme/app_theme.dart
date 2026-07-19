@@ -472,40 +472,6 @@ class AppTheme {
     );
   }
 
-  static ThemeData buildDynamicTheme(ColorScheme dynamicScheme) {
-    final bool isDark = dynamicScheme.brightness == Brightness.dark;
-    final Color accent = dynamicScheme.primary;
-
-    // 系统取色生成的表面色偏中性，叠少量强调色增强取色感。
-    Color tinted(Color base, double amount) =>
-        Color.alphaBlend(accent.withValues(alpha: amount), base);
-
-    final Color surfaceBase = isDark
-        ? const Color(0xFF12100F)
-        : const Color(0xFFFBFAF9);
-
-    final ColorScheme scheme = dynamicScheme.copyWith(
-      surface: tinted(surfaceBase, isDark ? 0.08 : 0.05),
-      surfaceContainerLowest: tinted(
-        isDark ? const Color(0xFF0A0908) : const Color(0xFFFFFFFF),
-        isDark ? 0.04 : 0.02,
-      ),
-      surfaceContainerLow: tinted(surfaceBase, isDark ? 0.10 : 0.06),
-      surfaceContainer: tinted(surfaceBase, isDark ? 0.13 : 0.08),
-      surfaceContainerHigh: tinted(surfaceBase, isDark ? 0.16 : 0.11),
-      surfaceContainerHighest: tinted(surfaceBase, isDark ? 0.20 : 0.14),
-      surfaceTint: accent,
-    );
-
-    return _buildTheme(
-      colorScheme: scheme,
-      scaffoldBackgroundColor: scheme.surface,
-      semanticColors: isDark
-          ? _warmDarkSemanticColors
-          : _warmLightSemanticColors,
-    );
-  }
-
   /// 桌面中文回退字体栈。
   static const String _windowsLatinFont = 'Segoe UI';
   static const List<String> _simplifiedHanFallback = <String>[

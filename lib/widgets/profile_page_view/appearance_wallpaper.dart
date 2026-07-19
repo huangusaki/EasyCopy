@@ -152,21 +152,6 @@ class _ThemeSwatch extends StatelessWidget {
             Expanded(child: ColoredBox(color: Color(0xFF000000))),
           ],
         );
-      case AppThemePreference.dynamicColor:
-        return const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: <Color>[
-                Color(0xFFB7C4FF),
-                Color(0xFFD8C2F2),
-                Color(0xFFFFC9D8),
-                Color(0xFFBFE6C8),
-              ],
-            ),
-          ),
-        );
       case AppThemePreference.pureWhite:
         return const ColoredBox(color: Color(0xFFFFFFFF));
       case AppThemePreference.pureBlack:

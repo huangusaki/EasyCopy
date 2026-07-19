@@ -1,3 +1,5 @@
+import 'package:flutter/widgets.dart';
+
 class ReaderCommentBubbleMetrics {
   const ReaderCommentBubbleMetrics({required this.width, required this.height});
 
@@ -27,4 +29,22 @@ class ReaderCommentCloudLayout {
 
   final double height;
   final List<ReaderCommentBubblePlacement> placements;
+}
+
+class ReaderCommentEmptyStateLayout extends StatelessWidget {
+  const ReaderCommentEmptyStateLayout({required this.child, super.key});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.center,
+      heightFactor: 1,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: child,
+      ),
+    );
+  }
 }

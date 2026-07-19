@@ -155,33 +155,13 @@ extension _ReaderCommentCloud on ReaderScreenState {
       );
     }
     if (comments.isEmpty) {
-      return Center(
-        child: Text(
-          '暂无评论',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: colorScheme.onSurface.withValues(alpha: 0.72),
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      );
+      return _buildReaderCommentEmptyState(colorScheme);
     }
     final List<ReaderCommentCluster> clusters = buildReaderCommentClusters(
       comments,
     );
     if (clusters.isEmpty) {
-      return Center(
-        child: Text(
-          '暂无评论',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: colorScheme.onSurface.withValues(alpha: 0.72),
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      );
+      return _buildReaderCommentEmptyState(colorScheme);
     }
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
@@ -242,6 +222,20 @@ extension _ReaderCommentCloud on ReaderScreenState {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildReaderCommentEmptyState(ColorScheme colorScheme) {
+    return ReaderCommentEmptyStateLayout(
+      child: Text(
+        '暂无评论',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: colorScheme.onSurface.withValues(alpha: 0.72),
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 

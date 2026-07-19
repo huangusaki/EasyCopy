@@ -163,13 +163,6 @@ class FilterGroup extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Text(
-            group.label,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
-          ),
-        ),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -194,40 +187,25 @@ class FilterGroup extends StatelessWidget {
 }
 
 class RankFilterGroup extends StatelessWidget {
-  const RankFilterGroup({
-    required this.label,
-    required this.items,
-    required this.onTap,
-  });
+  const RankFilterGroup({required this.items, required this.onTap});
 
-  final String label;
   final List<LinkAction> items;
   final ValueChanged<String> onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          label,
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: items
-              .map(
-                (LinkAction item) => LinkChip(
-                  label: item.label,
-                  active: item.active,
-                  onTap: () => onTap(item.href),
-                ),
-              )
-              .toList(growable: false),
-        ),
-      ],
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: items
+          .map(
+            (LinkAction item) => LinkChip(
+              label: item.label,
+              active: item.active,
+              onTap: () => onTap(item.href),
+            ),
+          )
+          .toList(growable: false),
     );
   }
 }

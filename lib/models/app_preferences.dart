@@ -4,9 +4,8 @@ import 'package:reader/models/shortcut_preferences.dart';
 import 'package:reader/theme/app_theme.dart';
 
 enum AppThemePreference {
+  // 枚举名直接持久化，无法识别的旧值回退到跟随系统。
   system,
-// 枚举名已持久化，只可新增。
-  dynamicColor,
   pureWhite,
   pureBlack,
   warmLight,
@@ -21,8 +20,6 @@ String appThemePreferenceLabel(AppThemePreference value) {
   switch (value) {
     case AppThemePreference.system:
       return '跟随系统';
-    case AppThemePreference.dynamicColor:
-      return '动态取色';
     case AppThemePreference.pureWhite:
       return '纯白';
     case AppThemePreference.pureBlack:
@@ -125,7 +122,12 @@ class WallpaperPreferences {
   factory WallpaperPreferences.fromJson(Map<String, Object?> json) {
     final double left = _clampUnit(json['cropLeft'], 0.0);
     final double top = _clampUnit(json['cropTop'], 0.0);
-    final double width = _clampRange(json['cropWidth'], minCropExtent, 1.0, 1.0);
+    final double width = _clampRange(
+      json['cropWidth'],
+      minCropExtent,
+      1.0,
+      1.0,
+    );
     final double height = _clampRange(
       json['cropHeight'],
       minCropExtent,
@@ -538,8 +540,6 @@ class AppPreferences {
     switch (themePreference) {
       case AppThemePreference.system:
         return ThemeMode.system;
-      case AppThemePreference.dynamicColor:
-        return ThemeMode.system;
       case AppThemePreference.pureWhite:
       case AppThemePreference.warmLight:
       case AppThemePreference.lightOrange:
@@ -558,7 +558,6 @@ class AppPreferences {
       case AppThemePreference.system:
       case AppThemePreference.pureWhite:
         return AppTheme.buildPureWhiteTheme();
-      case AppThemePreference.dynamicColor:
       case AppThemePreference.warmLight:
         return AppTheme.buildWarmLightTheme();
       case AppThemePreference.lightOrange:
@@ -580,7 +579,6 @@ class AppPreferences {
       case AppThemePreference.system:
       case AppThemePreference.pureBlack:
         return AppTheme.buildPureBlackTheme();
-      case AppThemePreference.dynamicColor:
       case AppThemePreference.warmDark:
         return AppTheme.buildWarmDarkTheme();
       case AppThemePreference.pureWhite:
