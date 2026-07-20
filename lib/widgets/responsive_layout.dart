@@ -12,6 +12,19 @@ bool usesDesktopLayout(BuildContext context) {
   return MediaQuery.sizeOf(context).width >= kDesktopLayoutBreakpoint;
 }
 
+bool usesDesktopWindowShell(BuildContext context) {
+  final TargetPlatform platform = Theme.of(context).platform;
+  final bool isDesktopPlatform = switch (platform) {
+    TargetPlatform.windows ||
+    TargetPlatform.macOS ||
+    TargetPlatform.linux => true,
+    TargetPlatform.android ||
+    TargetPlatform.iOS ||
+    TargetPlatform.fuchsia => false,
+  };
+  return isDesktopPlatform && usesDesktopLayout(context);
+}
+
 EdgeInsets standardContentPadding(BuildContext context) {
   if (!usesDesktopLayout(context)) {
     return const EdgeInsets.symmetric(horizontal: 16);

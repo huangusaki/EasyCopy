@@ -2,7 +2,7 @@ part of '../app_screen.dart';
 
 extension _AppScreenStandardMode on _AppScreenState {
   Widget _buildStandardMode(BuildContext context) {
-    if (usesDesktopLayout(context)) {
+    if (usesDesktopWindowShell(context)) {
       return _buildDesktopStandardMode(context);
     }
 
@@ -271,7 +271,7 @@ extension _AppScreenStandardMode on _AppScreenState {
       contentKey: '${_nav.selectedIndex}::${_currentEntry.routeKey}',
       tabIndex: _nav.selectedIndex,
       routeDepth: _tabSessionStore.depth(_nav.selectedIndex),
-      reducedMotion: !usesDesktopLayout(context),
+      reducedMotion: !usesDesktopWindowShell(context),
       child: RefreshIndicator(
         onRefresh: () {
           if (!PlatformCapabilities.isDesktop) {
@@ -361,7 +361,7 @@ extension _AppScreenStandardMode on _AppScreenState {
     return SliverToBoxAdapter(
       child: Builder(
         builder: (BuildContext context) {
-          final double dockInset = usesDesktopLayout(context)
+          final double dockInset = usesDesktopWindowShell(context)
               ? DesktopDock.bottomOverlayExtent + 12
               : 0;
           return SizedBox(
@@ -373,7 +373,7 @@ extension _AppScreenStandardMode on _AppScreenState {
   }
 
   List<Widget> _buildStandardTopContent(BuildContext context) {
-    if (usesDesktopLayout(context)) {
+    if (usesDesktopWindowShell(context)) {
       return const <Widget>[];
     }
 

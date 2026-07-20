@@ -4,7 +4,6 @@ import 'package:reader/models/shortcut_preferences.dart';
 import 'package:reader/theme/app_theme.dart';
 
 enum AppThemePreference {
-  // 枚举名直接持久化，无法识别的旧值回退到跟随系统。
   system,
   pureWhite,
   pureBlack,
