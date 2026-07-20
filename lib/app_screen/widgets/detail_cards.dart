@@ -39,7 +39,7 @@ class DetailHeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final List<String> authorLabels = _searchLabels(page.authors);
-    if (usesDesktopLayout(context)) {
+    if (usesWideLayout(context)) {
       return _buildDesktopHero(context, authorLabels);
     }
     return _buildMobileCard(context, authorLabels);
@@ -409,7 +409,7 @@ class ChapterGrid extends StatelessWidget {
         final double maxWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : MediaQuery.sizeOf(context).width;
-        final bool isDesktop = usesDesktopLayout(context);
+        final bool isWideLayout = usesWideLayout(context);
         final int crossAxisCount = responsiveComicCrossAxisCount(
           context,
           maxWidth,
@@ -425,7 +425,7 @@ class ChapterGrid extends StatelessWidget {
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
-            childAspectRatio: isDesktop ? 2.35 : 1.7,
+            childAspectRatio: isWideLayout ? 2.35 : 1.7,
           ),
           itemBuilder: (BuildContext context, int index) {
             final ChapterData chapter = chapters[index];

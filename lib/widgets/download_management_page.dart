@@ -211,7 +211,7 @@ class _DownloadManagementPageState extends State<DownloadManagementPage> {
                                             ),
                                           ],
                                         );
-                                        if (usesDesktopLayout(context)) {
+                                        if (usesWideLayout(context)) {
                                           content = Align(
                                             alignment: Alignment.topCenter,
                                             child: ConstrainedBox(

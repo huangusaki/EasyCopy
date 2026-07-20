@@ -118,7 +118,7 @@ class DetailChapterControlChip extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       border: Border.all(color: borderColor),
     );
-    final Widget chipBody = usesDesktopLayout(context)
+    final Widget chipBody = usesWideLayout(context)
         ? AnimatedContainer(
             duration: const Duration(milliseconds: 140),
             padding: chipPadding,

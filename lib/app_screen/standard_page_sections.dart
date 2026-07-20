@@ -344,7 +344,7 @@ extension _AppScreenPageSections on _AppScreenState {
                 itemWidth: itemWidth,
                 hasSubtitle: meta.hasSubtitle,
                 hasSecondary: meta.hasSecondary,
-                isDesktop: usesDesktopLayout(context),
+                isWideLayout: usesWideLayout(context),
               );
               final double aspectRatio = itemHeight <= 0
                   ? 0.50
@@ -363,7 +363,7 @@ extension _AppScreenPageSections on _AppScreenState {
                       child: StaggerIn(
                         key: ValueKey<String>(item.href),
                         index: index % (crossAxisCount * 2),
-                        enabled: usesDesktopLayout(context),
+                        enabled: usesWideLayout(context),
                         child: ComicCardTile(
                           item: item,
                           onTap: _navigateToHref,
@@ -475,7 +475,7 @@ extension _AppScreenPageSections on _AppScreenState {
                   child: StaggerIn(
                     key: ValueKey<String>(item.href),
                     index: index,
-                    enabled: usesDesktopLayout(context),
+                    enabled: usesWideLayout(context),
                     child: RankCard(
                       item: item,
                       onTap: () => _navigateToHref(item.href),

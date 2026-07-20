@@ -299,6 +299,7 @@ class ReaderController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    AppImageCaches.clearReaderPrefetchWindow();
     _progressDebounce?.cancel();
     _autoTurnTimer?.cancel();
     _batterySubscription?.cancel();
@@ -580,15 +581,6 @@ class ReaderController extends ChangeNotifier {
     ReaderRestoreTarget? preferredRestoreTarget,
     bool openAtEnd = false,
   }) {
-    final List<String> remoteImages = page.imageUrls
-        .where((String imageUrl) {
-          final Uri? uri = Uri.tryParse(imageUrl);
-          return uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
-        })
-        .toList(growable: false);
-    unawaited(
-      AppImageCaches.prefetchReaderImages(remoteImages, referer: page.uri),
-    );
     unawaited(_markChapterVisited(page));
     final bool changedPage = previousUri != page.uri;
     if (changedPage || forceRestore) {
@@ -619,7 +611,19 @@ class ReaderController extends ChangeNotifier {
           openAtEnd: openAtEnd,
         ),
       );
+    } else {
+      _refreshReaderPrefetchWindow(page, _visibleImageIndex);
     }
+  }
+
+  void _refreshReaderPrefetchWindow(
+    ReaderPageData page,
+    int currentImageIndex,
+  ) {
+    AppImageCaches.replaceReaderPrefetchWindow(
+      readerPrefetchUrlsAfter(page.imageUrls, currentIndex: currentImageIndex),
+      referer: page.uri,
+    );
   }
 
   Future<void> _markChapterVisited(ReaderPageData page) {
@@ -680,6 +684,7 @@ class ReaderController extends ChangeNotifier {
           : (pageIndex >= page.imageUrls.length
                 ? page.imageUrls.length - 1
                 : pageIndex);
+      _refreshReaderPrefetchWindow(page, _visibleImageIndex);
       if (!_disposed) notifyListeners();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!_isActiveRestore(ticket, pageUri: page.uri, isPaged: true)) return;
@@ -706,6 +711,7 @@ class ReaderController extends ChangeNotifier {
     _lastPersistedPosition = savedOffset == null
         ? null
         : ReaderPosition.scroll(offset: savedOffset);
+    _refreshReaderPrefetchWindow(page, restoreImageIndex ?? 0);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_isActiveRestore(ticket, pageUri: page.uri, isPaged: false)) return;
       if (restoreImageIndex != null) {
@@ -717,8 +723,7 @@ class ReaderController extends ChangeNotifier {
           alignment: restoreAtEnd
               ? 1
               : (preferredRestoreTarget == null &&
-                        preferences.openingPosition ==
-                            ReaderOpeningPosition.top
+                        preferences.openingPosition == ReaderOpeningPosition.top
                     ? 0
                     : 0.5),
         );
@@ -921,6 +926,9 @@ class ReaderController extends ChangeNotifier {
     _chapterBoundary.reset();
     _currentPageIndex = index;
     _visibleImageIndex = visibleImageIndex;
+    if (currentPage != null) {
+      _refreshReaderPrefetchWindow(currentPage, visibleImageIndex);
+    }
     if (!_disposed) notifyListeners();
     _scheduleProgressPersistence();
     _restartAutoTurn();
@@ -994,6 +1002,10 @@ class ReaderController extends ChangeNotifier {
     }
     if (bestIndex == _visibleImageIndex) return;
     _visibleImageIndex = bestIndex;
+    final ReaderPageData? currentPage = _page;
+    if (currentPage != null) {
+      _refreshReaderPrefetchWindow(currentPage, bestIndex);
+    }
     if (!_disposed) notifyListeners();
   }
 

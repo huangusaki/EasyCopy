@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:reader/models/app_preferences.dart';
 
-const double kDesktopLayoutBreakpoint = 900;
-const double kDesktopReaderControlsMaxWidth = 720;
+const double kWideLayoutBreakpoint = 900;
+const double kWideReaderControlsMaxWidth = 720;
 
-double desktopContentMaxWidth(double viewportWidth) {
-  return (viewportWidth * 0.86).clamp(kDesktopLayoutBreakpoint, 1760.0);
+double wideContentMaxWidth(double viewportWidth) {
+  return (viewportWidth * 0.86).clamp(kWideLayoutBreakpoint, 1760.0);
 }
 
-bool usesDesktopLayout(BuildContext context) {
-  return MediaQuery.sizeOf(context).width >= kDesktopLayoutBreakpoint;
+bool usesWideLayout(BuildContext context) {
+  return MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
 }
 
 bool usesDesktopWindowShell(BuildContext context) {
@@ -22,15 +22,15 @@ bool usesDesktopWindowShell(BuildContext context) {
     TargetPlatform.iOS ||
     TargetPlatform.fuchsia => false,
   };
-  return isDesktopPlatform && usesDesktopLayout(context);
+  return isDesktopPlatform && usesWideLayout(context);
 }
 
 EdgeInsets standardContentPadding(BuildContext context) {
-  if (!usesDesktopLayout(context)) {
+  if (!usesWideLayout(context)) {
     return const EdgeInsets.symmetric(horizontal: 16);
   }
   final double viewportWidth = MediaQuery.sizeOf(context).width;
-  final double maxContentWidth = desktopContentMaxWidth(viewportWidth);
+  final double maxContentWidth = wideContentMaxWidth(viewportWidth);
   if (viewportWidth > maxContentWidth) {
     return EdgeInsets.symmetric(
       horizontal: (viewportWidth - maxContentWidth) / 2 + 16,
@@ -47,7 +47,7 @@ int responsiveComicCrossAxisCount(
   int mobileCount = 3,
   int maxCount = 6,
 }) {
-  if (!usesDesktopLayout(context)) {
+  if (!usesWideLayout(context)) {
     return mobileCount;
   }
   if (!availableWidth.isFinite || availableWidth <= 0) {
@@ -61,8 +61,8 @@ int responsiveComicCrossAxisCount(
   return count;
 }
 
-double desktopReaderMaxWidth(BuildContext context, ReaderPageFit fit) {
-  if (!usesDesktopLayout(context) || fit != ReaderPageFit.fitWidth) {
+double wideReaderMaxWidth(BuildContext context, ReaderPageFit fit) {
+  if (!usesWideLayout(context) || fit != ReaderPageFit.fitWidth) {
     return double.infinity;
   }
   final double screenWidth = MediaQuery.sizeOf(context).width;

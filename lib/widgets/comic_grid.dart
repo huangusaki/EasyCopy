@@ -12,9 +12,9 @@ const double _comicSubtitleGap = 4;
 const double _comicSubtitleHeight = 14;
 const double _comicSecondaryGap = 3;
 const double _comicSecondaryHeight = 12;
-const double _desktopComicTitleHeight = 38;
-const double _desktopComicSubtitleHeight = 15;
-const double _desktopComicSecondaryHeight = 14;
+const double _wideComicTitleHeight = 38;
+const double _wideComicSubtitleHeight = 15;
+const double _wideComicSecondaryHeight = 14;
 const double _comicMetaLineHeight = 1.2;
 const double _comicLayoutSlack = 4;
 
@@ -22,17 +22,17 @@ double comicCardHeightFor({
   required double itemWidth,
   required bool hasSubtitle,
   required bool hasSecondary,
-  bool isDesktop = false,
+  bool isWideLayout = false,
 }) {
   double extra = 0;
-  final double titleHeight = isDesktop
-      ? _desktopComicTitleHeight
+  final double titleHeight = isWideLayout
+      ? _wideComicTitleHeight
       : _comicTitleHeight;
-  final double subtitleHeight = isDesktop
-      ? _desktopComicSubtitleHeight
+  final double subtitleHeight = isWideLayout
+      ? _wideComicSubtitleHeight
       : _comicSubtitleHeight;
-  final double secondaryHeight = isDesktop
-      ? _desktopComicSecondaryHeight
+  final double secondaryHeight = isWideLayout
+      ? _wideComicSecondaryHeight
       : _comicSecondaryHeight;
   final double coverWidth = (itemWidth - _comicTilePadding * 2)
       .clamp(0.0, itemWidth)
@@ -117,11 +117,11 @@ class ComicGrid extends StatelessWidget {
           itemWidth: itemWidth,
           hasSubtitle: meta.hasSubtitle,
           hasSecondary: meta.hasSecondary,
-          isDesktop: usesDesktopLayout(context),
+          isWideLayout: usesWideLayout(context),
         );
         final int rowCount =
             (items.length + crossAxisCount - 1) ~/ crossAxisCount;
-        final bool stagger = usesDesktopLayout(context);
+        final bool stagger = usesWideLayout(context);
 
         return Column(
           children: <Widget>[
@@ -229,12 +229,12 @@ class ComicSliverGrid extends StatelessWidget {
           itemWidth: itemWidth,
           hasSubtitle: meta.hasSubtitle,
           hasSecondary: meta.hasSecondary,
-          isDesktop: usesDesktopLayout(context),
+          isWideLayout: usesWideLayout(context),
         );
         final double aspectRatio = itemHeight <= 0
             ? 0.50
             : itemWidth / itemHeight;
-        final bool stagger = usesDesktopLayout(context);
+        final bool stagger = usesWideLayout(context);
 
         return SliverGrid(
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -298,7 +298,7 @@ class _ComicCardTileState extends State<ComicCardTile> {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final bool isDesktop = usesDesktopLayout(context);
+    final bool isWideLayout = usesWideLayout(context);
 
     final Widget cardContent = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -350,12 +350,12 @@ class _ComicCardTileState extends State<ComicCardTile> {
         ),
         const SizedBox(height: _comicCoverToTitleGap),
         SizedBox(
-          height: isDesktop ? _desktopComicTitleHeight : _comicTitleHeight,
+          height: isWideLayout ? _wideComicTitleHeight : _comicTitleHeight,
           child: AnimatedDefaultTextStyle(
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOut,
             style: TextStyle(
-              fontSize: isDesktop ? 15.5 : 14.0,
+              fontSize: isWideLayout ? 15.5 : 14.0,
               height: _comicMetaLineHeight,
               fontWeight: FontWeight.w800,
               color: _isHovered ? colorScheme.primary : colorScheme.onSurface,
@@ -375,7 +375,7 @@ class _ComicCardTileState extends State<ComicCardTile> {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: colorScheme.onSurface.withValues(alpha: 0.72),
-              fontSize: isDesktop ? 12.0 : 11.0,
+              fontSize: isWideLayout ? 12.0 : 11.0,
               height: _comicMetaLineHeight,
             ),
           ),
@@ -388,7 +388,7 @@ class _ComicCardTileState extends State<ComicCardTile> {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: colorScheme.onSurface.withValues(alpha: 0.56),
-              fontSize: isDesktop ? 11.0 : 10.0,
+              fontSize: isWideLayout ? 11.0 : 10.0,
               height: _comicMetaLineHeight,
             ),
           ),
@@ -425,7 +425,7 @@ class _ComicCardTileState extends State<ComicCardTile> {
       ),
     );
 
-    if (isDesktop) {
+    if (isWideLayout) {
       return MouseRegion(
         onEnter: (_) => setState(() => _isHovered = true),
         onExit: (_) => setState(() => _isHovered = false),

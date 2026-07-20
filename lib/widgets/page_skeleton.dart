@@ -26,7 +26,7 @@ class _PageSkeletonState extends State<PageSkeleton>
       return;
     }
     _configured = true;
-    _useSweep = usesDesktopLayout(context);
+    _useSweep = usesWideLayout(context);
     if (_useSweep) {
       _controller.duration = const Duration(milliseconds: 1400);
       _controller.repeat();
@@ -198,8 +198,8 @@ class _DetailSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool isDesktop = usesDesktopLayout(context);
-    final double coverWidth = isDesktop ? 196 : 122;
+    final bool isWideLayout = usesWideLayout(context);
+    final double coverWidth = isWideLayout ? 196 : 122;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -225,7 +225,7 @@ class _DetailSkeleton extends StatelessWidget {
                       _Bone(width: 56, height: 26, radius: 999),
                     ],
                   ),
-                  if (isDesktop) ...<Widget>[
+                  if (isWideLayout) ...<Widget>[
                     const SizedBox(height: 24),
                     const Row(
                       children: <Widget>[
@@ -242,7 +242,7 @@ class _DetailSkeleton extends StatelessWidget {
             ),
           ],
         ),
-        if (!isDesktop) ...<Widget>[
+        if (!isWideLayout) ...<Widget>[
           const SizedBox(height: 18),
           const Row(
             children: <Widget>[
@@ -262,7 +262,7 @@ class _DetailSkeleton extends StatelessWidget {
         LayoutBuilder(
           builder: (BuildContext context, BoxConstraints constraints) {
             const double gap = 10;
-            final int columns = isDesktop ? 5 : 2;
+            final int columns = isWideLayout ? 5 : 2;
             final double tileWidth =
                 (constraints.maxWidth - gap * (columns - 1)) / columns;
             return Wrap(

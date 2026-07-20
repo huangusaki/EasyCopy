@@ -404,7 +404,7 @@ class ReaderScreenState extends State<ReaderScreen> {
     }
 
     double offset = topPadding;
-    final double maxReaderWidth = desktopReaderMaxWidth(
+    final double maxReaderWidth = wideReaderMaxWidth(
       context,
       preferences.pageFit,
     );
@@ -452,8 +452,8 @@ class ReaderScreenState extends State<ReaderScreen> {
             child: Center(
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxWidth: usesDesktopLayout(context)
-                      ? kDesktopReaderControlsMaxWidth
+                  maxWidth: usesWideLayout(context)
+                      ? kWideReaderControlsMaxWidth
                       : double.infinity,
                 ),
                 child: _buildReaderChapterControls(context, page),
@@ -514,7 +514,7 @@ class ReaderScreenState extends State<ReaderScreen> {
             child: Center(
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxWidth: desktopReaderMaxWidth(context, preferences.pageFit),
+                  maxWidth: wideReaderMaxWidth(context, preferences.pageFit),
                 ),
                 child: _buildReaderImageFrame(
                   context,
@@ -738,7 +738,7 @@ class ReaderScreenState extends State<ReaderScreen> {
       child: Center(
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: desktopReaderMaxWidth(context, preferences.pageFit),
+            maxWidth: wideReaderMaxWidth(context, preferences.pageFit),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,

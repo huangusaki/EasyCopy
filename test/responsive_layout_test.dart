@@ -6,7 +6,7 @@ void main() {
   testWidgets('Android wide screens keep the mobile window shell', (
     WidgetTester tester,
   ) async {
-    late bool usesWideLayout;
+    late bool usesWideScreenLayout;
     late bool usesDesktopShell;
 
     await tester.pumpWidget(
@@ -14,13 +14,13 @@ void main() {
         platform: TargetPlatform.android,
         size: const Size(1280, 800),
         onBuild: (BuildContext context) {
-          usesWideLayout = usesDesktopLayout(context);
+          usesWideScreenLayout = usesWideLayout(context);
           usesDesktopShell = usesDesktopWindowShell(context);
         },
       ),
     );
 
-    expect(usesWideLayout, isTrue);
+    expect(usesWideScreenLayout, isTrue);
     expect(usesDesktopShell, isFalse);
   });
 

@@ -19,9 +19,9 @@ class AppSurfaceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final bool isLight = colorScheme.brightness == Brightness.light;
-    final bool isDesktop = usesDesktopLayout(context);
+    final bool isWideLayout = usesWideLayout(context);
     final bool useGlassEffect =
-        isDesktop &&
+        isWideLayout &&
         Theme.of(context).scaffoldBackgroundColor == Colors.transparent;
 
     final Color cardColor = useGlassEffect
