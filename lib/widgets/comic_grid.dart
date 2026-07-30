@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/widgets/cover_image.dart';
 import 'package:reader/widgets/motion.dart';
 import 'package:reader/widgets/responsive_layout.dart';
@@ -335,7 +336,7 @@ class _ComicCardTileState extends State<ComicCardTile> {
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
-                        widget.item.badge,
+                        ChineseConverter.instance.convert(widget.item.badge),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 10,
@@ -361,7 +362,7 @@ class _ComicCardTileState extends State<ComicCardTile> {
               color: _isHovered ? colorScheme.primary : colorScheme.onSurface,
             ),
             child: Text(
-              widget.item.title,
+              ChineseConverter.instance.convert(widget.item.title),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -370,7 +371,7 @@ class _ComicCardTileState extends State<ComicCardTile> {
         if (widget.item.subtitle.isNotEmpty) ...<Widget>[
           const SizedBox(height: _comicSubtitleGap),
           Text(
-            widget.item.subtitle,
+            ChineseConverter.instance.convert(widget.item.subtitle),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -383,7 +384,7 @@ class _ComicCardTileState extends State<ComicCardTile> {
         if (widget.item.secondaryText.isNotEmpty) ...<Widget>[
           const SizedBox(height: _comicSecondaryGap),
           Text(
-            widget.item.secondaryText,
+            ChineseConverter.instance.convert(widget.item.secondaryText),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(

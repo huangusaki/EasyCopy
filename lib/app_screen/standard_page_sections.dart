@@ -30,7 +30,7 @@ extension _AppScreenPageSections on _AppScreenState {
                 ),
               Expanded(
                 child: Text(
-                  title,
+                  ChineseConverter.instance.convert(title),
                   style: TextStyle(
                     fontSize: 22,
                     height: 1.1,
@@ -532,7 +532,10 @@ extension _AppScreenPageSections on _AppScreenState {
       sections.add(
         _hPaddedBox(
           SurfaceBlock(
-            child: Text(page.summary, style: const TextStyle(height: 1.7)),
+            child: Text(
+              ChineseConverter.instance.convert(page.summary),
+              style: const TextStyle(height: 1.7),
+            ),
           ),
         ),
       );

@@ -100,7 +100,7 @@ class DetailChapterControlChip extends StatelessWidget {
           const SizedBox(width: 6),
         ],
         Text(
-          label,
+          ChineseConverter.instance.convert(label),
           style: TextStyle(
             color: foregroundColor,
             fontSize: 12,
@@ -245,7 +245,7 @@ class LinkChip extends StatelessWidget {
           borderRadius: BorderRadius.circular(999),
         ),
         child: Text(
-          label,
+          ChineseConverter.instance.convert(label),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -295,7 +295,7 @@ class FilterActionChip extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             Text(
-              label,
+              ChineseConverter.instance.convert(label),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(

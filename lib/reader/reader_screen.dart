@@ -15,6 +15,7 @@ import 'package:reader/reader/reader_controller.dart';
 import 'package:reader/reader/reader_image.dart';
 import 'package:reader/reader/reader_pinch_zoom.dart';
 import 'package:reader/reader/reader_progress_seek_bar.dart';
+import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/reader/reader_sheet_swipe_dismiss.dart';
 import 'package:reader/reader/reader_status_label.dart';
 import 'package:reader/services/app_preferences_controller.dart';
@@ -316,7 +317,7 @@ class ReaderScreenState extends State<ReaderScreen> {
                   children: <Widget>[
                     if (page.chapterTitle.isNotEmpty)
                       Text(
-                        page.chapterTitle,
+                        ChineseConverter.instance.convert(page.chapterTitle),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,

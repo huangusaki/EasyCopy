@@ -41,6 +41,9 @@ class AppPreferencesController extends ChangeNotifier {
   ProfileCollectionSort get profileCollectionSort =>
       _preferences.profileCollectionSort;
 
+  ChineseConversionMode get chineseConversionMode =>
+      _preferences.chineseConversionMode;
+
   Future<void> ensureInitialized() {
     return _initialization ??= _initialize();
   }
@@ -95,6 +98,12 @@ class AppPreferencesController extends ChangeNotifier {
       _preferences.copyWith(
         shortcutPreferences: transform(_preferences.shortcutPreferences),
       ),
+    );
+  }
+
+  Future<void> setChineseConversionMode(ChineseConversionMode mode) {
+    return _replacePreferences(
+      _preferences.copyWith(chineseConversionMode: mode),
     );
   }
 

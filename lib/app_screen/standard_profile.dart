@@ -39,6 +39,10 @@ extension _AppScreenProfileSections on _AppScreenState {
           onSelectHost: _selectHost,
           onAddHost: _addHost,
           onDeleteHost: _deleteHost,
+          chineseConversionMode: _preferencesController.chineseConversionMode,
+          onChineseConversionModeChanged: (ChineseConversionMode mode) {
+            unawaited(_preferencesController.setChineseConversionMode(mode));
+          },
           themePreference: _preferencesController.themePreference,
           onThemePreferenceChanged: (AppThemePreference preference) {
             unawaited(_preferencesController.setThemePreference(preference));

@@ -1,0 +1,3 @@
+[submodule "packages/flutter_opencc"]
+	path = packages/flutter_opencc
+	url = https://github.com/xyrlsz/flutter_opencc.git

@@ -64,7 +64,7 @@ class DetailHeroCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Text(
-                        page.title,
+                        ChineseConverter.instance.convert(page.title),
                         style: TextStyle(
                           fontSize: 27,
                           height: 1.15,
@@ -147,7 +147,7 @@ class DetailHeroCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      page.title,
+                      ChineseConverter.instance.convert(page.title),
                       style: const TextStyle(
                         fontSize: 24,
                         height: 1.05,
@@ -356,7 +356,7 @@ class InfoChip extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            label,
+            ChineseConverter.instance.convert(label),
             style: TextStyle(
               color: colorScheme.onSurface.withValues(alpha: 0.62),
               fontSize: 11,
@@ -365,7 +365,7 @@ class InfoChip extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            value,
+            ChineseConverter.instance.convert(value),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontWeight: FontWeight.w800),
@@ -464,7 +464,7 @@ class ChapterGrid extends StatelessWidget {
                   children: <Widget>[
                     Expanded(
                       child: Text(
-                        chapter.label,
+                        ChineseConverter.instance.convert(chapter.label),
                         maxLines: 1,
                         softWrap: false,
                         overflow: TextOverflow.ellipsis,

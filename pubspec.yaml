@@ -49,6 +49,8 @@ dependencies:
   file_selector: ^1.1.0
   sqflite_common_ffi: ^2.4.0+3
   window_manager: ^0.5.1
+  flutter_opencc:
+    path: packages/flutter_opencc
 
 dev_dependencies:
   flutter_test:
@@ -76,8 +78,7 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/icons/app_icon_rounded_1024.png
-
+  - assets/icons/app_icon_rounded_1024.png
   # To add assets to your application, add an assets section, like this:
 
   # An image asset can refer to one or more resolution-specific "variants", see

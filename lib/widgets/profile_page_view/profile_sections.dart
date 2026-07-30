@@ -1,5 +1,43 @@
 part of '../profile_page_view.dart';
 
+/// 繁简转换设置卡片
+class _ChineseConversionCard extends StatelessWidget {
+  const _ChineseConversionCard({required this.mode, this.onChanged});
+
+  final ChineseConversionMode mode;
+  final ValueChanged<ChineseConversionMode>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<DropdownMenuItem<ChineseConversionMode>> items =
+        ChineseConversionMode.values
+            .map((ChineseConversionMode value) {
+              return DropdownMenuItem<ChineseConversionMode>(
+                value: value,
+                child: Text(chineseConversionModeLabel(value)),
+              );
+            })
+            .toList(growable: false);
+
+    return _SectionCard(
+      title: '繁简转换',
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: SettingsSelectRow<ChineseConversionMode>(
+          label: '转换模式',
+          value: mode,
+          items: items,
+          onChanged: (ChineseConversionMode? value) {
+            if (value != null && onChanged != null) {
+              onChanged!(value);
+            }
+          },
+        ),
+      ),
+    );
+  }
+}
+
 class _VersionEntryCard extends StatelessWidget {
   const _VersionEntryCard({
     required this.versionLabel,
@@ -230,7 +268,7 @@ class _LibraryCard extends StatelessWidget {
           SizedBox(
             height: _titleHeight,
             child: Text(
-              item.title,
+              ChineseConverter.instance.convert(item.title),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -243,7 +281,7 @@ class _LibraryCard extends StatelessWidget {
           if (item.subtitle.isNotEmpty) ...<Widget>[
             const SizedBox(height: 4),
             Text(
-              item.subtitle,
+              ChineseConverter.instance.convert(item.subtitle),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -257,7 +295,7 @@ class _LibraryCard extends StatelessWidget {
           if (item.secondaryText.isNotEmpty) ...<Widget>[
             const SizedBox(height: 3),
             Text(
-              item.secondaryText,
+              ChineseConverter.instance.convert(item.secondaryText),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -305,7 +343,7 @@ class _HistoryTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
-                    item.title,
+                    ChineseConverter.instance.convert(item.title),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -316,7 +354,7 @@ class _HistoryTile extends StatelessWidget {
                   if (item.chapterLabel.isNotEmpty) ...<Widget>[
                     const SizedBox(height: 8),
                     Text(
-                      item.chapterLabel,
+                      ChineseConverter.instance.convert(item.chapterLabel),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(

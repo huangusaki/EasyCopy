@@ -2,6 +2,11 @@ part of '../app_screen.dart';
 
 extension _AppScreenBootstrapActions on _AppScreenState {
   void _handlePreferencesChanged() {
+    // 同步繁简转换模式
+    final ChineseConversionMode mode =
+        _preferencesController.chineseConversionMode;
+    ChineseConverter.instance.setMode(mode);
+
     final DownloadPreferences previousDownloadPreferences =
         _shell.lastDownloadPrefs ?? _preferencesController.downloadPreferences;
     final DownloadPreferences nextDownloadPreferences =

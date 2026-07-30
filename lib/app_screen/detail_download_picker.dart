@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:reader/app_screen/models.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/reader_progress_store.dart';
 import 'package:reader/services/uri_keys.dart';
@@ -158,7 +159,9 @@ Future<List<ChapterData>?> showDetailChapterDownloadPicker({
                                     4,
                                   ),
                                   child: Text(
-                                    section.label,
+                                    ChineseConverter.instance.convert(
+                                      section.label,
+                                    ),
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w800,
                                     ),
@@ -195,7 +198,11 @@ Future<List<ChapterData>?> showDetailChapterDownloadPicker({
                                             color: downloadedColor,
                                           )
                                         : null,
-                                    title: Text(chapter.label),
+                                    title: Text(
+                                      ChineseConverter.instance.convert(
+                                        chapter.label,
+                                      ),
+                                    ),
                                   );
                                 }),
                               ];

@@ -3,6 +3,24 @@ import 'package:reader/config/app_config.dart';
 import 'package:reader/models/shortcut_preferences.dart';
 import 'package:reader/theme/app_theme.dart';
 
+/// 繁简转换模式
+enum ChineseConversionMode {
+  /// 禁用转换
+  disabled,
+
+  /// 繁体 → 简体
+  t2s,
+}
+
+String chineseConversionModeLabel(ChineseConversionMode value) {
+  switch (value) {
+    case ChineseConversionMode.disabled:
+      return '关闭';
+    case ChineseConversionMode.t2s:
+      return '繁体 → 简体';
+  }
+}
+
 enum AppThemePreference {
   system,
   pureWhite,
@@ -470,6 +488,7 @@ class AppPreferences {
     this.shortcutPreferences = const ShortcutPreferences(),
     this.profileCollectionSort = AppConfig.defaultProfileCollectionSort,
     this.lastPrimaryTabIndex = 0,
+    this.chineseConversionMode = ChineseConversionMode.disabled,
   });
 
   factory AppPreferences.fromJson(Map<String, Object?> json) {
@@ -509,6 +528,11 @@ class AppPreferences {
         AppConfig.defaultProfileCollectionSort,
       ),
       lastPrimaryTabIndex: _primaryTabIndex(json['lastPrimaryTabIndex']),
+      chineseConversionMode: _enumValue<ChineseConversionMode>(
+        ChineseConversionMode.values,
+        json['chineseConversionMode'],
+        ChineseConversionMode.disabled,
+      ),
     );
   }
 
@@ -534,7 +558,7 @@ class AppPreferences {
   final ShortcutPreferences shortcutPreferences;
   final ProfileCollectionSort profileCollectionSort;
   final int lastPrimaryTabIndex;
-
+  final ChineseConversionMode chineseConversionMode;
   ThemeMode get materialThemeMode {
     switch (themePreference) {
       case AppThemePreference.system:
@@ -598,6 +622,7 @@ class AppPreferences {
     ShortcutPreferences? shortcutPreferences,
     ProfileCollectionSort? profileCollectionSort,
     int? lastPrimaryTabIndex,
+    ChineseConversionMode? chineseConversionMode,
   }) {
     return AppPreferences(
       themePreference: themePreference ?? this.themePreference,
@@ -608,6 +633,8 @@ class AppPreferences {
       profileCollectionSort:
           profileCollectionSort ?? this.profileCollectionSort,
       lastPrimaryTabIndex: lastPrimaryTabIndex ?? this.lastPrimaryTabIndex,
+      chineseConversionMode:
+          chineseConversionMode ?? this.chineseConversionMode,
     );
   }
 
@@ -620,6 +647,7 @@ class AppPreferences {
       'shortcutPreferences': shortcutPreferences.toJson(),
       'profileCollectionSort': _enumName(profileCollectionSort),
       'lastPrimaryTabIndex': lastPrimaryTabIndex,
+      'chineseConversionMode': _enumName(chineseConversionMode),
     };
   }
 }

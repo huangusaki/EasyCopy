@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/host_manager.dart';
 import 'package:reader/services/wallpaper_storage.dart';
 import 'package:reader/widgets/comic_grid.dart';
@@ -70,6 +71,8 @@ class ProfilePageView extends StatelessWidget {
     this.onThemePreferenceChanged,
     this.wallpaperPreferences = const WallpaperPreferences(),
     this.wallpaperActions,
+    this.chineseConversionMode = ChineseConversionMode.disabled,
+    this.onChineseConversionModeChanged,
     this.afterContinueReading,
     this.cachedComicCards = const <ComicCardData>[],
     this.activeSubview = ProfileSubview.root,
@@ -109,6 +112,8 @@ class ProfilePageView extends StatelessWidget {
   final ValueChanged<AppThemePreference>? onThemePreferenceChanged;
   final WallpaperPreferences wallpaperPreferences;
   final WallpaperEditingActions? wallpaperActions;
+  final ChineseConversionMode chineseConversionMode;
+  final ValueChanged<ChineseConversionMode>? onChineseConversionModeChanged;
   final Widget? afterContinueReading;
   final List<ComicCardData> cachedComicCards;
   final ProfileSubview activeSubview;
@@ -317,6 +322,13 @@ class ProfilePageView extends StatelessWidget {
         onChanged: onThemePreferenceChanged,
         wallpaper: wallpaperPreferences,
         wallpaperActions: wallpaperActions,
+      ),
+    );
+
+    addSection(
+      _ChineseConversionCard(
+        mode: chineseConversionMode,
+        onChanged: onChineseConversionModeChanged,
       ),
     );
 

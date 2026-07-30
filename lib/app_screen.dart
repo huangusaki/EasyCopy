@@ -27,6 +27,7 @@ import 'package:reader/reader/reader_screen.dart';
 import 'package:reader/services/android_document_tree_bridge.dart';
 import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/app_update_checker.dart';
+import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/debug_trace.dart';
 import 'package:reader/services/desktop_page_extractor.dart';

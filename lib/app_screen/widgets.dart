@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:reader/app_screen/models.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/theme/app_theme.dart';
 import 'package:reader/widgets/cover_image.dart';
 import 'package:reader/widgets/responsive_layout.dart';
@@ -74,7 +75,7 @@ class SectionHeader extends StatelessWidget {
           ),
           Expanded(
             child: Text(
-              title,
+              ChineseConverter.instance.convert(title),
               style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w900,
