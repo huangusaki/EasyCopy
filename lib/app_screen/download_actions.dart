@@ -122,7 +122,11 @@ extension _AppScreenDownloadActions on _AppScreenState {
     if (!mounted || message.trim().isEmpty) {
       return;
     }
-    _showNotice(message);
+    _showDownloadNotice(message);
+  }
+
+  void _showDownloadNotice(String message) {
+    _showNotice(ChineseConverter.instance.convert(message));
   }
 
   DownloadQueueSnapshot get _downloadQueueSnapshot =>
@@ -263,12 +267,12 @@ extension _AppScreenDownloadActions on _AppScreenState {
         );
 
     if (!enqueueResult.hasAddedTasks) {
-      _showNotice(enqueueResult.failureNotice());
+      _showDownloadNotice(enqueueResult.failureNotice());
       return;
     }
 
     final bool keepPaused = await _downloadQueueManager.addTasks(newTasks);
-    _showNotice(enqueueResult.successNotice(keepPaused: keepPaused));
+    _showDownloadNotice(enqueueResult.successNotice(keepPaused: keepPaused));
   }
 
   Future<void> _pauseDownloadQueue() async {
@@ -277,7 +281,7 @@ extension _AppScreenDownloadActions on _AppScreenState {
       return;
     }
     await _downloadQueueManager.pauseQueue();
-    _showNotice('后台缓存将在当前图片完成后暂停');
+    _showDownloadNotice('后台缓存将在当前图片完成后暂停');
   }
 
   Future<void> _resumeDownloadQueue() async {
@@ -285,7 +289,7 @@ extension _AppScreenDownloadActions on _AppScreenState {
       return;
     }
     await _downloadQueueManager.resumeQueue();
-    _showNotice('已继续后台缓存');
+    _showDownloadNotice('已继续后台缓存');
   }
 
   Future<bool> _confirmDialog({
@@ -293,22 +297,28 @@ extension _AppScreenDownloadActions on _AppScreenState {
     required String content,
     required String confirmLabel,
   }) async {
+    final ChineseConverter converter = ChineseConverter.instance;
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text(title),
-          content: Text(content),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: Text(confirmLabel),
-            ),
-          ],
+        return ListenableBuilder(
+          listenable: converter,
+          builder: (BuildContext context, Widget? _) {
+            return AlertDialog(
+              title: Text(converter.convert(title)),
+              content: Text(converter.convert(content)),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: Text(converter.convert(confirmLabel)),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -316,9 +326,12 @@ extension _AppScreenDownloadActions on _AppScreenState {
   }
 
   Future<void> _confirmDeleteCachedComic(CachedComicLibraryEntry item) async {
+    final String comicTitle = item.comicTitle.trim().isEmpty
+        ? '当前漫画'
+        : item.comicTitle;
     if (!await _confirmDialog(
       title: '删除已缓存漫画',
-      content: '确认删除《${item.comicTitle}》的本地缓存吗？',
+      content: '确认删除《$comicTitle》的本地缓存吗？',
       confirmLabel: '删除',
     )) {
       return;
@@ -327,31 +340,37 @@ extension _AppScreenDownloadActions on _AppScreenState {
         ? item.comicTitle
         : _comicQueueKey(item.comicHref);
     await _downloadQueueManager.deleteCachedComic(item, comicKey: comicKey);
-    _showNotice('已删除 ${item.comicTitle} 的缓存');
+    _showDownloadNotice('已删除 $comicTitle 的缓存');
   }
 
   Future<void> _confirmRemoveQueuedComic(DownloadQueueTask task) async {
+    final String comicTitle = task.comicTitle.trim().isEmpty
+        ? '当前漫画'
+        : task.comicTitle;
     if (!await _confirmDialog(
       title: '移出缓存队列',
-      content: '确认停止《${task.comicTitle}》的后台缓存，并清理未完成文件吗？',
+      content: '确认停止《$comicTitle》的后台缓存，并清理未完成文件吗？',
       confirmLabel: '移出',
     )) {
       return;
     }
     await _downloadQueueManager.removeQueuedComic(task);
-    _showNotice('已移出 ${task.comicTitle} 的缓存任务');
+    _showDownloadNotice('已移出 $comicTitle 的缓存任务');
   }
 
   Future<void> _confirmRemoveComicCache(DownloadQueueTask task) async {
+    final String comicTitle = task.comicTitle.trim().isEmpty
+        ? '当前漫画'
+        : task.comicTitle;
     if (!await _confirmDialog(
       title: '移除漫画缓存',
-      content: '确认停止《${task.comicTitle}》的后台缓存，并删除这部漫画已缓存的章节吗？',
+      content: '确认停止《$comicTitle》的后台缓存，并删除这部漫画已缓存的章节吗？',
       confirmLabel: '移除',
     )) {
       return;
     }
     await _downloadQueueManager.removeComicAndDeleteCache(task);
-    _showNotice('已移除 ${task.comicTitle} 的下载任务和本地缓存');
+    _showDownloadNotice('已移除 $comicTitle 的下载任务和本地缓存');
   }
 
   Future<void> _confirmClearDownloadQueue() async {
@@ -363,30 +382,39 @@ extension _AppScreenDownloadActions on _AppScreenState {
       return;
     }
     await _downloadQueueManager.clearQueue();
-    _showNotice('已清空下载队列');
+    _showDownloadNotice('已清空下载队列');
   }
 
   Future<void> _confirmRemoveQueuedTask(DownloadQueueTask task) async {
+    final String comicTitle = task.comicTitle.trim().isEmpty
+        ? '当前漫画'
+        : task.comicTitle;
+    final String chapterLabel = task.chapterLabel.trim().isEmpty
+        ? '当前章节'
+        : task.chapterLabel;
     if (!await _confirmDialog(
       title: '移出章节任务',
-      content: '确认移出《${task.comicTitle}》的 ${task.chapterLabel} 吗？',
+      content: '确认移出《$comicTitle》的 $chapterLabel 吗？',
       confirmLabel: '移出',
     )) {
       return;
     }
     await _downloadQueueManager.removeQueuedTask(task);
-    _showNotice('已移出 ${task.chapterLabel}');
+    _showDownloadNotice('已移出 $chapterLabel');
   }
 
   Future<void> _retryDownloadQueueTask(DownloadQueueTask task) async {
+    final String chapterLabel = task.chapterLabel.trim().isEmpty
+        ? '当前章节'
+        : task.chapterLabel;
     await _downloadQueueManager.retryTask(task);
-    _showNotice('已重新加入 ${task.chapterLabel}');
+    _showDownloadNotice('已重新加入 $chapterLabel');
   }
 
   bool _canEditDownloadStorage() {
     final String? reason = _downloadQueueManager.storageEditBlockReason();
     if (reason != null) {
-      _showNotice(reason);
+      _showDownloadNotice(reason);
       return false;
     }
     return true;
@@ -456,10 +484,10 @@ extension _AppScreenDownloadActions on _AppScreenState {
       if (result == null) {
         return;
       }
-      _showNotice('$successMessage，完成后自动切换');
+      _showDownloadNotice('$successMessage，完成后自动切换');
     } catch (error) {
       await _refreshDownloadStorageState();
-      _showNotice(formatDownloadError(error));
+      _showDownloadNotice(formatDownloadError(error));
     }
   }
 

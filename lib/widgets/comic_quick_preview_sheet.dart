@@ -20,7 +20,15 @@ Future<void> showComicQuickPreview(
     elevation: 0,
     constraints: const BoxConstraints(maxWidth: 520),
     builder: (BuildContext context) {
-      return _ComicQuickPreviewSheet(item: item, onOpenDetail: onOpenDetail);
+      return ListenableBuilder(
+        listenable: ChineseConverter.instance,
+        builder: (BuildContext context, Widget? _) {
+          return _ComicQuickPreviewSheet(
+            item: item,
+            onOpenDetail: onOpenDetail,
+          );
+        },
+      );
     },
   );
 }

@@ -32,6 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -114,6 +115,7 @@ jobs:
           $version = '${{ steps.meta.outputs.app_version }}'
           $buildOutputDir = Join-Path $env:GITHUB_WORKSPACE 'build\windows\x64\runner\Release'
           $sourceExePath = Join-Path $buildOutputDir 'easy_copy.exe'
+          $noticeSourcePath = Join-Path $env:GITHUB_WORKSPACE 'NOTICE'
           $distDir = Join-Path $env:GITHUB_WORKSPACE 'dist'
           $artifactDirName = "easy_copy-$version-windows-x64"
           $artifactDirPath = Join-Path $distDir $artifactDirName
@@ -123,12 +125,17 @@ jobs:
             throw "Build succeeded but easy_copy.exe was not found under $buildOutputDir"
           }
 
+          if (-not (Test-Path -LiteralPath $noticeSourcePath)) {
+            throw "Third-party NOTICE file was not found: $noticeSourcePath"
+          }
+
           if (Test-Path -LiteralPath $distDir) {
             Remove-Item -LiteralPath $distDir -Recurse -Force
           }
 
           New-Item -ItemType Directory -Path $artifactDirPath | Out-Null
           Copy-Item -Path (Join-Path $buildOutputDir '*') -Destination $artifactDirPath -Recurse -Force
+          Copy-Item -LiteralPath $noticeSourcePath -Destination (Join-Path $artifactDirPath 'NOTICE') -Force
           Compress-Archive -LiteralPath $artifactDirPath -DestinationPath $artifactZipPath -Force
 
           if (-not (Test-Path -LiteralPath $artifactZipPath)) {

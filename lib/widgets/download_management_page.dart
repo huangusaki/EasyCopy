@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
@@ -111,6 +112,24 @@ class DownloadManagementPage extends StatefulWidget {
 }
 
 class _DownloadManagementPageState extends State<DownloadManagementPage> {
+  @override
+  void initState() {
+    super.initState();
+    ChineseConverter.instance.addListener(_handleConversionModeChanged);
+  }
+
+  void _handleConversionModeChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    ChineseConverter.instance.removeListener(_handleConversionModeChanged);
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(

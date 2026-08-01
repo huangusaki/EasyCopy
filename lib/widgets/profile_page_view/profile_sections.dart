@@ -1,6 +1,6 @@
 part of '../profile_page_view.dart';
 
-/// 繁简转换设置卡片
+/// 简体显示设置卡片
 class _ChineseConversionCard extends StatelessWidget {
   const _ChineseConversionCard({required this.mode, this.onChanged});
 
@@ -9,28 +9,19 @@ class _ChineseConversionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final List<DropdownMenuItem<ChineseConversionMode>> items =
-        ChineseConversionMode.values
-            .map((ChineseConversionMode value) {
-              return DropdownMenuItem<ChineseConversionMode>(
-                value: value,
-                child: Text(chineseConversionModeLabel(value)),
-              );
-            })
-            .toList(growable: false);
-
     return _SectionCard(
-      title: '繁简转换',
+      title: '文字显示',
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: SettingsSelectRow<ChineseConversionMode>(
-          label: '转换模式',
-          value: mode,
-          items: items,
-          onChanged: (ChineseConversionMode? value) {
-            if (value != null && onChanged != null) {
-              onChanged!(value);
-            }
+        child: SettingsSwitchRow(
+          label: '显示简体',
+          value: mode == ChineseConversionMode.t2s,
+          onChanged: (bool value) {
+            onChanged?.call(
+              value
+                  ? ChineseConversionMode.t2s
+                  : ChineseConversionMode.disabled,
+            );
           },
         ),
       ),

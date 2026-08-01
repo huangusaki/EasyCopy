@@ -79,6 +79,7 @@ flutter:
 
   assets:
   - assets/icons/app_icon_rounded_1024.png
+  - NOTICE
   # To add assets to your application, add an assets section, like this:
 
   # An image asset can refer to one or more resolution-specific "variants", see

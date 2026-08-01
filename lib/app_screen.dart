@@ -148,6 +148,8 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
   WebViewController? _controller;
   WebViewController? _downloadController;
   late final AppPreferencesController _preferencesController;
+  ChineseConversionMode? _requestedChineseConversionMode;
+  int _chineseConversionRequestGeneration = 0;
   final AppScreenServices _services = AppScreenServices();
   final AppScreenUiState _ui = AppScreenUiState();
   final AppNavigationState _nav = AppNavigationState();
@@ -253,6 +255,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
       onNotice: _handleDownloadQueueNotice,
     );
     _preferencesController.addListener(_handlePreferencesChanged);
+    _requestChineseConversionMode(_preferencesController.chineseConversionMode);
     _searchActions.attach();
     _ui.standardScrollController.addListener(_scrollState.handleStandardScroll);
     unawaited(_loadAppVersionInfo());

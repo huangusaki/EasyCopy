@@ -98,9 +98,16 @@ class _CachedComicRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final String latestChapterTitle = entry.chapters.isEmpty
-        ? '暂无章节'
+    final ChineseConverter converter = ChineseConverter.instance;
+    final String comicTitle = entry.comicTitle.trim().isEmpty
+        ? '未命名漫画'
+        : entry.comicTitle;
+    final String rawLatestChapterTitle = entry.chapters.isEmpty
+        ? ''
         : entry.chapters.first.chapterTitle;
+    final String latestChapterTitle = rawLatestChapterTitle.trim().isEmpty
+        ? '暂无章节'
+        : rawLatestChapterTitle;
     final int cachedCount = entry.cachedChapterCount;
     final int totalCount = entry.detailSnapshot?.totalChapterCount ?? 0;
     final bool hasCoverage = totalCount > 0 && totalCount >= cachedCount;
@@ -123,14 +130,14 @@ class _CachedComicRow extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      entry.comicTitle,
+                      converter.convert(comicTitle),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      latestChapterTitle,
+                      converter.convert(latestChapterTitle),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(

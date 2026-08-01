@@ -12,15 +12,6 @@ enum ChineseConversionMode {
   t2s,
 }
 
-String chineseConversionModeLabel(ChineseConversionMode value) {
-  switch (value) {
-    case ChineseConversionMode.disabled:
-      return '关闭';
-    case ChineseConversionMode.t2s:
-      return '繁体 → 简体';
-  }
-}
-
 enum AppThemePreference {
   system,
   pureWhite,
