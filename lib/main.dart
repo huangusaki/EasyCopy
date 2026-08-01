@@ -13,5 +13,6 @@ Future<void> main() async {
       AppPreferencesController.instance;
   await preferencesController.ensureInitialized();
   await WallpaperStorage.instance.ensureReady();
+
   runApp(AppRoot(preferencesController: preferencesController));
 }

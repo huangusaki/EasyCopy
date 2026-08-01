@@ -528,8 +528,6 @@ class PageRepository {
 
   bool _isSupportedCache(CachedPageEnvelope envelope) {
     return envelope.pageType != SitePageType.reader ||
-        envelope.fingerprint.startsWith(
-          '$_readerCacheFingerprintVersion::',
-        );
+        envelope.fingerprint.startsWith('$_readerCacheFingerprintVersion::');
   }
 }

@@ -915,7 +915,9 @@ class HostManager {
     final List<String> labels = normalizedHost.split('.');
     return labels.every(
       (String label) =>
-          label.isNotEmpty && label.length <= 63 && labelPattern.hasMatch(label),
+          label.isNotEmpty &&
+          label.length <= 63 &&
+          labelPattern.hasMatch(label),
     );
   }
 

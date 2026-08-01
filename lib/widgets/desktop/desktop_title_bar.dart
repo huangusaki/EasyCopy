@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/widgets/desktop/desktop_window_controls.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -199,7 +200,7 @@ class _AnimatedPageTitle extends StatelessWidget {
             );
           },
           child: Text(
-            title,
+            ChineseConverter.instance.convert(title),
             key: ValueKey<String>(title),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,

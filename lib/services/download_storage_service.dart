@@ -458,7 +458,7 @@ class DownloadStorageService {
   String _normalizedPath(String value) => normalizeStoragePath(value);
 }
 
-  /// 归一化路径用于比较，Windows 下忽略大小写。
+/// 归一化路径用于比较，Windows 下忽略大小写。
 String normalizeStoragePath(String value) {
   final String normalized = value.trim().replaceAll(
     '/',

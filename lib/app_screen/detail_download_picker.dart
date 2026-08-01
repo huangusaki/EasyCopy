@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:reader/app_screen/models.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/reader_progress_store.dart';
 import 'package:reader/services/uri_keys.dart';
@@ -145,62 +146,74 @@ Future<List<ChapterData>?> showDetailChapterDownloadPicker({
                     ),
                     const SizedBox(height: 8),
                     Expanded(
-                      child: ListView(
-                        shrinkWrap: true,
-                        children: sections
-                            .expand((ChapterPickerSection section) {
-                              return <Widget>[
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    4,
-                                    10,
-                                    4,
-                                    4,
-                                  ),
-                                  child: Text(
-                                    section.label,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
+                      child: ListenableBuilder(
+                        listenable: ChineseConverter.instance,
+                        builder: (BuildContext context, Widget? _) {
+                          return ListView(
+                            shrinkWrap: true,
+                            children: sections
+                                .expand((ChapterPickerSection section) {
+                                  return <Widget>[
+                                    Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        4,
+                                        10,
+                                        4,
+                                        4,
+                                      ),
+                                      child: Text(
+                                        ChineseConverter.instance.convert(
+                                          section.label,
+                                        ),
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
                                     ),
-                                  ),
-                                ),
-                                ...section.chapters.map((ChapterData chapter) {
-                                  final String key = chapterPathKey(
-                                    chapter.href,
-                                  );
-                                  final bool isDownloaded = downloadedKeys
-                                      .contains(key);
-                                  final bool selected = selectedKeys.contains(
-                                    key,
-                                  );
-                                  final Color downloadedColor = Theme.of(
-                                    context,
-                                  ).extension<AppSemanticColors>()!.success;
-                                  return CheckboxListTile(
-                                    value: selected,
-                                    controlAffinity:
-                                        ListTileControlAffinity.leading,
-                                    onChanged: (bool? nextValue) {
-                                      setModalState(() {
-                                        if (nextValue ?? false) {
-                                          selectedKeys.add(key);
-                                        } else {
-                                          selectedKeys.remove(key);
-                                        }
-                                      });
-                                    },
-                                    secondary: isDownloaded
-                                        ? Icon(
-                                            Icons.check_circle_rounded,
-                                            color: downloadedColor,
-                                          )
-                                        : null,
-                                    title: Text(chapter.label),
-                                  );
-                                }),
-                              ];
-                            })
-                            .toList(growable: false),
+                                    ...section.chapters.map((
+                                      ChapterData chapter,
+                                    ) {
+                                      final String key = chapterPathKey(
+                                        chapter.href,
+                                      );
+                                      final bool isDownloaded = downloadedKeys
+                                          .contains(key);
+                                      final bool selected = selectedKeys
+                                          .contains(key);
+                                      final Color downloadedColor = Theme.of(
+                                        context,
+                                      ).extension<AppSemanticColors>()!.success;
+                                      return CheckboxListTile(
+                                        value: selected,
+                                        controlAffinity:
+                                            ListTileControlAffinity.leading,
+                                        onChanged: (bool? nextValue) {
+                                          setModalState(() {
+                                            if (nextValue ?? false) {
+                                              selectedKeys.add(key);
+                                            } else {
+                                              selectedKeys.remove(key);
+                                            }
+                                          });
+                                        },
+                                        secondary: isDownloaded
+                                            ? Icon(
+                                                Icons.check_circle_rounded,
+                                                color: downloadedColor,
+                                              )
+                                            : null,
+                                        title: Text(
+                                          ChineseConverter.instance.convert(
+                                            chapter.label,
+                                          ),
+                                        ),
+                                      );
+                                    }),
+                                  ];
+                                })
+                                .toList(growable: false),
+                          );
+                        },
                       ),
                     ),
                     const SizedBox(height: 12),

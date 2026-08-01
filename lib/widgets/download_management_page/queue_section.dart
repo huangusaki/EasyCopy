@@ -17,6 +17,13 @@ class _CurrentTaskSection extends StatelessWidget {
     if (activeTask == null) {
       return const AppSurfaceCard(title: '当前任务', child: Text('队列空闲。'));
     }
+    final ChineseConverter converter = ChineseConverter.instance;
+    final String comicTitle = activeTask.comicTitle.trim().isEmpty
+        ? '未命名漫画'
+        : activeTask.comicTitle;
+    final String chapterLabel = activeTask.chapterLabel.trim().isEmpty
+        ? '未命名章节'
+        : activeTask.chapterLabel;
     return AppSurfaceCard(
       title: '当前任务',
       action: FilledButton.tonal(
@@ -27,14 +34,14 @@ class _CurrentTaskSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            activeTask.comicTitle,
+            converter.convert(comicTitle),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 6),
           Text(
-            activeTask.chapterLabel,
+            converter.convert(chapterLabel),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -46,9 +53,11 @@ class _CurrentTaskSection extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            activeTask.progressLabel.isEmpty
-                ? (snapshot.isPaused ? '队列已暂停' : '准备缓存')
-                : activeTask.progressLabel,
+            converter.convert(
+              activeTask.progressLabel.isEmpty
+                  ? (snapshot.isPaused ? '队列已暂停' : '准备缓存')
+                  : activeTask.progressLabel,
+            ),
           ),
           const SizedBox(height: 12),
           LinearProgressIndicator(
@@ -150,6 +159,14 @@ class _QueueGroupRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final ChineseConverter converter = ChineseConverter.instance;
+    final String comicTitle = group.task.comicTitle.trim().isEmpty
+        ? '未命名漫画'
+        : group.task.comicTitle;
+    final String rawChapterLabel = group.primaryChapterLabel;
+    final String chapterLabel = rawChapterLabel.trim().isEmpty
+        ? '未命名章节'
+        : rawChapterLabel;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
@@ -181,14 +198,14 @@ class _QueueGroupRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
-                  group.task.comicTitle,
+                  converter.convert(comicTitle),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  group.primaryChapterLabel,
+                  converter.convert(chapterLabel),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -198,7 +215,7 @@ class _QueueGroupRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  group.summary,
+                  converter.convert(group.summary),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(

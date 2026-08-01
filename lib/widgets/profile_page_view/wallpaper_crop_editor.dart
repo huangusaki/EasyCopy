@@ -213,9 +213,7 @@ class _WallpaperCropEditorPageState extends State<WallpaperCropEditorPage> {
   }
 
   void _confirm() {
-    Navigator.of(
-      context,
-    ).pop(Rect.fromLTWH(_left, _top, _width, _height));
+    Navigator.of(context).pop(Rect.fromLTWH(_left, _top, _width, _height));
   }
 
   @override
@@ -328,7 +326,10 @@ class _CropOverlayPainter extends CustomPainter {
       Path()..addRect(full),
       Path()..addRect(selection),
     );
-    canvas.drawPath(scrim, Paint()..color = Colors.black.withValues(alpha: 0.55));
+    canvas.drawPath(
+      scrim,
+      Paint()..color = Colors.black.withValues(alpha: 0.55),
+    );
 
     canvas.drawRect(
       selection,

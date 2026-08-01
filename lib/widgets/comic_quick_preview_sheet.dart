@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/widgets/cover_image.dart';
 
 Future<void> showComicQuickPreview(
@@ -19,7 +20,15 @@ Future<void> showComicQuickPreview(
     elevation: 0,
     constraints: const BoxConstraints(maxWidth: 520),
     builder: (BuildContext context) {
-      return _ComicQuickPreviewSheet(item: item, onOpenDetail: onOpenDetail);
+      return ListenableBuilder(
+        listenable: ChineseConverter.instance,
+        builder: (BuildContext context, Widget? _) {
+          return _ComicQuickPreviewSheet(
+            item: item,
+            onOpenDetail: onOpenDetail,
+          );
+        },
+      );
     },
   );
 }
@@ -113,7 +122,7 @@ class _ComicQuickPreviewSheet extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: <Widget>[
                             Text(
-                              item.title,
+                              ChineseConverter.instance.convert(item.title),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -126,7 +135,9 @@ class _ComicQuickPreviewSheet extends StatelessWidget {
                             if (item.subtitle.isNotEmpty) ...<Widget>[
                               const SizedBox(height: 8),
                               Text(
-                                item.subtitle,
+                                ChineseConverter.instance.convert(
+                                  item.subtitle,
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -141,7 +152,9 @@ class _ComicQuickPreviewSheet extends StatelessWidget {
                             if (item.secondaryText.isNotEmpty) ...<Widget>[
                               const SizedBox(height: 5),
                               Text(
-                                item.secondaryText,
+                                ChineseConverter.instance.convert(
+                                  item.secondaryText,
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -164,7 +177,7 @@ class _ComicQuickPreviewSheet extends StatelessWidget {
                                   borderRadius: BorderRadius.circular(999),
                                 ),
                                 child: Text(
-                                  item.badge,
+                                  ChineseConverter.instance.convert(item.badge),
                                   style: TextStyle(
                                     fontSize: 11,
                                     fontWeight: FontWeight.w800,

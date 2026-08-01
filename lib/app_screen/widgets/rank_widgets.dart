@@ -49,7 +49,7 @@ class RankCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Text(
-                item.rankLabel,
+                ChineseConverter.instance.convert(item.rankLabel),
                 style: TextStyle(
                   color: colorScheme.onSecondaryContainer,
                   fontWeight: FontWeight.w900,
@@ -68,7 +68,7 @@ class RankCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
-                    item.title,
+                    ChineseConverter.instance.convert(item.title),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -80,7 +80,7 @@ class RankCard extends StatelessWidget {
                   if (item.authors.isNotEmpty) ...<Widget>[
                     const SizedBox(height: 8),
                     Text(
-                      item.authors,
+                      ChineseConverter.instance.convert(item.authors),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -94,7 +94,7 @@ class RankCard extends StatelessWidget {
                     children: <Widget>[
                       Expanded(
                         child: Text(
-                          item.heat,
+                          ChineseConverter.instance.convert(item.heat),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -120,7 +120,7 @@ class RankCard extends StatelessWidget {
                             Icon(trendIcon, size: 16, color: trendColor),
                             const SizedBox(width: 4),
                             Text(
-                              trendLabel,
+                              ChineseConverter.instance.convert(trendLabel),
                               style: TextStyle(
                                 color: trendColor,
                                 fontSize: 11,

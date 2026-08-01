@@ -27,6 +27,7 @@ import 'package:reader/reader/reader_screen.dart';
 import 'package:reader/services/android_document_tree_bridge.dart';
 import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/app_update_checker.dart';
+import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/debug_trace.dart';
 import 'package:reader/services/desktop_page_extractor.dart';
@@ -147,6 +148,8 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
   WebViewController? _controller;
   WebViewController? _downloadController;
   late final AppPreferencesController _preferencesController;
+  ChineseConversionMode? _requestedChineseConversionMode;
+  int _chineseConversionRequestGeneration = 0;
   final AppScreenServices _services = AppScreenServices();
   final AppScreenUiState _ui = AppScreenUiState();
   final AppNavigationState _nav = AppNavigationState();
@@ -252,6 +255,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
       onNotice: _handleDownloadQueueNotice,
     );
     _preferencesController.addListener(_handlePreferencesChanged);
+    _requestChineseConversionMode(_preferencesController.chineseConversionMode);
     _searchActions.attach();
     _ui.standardScrollController.addListener(_scrollState.handleStandardScroll);
     unawaited(_loadAppVersionInfo());

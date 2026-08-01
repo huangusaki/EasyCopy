@@ -103,9 +103,7 @@ class AppScrollState {
       standardScrollController.jumpTo(0);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_restore.isActive(ticket) ||
-          !isMounted() ||
-          !_canJumpScroll) {
+      if (!_restore.isActive(ticket) || !isMounted() || !_canJumpScroll) {
         _finishRestore(ticket);
         return;
       }

@@ -360,9 +360,7 @@ class _ShortcutRecorderDialogState extends State<_ShortcutRecorderDialog> {
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: canSave
-              ? () => Navigator.of(context).pop(captured)
-              : null,
+          onPressed: canSave ? () => Navigator.of(context).pop(captured) : null,
           child: const Text('保存'),
         ),
       ],

@@ -600,8 +600,7 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
   }
 
   Future<void> _handleAddHost() async {
-    final FutureOr<String> Function(String value)? onAddHost =
-        widget.onAddHost;
+    final FutureOr<String> Function(String value)? onAddHost = widget.onAddHost;
     if (onAddHost == null) {
       return;
     }
