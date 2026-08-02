@@ -268,7 +268,7 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
       _standardPageLoadController.clear(pendingLoad);
       _detachPrimaryWebViewIfIdle();
     } catch (_) {
-      _failPendingPageLoad('轉換資料解析失敗。');
+      _failPendingPageLoad('转换数据解析失败。');
     }
   }
 

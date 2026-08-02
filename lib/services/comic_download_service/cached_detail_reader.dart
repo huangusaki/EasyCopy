@@ -65,7 +65,6 @@ extension ComicCacheDetailsOps on ComicDownloadService {
       aliases: snapshot?.aliases ?? '',
       authors: snapshot?.authors ?? '',
       authorLinks: snapshot?.authorLinks ?? const <LinkAction>[],
-      heat: snapshot?.heat ?? '',
       updatedAt: snapshot?.updatedAt ?? '',
       status: snapshot?.status ?? '已缓存',
       summary: snapshot?.summary ?? '',

@@ -34,6 +34,7 @@ class AppRoot extends StatelessWidget {
           darkTheme: darkTheme.applyWallpaperOverlay(active: wallpaperActive),
           themeMode: controller.preferences.materialThemeMode,
           builder: (BuildContext context, Widget? child) {
+            final MediaQueryData mediaQuery = MediaQuery.of(context);
             final ThemeData theme = Theme.of(context);
             final Brightness brightness = theme.brightness;
             final Brightness iconBrightness = brightness == Brightness.dark
@@ -52,9 +53,14 @@ class AppRoot extends StatelessWidget {
               );
             }
             if (PlatformCapabilities.isDesktop) {
-              // 桌面辅助功能语义树会持续报错并拖慢帧，先屏蔽。
               body = ExcludeSemantics(child: body);
             }
+            body = MediaQuery(
+              data: mediaQuery.copyWith(
+                textScaler: mediaQuery.textScaler.clamp(maxScaleFactor: 1.3),
+              ),
+              child: body,
+            );
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: SystemUiOverlayStyle(
                 statusBarColor: Colors.transparent,

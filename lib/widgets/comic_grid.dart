@@ -19,22 +19,34 @@ const double _wideComicSecondaryHeight = 14;
 const double _comicMetaLineHeight = 1.2;
 const double _comicLayoutSlack = 4;
 
+/// 标题固定高度按当前字号缩放：其预算恰好等于「字号 × 行高 × 2 行」，
+/// headroom 为 0，不跟着 textScaler 放大就会裁字。
+double comicCardTitleHeightFor({
+  required bool isWideLayout,
+  TextScaler textScaler = TextScaler.noScaling,
+}) {
+  final double base = isWideLayout ? _wideComicTitleHeight : _comicTitleHeight;
+  return textScaler.scale(base);
+}
+
 double comicCardHeightFor({
   required double itemWidth,
   required bool hasSubtitle,
   required bool hasSecondary,
   bool isWideLayout = false,
+  TextScaler textScaler = TextScaler.noScaling,
 }) {
   double extra = 0;
-  final double titleHeight = isWideLayout
-      ? _wideComicTitleHeight
-      : _comicTitleHeight;
-  final double subtitleHeight = isWideLayout
-      ? _wideComicSubtitleHeight
-      : _comicSubtitleHeight;
-  final double secondaryHeight = isWideLayout
-      ? _wideComicSecondaryHeight
-      : _comicSecondaryHeight;
+  final double titleHeight = comicCardTitleHeightFor(
+    isWideLayout: isWideLayout,
+    textScaler: textScaler,
+  );
+  final double subtitleHeight = textScaler.scale(
+    isWideLayout ? _wideComicSubtitleHeight : _comicSubtitleHeight,
+  );
+  final double secondaryHeight = textScaler.scale(
+    isWideLayout ? _wideComicSecondaryHeight : _comicSecondaryHeight,
+  );
   final double coverWidth = (itemWidth - _comicTilePadding * 2)
       .clamp(0.0, itemWidth)
       .toDouble();
@@ -119,6 +131,7 @@ class ComicGrid extends StatelessWidget {
           hasSubtitle: meta.hasSubtitle,
           hasSecondary: meta.hasSecondary,
           isWideLayout: usesWideLayout(context),
+          textScaler: MediaQuery.textScalerOf(context),
         );
         final int rowCount =
             (items.length + crossAxisCount - 1) ~/ crossAxisCount;
@@ -231,6 +244,7 @@ class ComicSliverGrid extends StatelessWidget {
           hasSubtitle: meta.hasSubtitle,
           hasSecondary: meta.hasSecondary,
           isWideLayout: usesWideLayout(context),
+          textScaler: MediaQuery.textScalerOf(context),
         );
         final double aspectRatio = itemHeight <= 0
             ? 0.50
@@ -351,7 +365,10 @@ class _ComicCardTileState extends State<ComicCardTile> {
         ),
         const SizedBox(height: _comicCoverToTitleGap),
         SizedBox(
-          height: isWideLayout ? _wideComicTitleHeight : _comicTitleHeight,
+          height: comicCardTitleHeightFor(
+            isWideLayout: isWideLayout,
+            textScaler: MediaQuery.textScalerOf(context),
+          ),
           child: AnimatedDefaultTextStyle(
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOut,

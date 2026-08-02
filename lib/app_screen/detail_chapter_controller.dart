@@ -218,8 +218,7 @@ class DetailChapterController {
 
   bool _isAllGroupLabel(String label) {
     final String normalized = label.replaceAll(RegExp(r'\s+'), '');
-    return normalized.isNotEmpty &&
-        (normalized == '全部' || normalized.contains('全部'));
+    return normalized.contains('全部');
   }
 
   String _tabLabel(String label) {

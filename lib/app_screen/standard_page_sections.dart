@@ -142,19 +142,6 @@ extension _AppScreenPageSections on _AppScreenState {
     );
   }
 
-  Widget _buildAnimatedSectionContent({
-    required String contentKey,
-    required Widget child,
-  }) {
-    return AnimatedSwitcher(
-      duration: _pageFadeTransitionDuration,
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeOutCubic,
-      transitionBuilder: _buildFadeSwitchTransition,
-      child: KeyedSubtree(key: ValueKey<String>(contentKey), child: child),
-    );
-  }
-
   String _rankListContentKey(RankPageData page) {
     return <String>[
       AppConfig.routeKeyForUri(Uri.parse(page.uri)),
@@ -345,6 +332,7 @@ extension _AppScreenPageSections on _AppScreenState {
                 hasSubtitle: meta.hasSubtitle,
                 hasSecondary: meta.hasSecondary,
                 isWideLayout: usesWideLayout(context),
+                textScaler: MediaQuery.textScalerOf(context),
               );
               final double aspectRatio = itemHeight <= 0
                   ? 0.50
@@ -528,39 +516,6 @@ extension _AppScreenPageSections on _AppScreenState {
       _hPaddedBox(const SizedBox(height: 18)),
     ];
 
-    if (page.summary.isNotEmpty) {
-      sections.add(
-        _hPaddedBox(
-          SurfaceBlock(
-            child: Text(
-              ChineseConverter.instance.convert(page.summary),
-              style: const TextStyle(height: 1.7),
-            ),
-          ),
-        ),
-      );
-      sections.add(_hPaddedBox(const SizedBox(height: 18)));
-    }
-
-    final List<Widget> infoChips = <Widget>[
-      if (page.authors.isNotEmpty) InfoChip(label: '作者', value: page.authors),
-      if (page.status.isNotEmpty) InfoChip(label: '状态', value: page.status),
-      if (page.updatedAt.isNotEmpty)
-        InfoChip(label: '更新', value: page.updatedAt),
-      if (page.heat.isNotEmpty) InfoChip(label: '热度', value: page.heat),
-      if (page.aliases.isNotEmpty) InfoChip(label: '别名', value: page.aliases),
-    ];
-    if (infoChips.isNotEmpty) {
-      sections.add(
-        _hPaddedBox(
-          SurfaceBlock(
-            child: Wrap(spacing: 10, runSpacing: 10, children: infoChips),
-          ),
-        ),
-      );
-      sections.add(_hPaddedBox(const SizedBox(height: 18)));
-    }
-
     sections.add(
       _hPaddedBox(
         SurfaceBlock(
@@ -582,7 +537,7 @@ extension _AppScreenPageSections on _AppScreenState {
                     if (visibleChapters.isEmpty)
                       const Text('这个分组暂时没有章节。')
                     else
-                      _buildAnimatedSectionContent(
+                      DetailSectionSwitcher(
                         contentKey: _detailChapters.contentKey(
                           page,
                           activeChapterTab,

@@ -1,12 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_opencc/flutter_opencc.dart';
+import 'package:opencc_t2s/opencc_t2s.dart';
 import 'package:reader/models/app_preferences.dart';
 
-typedef ChineseConversionDataLoader = Future<String> Function();
 typedef ChineseConversionEngineFactory =
-    FutureOr<ChineseConversionEngine> Function(String dataDir);
+    FutureOr<ChineseConversionEngine> Function();
 
 abstract interface class ChineseConversionEngine {
   String convert(String text);
@@ -14,35 +13,26 @@ abstract interface class ChineseConversionEngine {
   void dispose();
 }
 
-class _OpenCCChineseConversionEngine implements ChineseConversionEngine {
-  _OpenCCChineseConversionEngine(String dataDir)
-    : _converter = OpenCC(OpenCCConfig.t2s, dataDir: dataDir);
-
-  final OpenCC _converter;
+class _T2SChineseConversionEngine implements ChineseConversionEngine {
+  final T2SConverter _converter = T2SConverter();
 
   @override
   String convert(String text) => _converter.convert(text);
 
   @override
-  void dispose() => _converter.dispose();
+  void dispose() => _converter.clearCache();
 }
 
 /// 繁简转换服务
 ///
-/// 封装 flutter_opencc，提供文本的繁简转换能力。
+/// 封装 opencc_t2s，提供文本的繁简转换能力。
 /// 使用单例模式，全局共享 Converter 实例以提高性能。
 class ChineseConverter extends ChangeNotifier {
-  ChineseConverter({
-    ChineseConversionDataLoader? dataLoader,
-    ChineseConversionEngineFactory? engineFactory,
-  }) : _dataLoader = dataLoader ?? (() => OpenCCData.prepareData()),
-       _engineFactory =
-           engineFactory ??
-           ((String dataDir) => _OpenCCChineseConversionEngine(dataDir));
+  ChineseConverter({ChineseConversionEngineFactory? engineFactory})
+    : _engineFactory = engineFactory ?? _T2SChineseConversionEngine.new;
 
   static final ChineseConverter instance = ChineseConverter();
 
-  final ChineseConversionDataLoader _dataLoader;
   final ChineseConversionEngineFactory _engineFactory;
 
   ChineseConversionEngine? _t2sEngine;
@@ -68,7 +58,7 @@ class ChineseConverter extends ChangeNotifier {
 
   /// 设置转换模式
   ///
-  /// 关闭模式不会加载 OpenCC。启用模式会异步准备唯一的转换引擎；准备期间
+  /// 关闭模式不会构建转换引擎。启用模式会异步准备唯一的转换引擎；准备期间
   /// [convert] 继续返回原文。返回 `false` 表示请求已过期或初始化失败。
   Future<bool> setMode(ChineseConversionMode mode) async {
     final int requestGeneration = ++_modeRequestGeneration;
@@ -155,15 +145,8 @@ class ChineseConverter extends ChangeNotifier {
   Future<ChineseConversionEngine?> _createEngine(int resourceGeneration) async {
     try {
       _lastInitializationError = null;
-      final String dataDir = await _dataLoader();
-      if (resourceGeneration != _resourceGeneration) {
-        return null;
-      }
-
       final ChineseConversionEngine createdEngine =
-          await Future<ChineseConversionEngine>.sync(
-            () => _engineFactory(dataDir),
-          );
+          await Future<ChineseConversionEngine>.sync(_engineFactory);
       if (resourceGeneration != _resourceGeneration) {
         createdEngine.dispose();
         return null;

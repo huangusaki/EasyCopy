@@ -1,0 +1,9 @@
+name: opencc_t2s
+description: >-
+  Pure Dart traditional-to-simplified Chinese conversion, reproducing OpenCC's
+  t2s configuration without any native code.
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.9.2

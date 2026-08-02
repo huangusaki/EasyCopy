@@ -2,7 +2,7 @@ include: package:flutter_lints/flutter.yaml
 
 analyzer:
   exclude:
-    - packages/flutter_opencc/**
+    - docs/**
 
 linter:
   rules:

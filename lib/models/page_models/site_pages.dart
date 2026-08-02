@@ -200,7 +200,6 @@ class DetailPageData extends SitePage {
     required this.aliases,
     required this.authors,
     this.authorLinks = const <LinkAction>[],
-    required this.heat,
     required this.updatedAt,
     required this.status,
     required this.summary,
@@ -224,7 +223,6 @@ class DetailPageData extends SitePage {
         'authorLinks',
         LinkAction.fromJson,
       ),
-      heat: _stringValue(json['heat']),
       updatedAt: _stringValue(json['updatedAt']),
       status: _stringValue(json['status']),
       summary: _stringValue(json['summary']),
@@ -245,7 +243,6 @@ class DetailPageData extends SitePage {
   final String aliases;
   final String authors;
   final List<LinkAction> authorLinks;
-  final String heat;
   final String updatedAt;
   final String status;
   final String summary;
@@ -261,7 +258,6 @@ class DetailPageData extends SitePage {
       aliases: aliases,
       authors: authors,
       authorLinks: authorLinks,
-      heat: heat,
       updatedAt: updatedAt,
       status: status,
       summary: summary,
@@ -278,7 +274,6 @@ class DetailPageData extends SitePage {
     String? aliases,
     String? authors,
     List<LinkAction>? authorLinks,
-    String? heat,
     String? updatedAt,
     String? status,
     String? summary,
@@ -296,7 +291,6 @@ class DetailPageData extends SitePage {
       aliases: aliases ?? this.aliases,
       authors: authors ?? this.authors,
       authorLinks: authorLinks ?? this.authorLinks,
-      heat: heat ?? this.heat,
       updatedAt: updatedAt ?? this.updatedAt,
       status: status ?? this.status,
       summary: summary ?? this.summary,
@@ -321,7 +315,6 @@ class DetailPageData extends SitePage {
       'authorLinks': authorLinks
           .map((LinkAction item) => item.toJson())
           .toList(),
-      'heat': heat,
       'updatedAt': updatedAt,
       'status': status,
       'summary': summary,
@@ -345,7 +338,6 @@ class CachedComicDetailSnapshot {
     this.aliases = '',
     this.authors = '',
     this.authorLinks = const <LinkAction>[],
-    this.heat = '',
     this.updatedAt = '',
     this.status = '',
     this.summary = '',
@@ -363,7 +355,6 @@ class CachedComicDetailSnapshot {
         'authorLinks',
         LinkAction.fromJson,
       ),
-      heat: _stringValue(json['heat']),
       updatedAt: _stringValue(json['updatedAt']),
       status: _stringValue(json['status']),
       summary: _stringValue(json['summary']),
@@ -376,7 +367,6 @@ class CachedComicDetailSnapshot {
   final String aliases;
   final String authors;
   final List<LinkAction> authorLinks;
-  final String heat;
   final String updatedAt;
   final String status;
   final String summary;
@@ -387,7 +377,6 @@ class CachedComicDetailSnapshot {
   bool get isEmpty {
     return aliases.isEmpty &&
         authors.isEmpty &&
-        heat.isEmpty &&
         updatedAt.isEmpty &&
         status.isEmpty &&
         summary.isEmpty &&
@@ -400,7 +389,6 @@ class CachedComicDetailSnapshot {
     String? aliases,
     String? authors,
     List<LinkAction>? authorLinks,
-    String? heat,
     String? updatedAt,
     String? status,
     String? summary,
@@ -412,7 +400,6 @@ class CachedComicDetailSnapshot {
       aliases: aliases ?? this.aliases,
       authors: authors ?? this.authors,
       authorLinks: authorLinks ?? this.authorLinks,
-      heat: heat ?? this.heat,
       updatedAt: updatedAt ?? this.updatedAt,
       status: status ?? this.status,
       summary: summary ?? this.summary,
@@ -429,7 +416,6 @@ class CachedComicDetailSnapshot {
       'authorLinks': authorLinks
           .map((LinkAction item) => item.toJson())
           .toList(),
-      'heat': heat,
       'updatedAt': updatedAt,
       'status': status,
       'summary': summary,

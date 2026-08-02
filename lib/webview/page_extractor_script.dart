@@ -283,6 +283,68 @@ const String _pageExtractionScriptTemplate = r"""
       fullText.replace(`${prefix}：`, '').replace(`${prefix}:`, ''),
     );
   };
+  const detailChapterState = (() => {
+    const stateName = '__easyCopyDetailChapters';
+    const cached = window[stateName];
+    if (cached && cached.path === location.pathname) {
+      return cached;
+    }
+    const next = {
+      path: location.pathname,
+      status: 'idle',
+      cipherKey: '',
+      ciphertext: '',
+    };
+    window[stateName] = next;
+    return next;
+  })();
+  const detailChapterCipherKey = () => {
+    if (typeof window.ccz === 'string' && cleanText(window.ccz)) {
+      return cleanText(window.ccz);
+    }
+    return extractAssignedString(
+      Array.from(document.scripts)
+        .map((script) => script.textContent || '')
+        .join('\n'),
+      'ccz',
+    );
+  };
+  // 详情页章节由站点脚本异步拉取密文后渲染，直接读 DOM 只会拿到「章節加載中」占位。
+  const requestDetailChapters = () => {
+    if (detailChapterState.status !== 'idle') {
+      return detailChapterState;
+    }
+    const segments = location.pathname.split('/').filter((value) => value);
+    const slug = segments[0] === 'comic' ? cleanText(segments[1]) : '';
+    const dnt = attr(document.querySelector('#dnt'), 'value');
+    const cipherKey = detailChapterCipherKey();
+    if (!slug || !dnt || !cipherKey) {
+      detailChapterState.status = 'failed';
+      return detailChapterState;
+    }
+    detailChapterState.status = 'pending';
+    detailChapterState.cipherKey = cipherKey;
+    fetch(`/comicdetail/${slug}/chapters`, {
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json, text/plain, */*',
+        dnts: dnt,
+      },
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        const results =
+          payload && typeof payload.results === 'string'
+            ? cleanText(payload.results)
+            : '';
+        detailChapterState.ciphertext = results;
+        detailChapterState.status = results ? 'done' : 'failed';
+      })
+      .catch(() => {
+        detailChapterState.status = 'failed';
+      });
+    return detailChapterState;
+  };
   const parseDetailChapterGroups = () => {
     const isLikelyChapterGroupLabel = (label) => {
       const normalized = cleanText(label).replace(/\s+/g, '');
@@ -625,7 +687,6 @@ const String _pageExtractionScriptTemplate = r"""
       aliases: infoValue('別名', rowByPrefix),
       authors,
       authorLinks,
-      heat: infoValue('熱度', rowByPrefix),
       updatedAt: infoValue('最後更新', rowByPrefix),
       status: infoValue('狀態', rowByPrefix),
       summary: queryText(document, '.intro'),
@@ -646,6 +707,8 @@ const String _pageExtractionScriptTemplate = r"""
       ),
       chapterGroups,
       chapters: groupedChapters.length > 0 ? groupedChapters : fallbackChapters,
+      detailCipherKey: detailChapterState.cipherKey,
+      detailChapterCiphertext: detailChapterState.ciphertext,
     };
   };
   const buildReaderPayload = () => {
@@ -709,6 +772,13 @@ const String _pageExtractionScriptTemplate = r"""
     }
 
     if (type === 'detail') {
+      const chapterRequest = requestDetailChapters();
+      if (chapterRequest.status === 'pending') {
+        return state.attempts < 60;
+      }
+      if (chapterRequest.status === 'done') {
+        return false;
+      }
       return collectChapterLinks(document).length === 0 && state.attempts < 8;
     }
 

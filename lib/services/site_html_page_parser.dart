@@ -391,9 +391,11 @@ class SiteHtmlPageParser {
       );
       if (request != null) {
         try {
-          final _ParsedDetailChapters parsed = _parseEncryptedDetailChapters(
-            request,
-            await loadDetailChapterResults(request),
+          final ParsedDetailChapters parsed = parseEncryptedDetailChapters(
+            pageUri: request.pageUri,
+            slug: request.slug,
+            ccz: request.ccz,
+            encryptedResults: await loadDetailChapterResults(request),
           );
           if (parsed.chapterGroups.isNotEmpty || parsed.chapters.isNotEmpty) {
             chapterGroups = parsed.chapterGroups;
@@ -445,7 +447,6 @@ class SiteHtmlPageParser {
           })
           .whereType<LinkAction>()
           .toList(growable: false),
-      heat: _infoValue(infoRows, '熱度'),
       updatedAt: _infoValue(infoRows, '最後更新'),
       status: _infoValue(infoRows, '狀態'),
       summary: _queryText(document, '.intro'),
@@ -530,22 +531,24 @@ class SiteHtmlPageParser {
     return imageUrls;
   }
 
-  _ParsedDetailChapters _parseEncryptedDetailChapters(
-    DetailChapterRequest request,
-    String encryptedResults,
-  ) {
+  ParsedDetailChapters parseEncryptedDetailChapters({
+    required Uri pageUri,
+    required String slug,
+    required String ccz,
+    required String encryptedResults,
+  }) {
     final String encrypted = _cleanText(encryptedResults);
     if (encrypted.length <= 16) {
-      throw SiteHtmlPageParseException('详情页章节数据为空：${request.pageUri.path}');
+      throw SiteHtmlPageParseException('详情页章节数据为空：${pageUri.path}');
     }
 
     final Uint8List plainBytes = _aesCbcDecrypt(
-      keyMaterial: request.ccz,
+      keyMaterial: ccz,
       encrypted: encrypted,
     );
     final Object? decoded = jsonDecode(utf8.decode(plainBytes));
     if (decoded is! Map) {
-      throw SiteHtmlPageParseException('详情页章节数据格式异常：${request.pageUri.path}');
+      throw SiteHtmlPageParseException('详情页章节数据格式异常：${pageUri.path}');
     }
 
     final Map<String, Object?> payload = decoded.map(
@@ -554,7 +557,7 @@ class SiteHtmlPageParser {
     final Map<String, Object?> build = asStringKeyMap(payload['build']);
     final String pathWord = _stringValue(build['path_word']).isNotEmpty
         ? _stringValue(build['path_word'])
-        : request.slug;
+        : slug;
     final Map<int, String> typeLabels = _chapterTypeLabels(build['type']);
     final List<Map<String, Object?>> groupMaps = _chapterGroupMaps(
       payload['groups'],
@@ -602,7 +605,7 @@ class SiteHtmlPageParser {
       groups.expand((ChapterGroupData group) => group.chapters),
       (ChapterData chapter) => chapter.href,
     );
-    return _ParsedDetailChapters(chapterGroups: groups, chapters: chapters);
+    return ParsedDetailChapters(chapterGroups: groups, chapters: chapters);
   }
 
   List<ChapterGroupData> _parseChapterGroupsFromDom(
@@ -872,8 +875,8 @@ class SiteHtmlPageParser {
   }
 }
 
-class _ParsedDetailChapters {
-  const _ParsedDetailChapters({
+class ParsedDetailChapters {
+  const ParsedDetailChapters({
     required this.chapterGroups,
     required this.chapters,
   });

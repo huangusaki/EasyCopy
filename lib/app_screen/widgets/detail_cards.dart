@@ -63,18 +63,20 @@ class DetailHeroCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      Text(
-                        ChineseConverter.instance.convert(page.title),
-                        style: TextStyle(
-                          fontSize: 27,
-                          height: 1.15,
-                          fontWeight: FontWeight.w900,
-                          color: colorScheme.onSurface,
-                        ),
+                      _AdaptiveTitle(
+                        text: page.title,
+                        fontSizes: const <double>[27, 23, 20],
+                        lineHeight: 1.15,
+                        color: colorScheme.onSurface,
                       ),
-                      if (_hasCreditChips(authorLabels)) ...<Widget>[
+                      ..._buildTitleMeta(context, authorLabels),
+                      if (page.summary.isNotEmpty) ...<Widget>[
+                        const SizedBox(height: 16),
+                        _buildSummary(),
+                      ],
+                      if (page.tags.isNotEmpty) ...<Widget>[
                         const SizedBox(height: 14),
-                        _buildCreditChips(authorLabels),
+                        _buildTagChips(),
                       ],
                       const SizedBox(height: 22),
                       Row(
@@ -133,6 +135,7 @@ class DetailHeroCard extends StatelessWidget {
     return AppSurfaceCard(
       padding: const EdgeInsets.all(18),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -146,23 +149,26 @@ class DetailHeroCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Text(
-                      ChineseConverter.instance.convert(page.title),
-                      style: const TextStyle(
-                        fontSize: 24,
-                        height: 1.05,
-                        fontWeight: FontWeight.w900,
-                      ),
+                    _AdaptiveTitle(
+                      text: page.title,
+                      fontSizes: const <double>[24, 20, 17],
+                      lineHeight: 1.15,
                     ),
-                    if (_hasCreditChips(authorLabels)) ...<Widget>[
-                      const SizedBox(height: 14),
-                      _buildCreditChips(authorLabels),
-                    ],
+                    ..._buildTitleMeta(context, authorLabels),
                   ],
                 ),
               ),
             ],
           ),
+          // 简介与标签排在整行下面，跟着封面右侧那列走会在封面下方留出空白。
+          if (page.summary.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 16),
+            _buildSummary(),
+          ],
+          if (page.tags.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 14),
+            _buildTagChips(),
+          ],
           const SizedBox(height: 18),
           Row(
             children: <Widget>[
@@ -197,43 +203,114 @@ class DetailHeroCard extends StatelessWidget {
     );
   }
 
-  bool _hasCreditChips(List<String> authorLabels) {
-    return page.authorLinks.isNotEmpty ||
-        authorLabels.isNotEmpty ||
-        page.tags.isNotEmpty;
+  List<Widget> _buildTitleMeta(
+    BuildContext context,
+    List<String> authorLabels,
+  ) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final List<String> metaParts = <String>[
+      if (page.status.isNotEmpty) page.status,
+      if (page.updatedAt.isNotEmpty) '更新 ${page.updatedAt}',
+    ];
+    final List<Widget> authorChips = <Widget>[
+      if (page.authorLinks.isNotEmpty)
+        for (final LinkAction author in page.authorLinks)
+          _buildAuthorChip(
+            context,
+            label: author.label,
+            onTap: () => onAuthorTap(author.href),
+          )
+      else
+        for (final String author in authorLabels)
+          _buildAuthorChip(
+            context,
+            label: author,
+            onTap: () => onTagTap(author),
+          ),
+    ];
+    return <Widget>[
+      if (metaParts.isNotEmpty) ...<Widget>[
+        const SizedBox(height: 10),
+        Text(
+          ChineseConverter.instance.convert(metaParts.join('  ·  ')),
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.2,
+            color: colorScheme.onSurface.withValues(alpha: 0.68),
+          ),
+        ),
+      ],
+      // 作者单独占一行：仍是可点的 chip，但用 primary 色系和人像图标跟题材标签区分。
+      if (authorChips.isNotEmpty) ...<Widget>[
+        const SizedBox(height: 10),
+        Wrap(spacing: 8, runSpacing: 8, children: authorChips),
+      ],
+    ];
   }
 
-  Widget _buildCreditChips(List<String> authorLabels) {
+  Widget _buildAuthorChip(
+    BuildContext context, {
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(10, 6, 13, 6),
+        decoration: BoxDecoration(
+          color: colorScheme.primaryContainer,
+          border: Border.all(color: colorScheme.primary.withValues(alpha: 0.5)),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              Icons.person_rounded,
+              size: 13,
+              color: colorScheme.onPrimaryContainer,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              ChineseConverter.instance.convert(label),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: colorScheme.onPrimaryContainer,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSummary() {
+    return Text(
+      ChineseConverter.instance.convert(page.summary),
+      style: const TextStyle(height: 1.7),
+    );
+  }
+
+  Widget _buildTagChips() {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: <Widget>[
-        if (page.authorLinks.isNotEmpty)
-          ...page.authorLinks.map(
-            (LinkAction author) => LinkChip(
-              label: author.label,
+      children: page.tags
+          .take(6)
+          .map(
+            (LinkAction tag) => LinkChip(
+              label: tag.label,
               active: true,
-              onTap: () => onAuthorTap(author.href),
+              onTap: () => onTagTap(tag.label),
             ),
           )
-        else
-          ...authorLabels.map(
-            (String author) => LinkChip(
-              label: author,
-              active: true,
-              onTap: () => onTagTap(author),
-            ),
-          ),
-        ...page.tags
-            .take(6)
-            .map(
-              (LinkAction tag) => LinkChip(
-                label: tag.label,
-                active: true,
-                onTap: () => onTagTap(tag.label),
-              ),
-            ),
-      ],
+          .toList(growable: false),
     );
   }
 
@@ -250,6 +327,92 @@ class DetailHeroCard extends StatelessWidget {
           ? Icons.bookmark_remove_rounded
           : Icons.bookmark_add_rounded,
     );
+  }
+}
+
+/// 标题按可用宽度自动降档。
+///
+/// 长标题在封面右侧那条窄列里会被压成一行三四个字，先逐级缩字号，
+/// 实在放不下才在 [maxLines] 处截断。
+class _AdaptiveTitle extends StatelessWidget {
+  const _AdaptiveTitle({
+    required this.text,
+    required this.fontSizes,
+    required this.lineHeight,
+    this.color,
+  });
+
+  static const int maxLines = 3;
+
+  /// 由大到小，第一个能塞进 [maxLines] 的就是最终字号。
+  final List<double> fontSizes;
+  final String text;
+  final double lineHeight;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final String value = ChineseConverter.instance.convert(text);
+    // 桌面主题会换字体，量算必须带上环境样式，否则算出来的行数是错的。
+    final TextStyle baseStyle = DefaultTextStyle.of(context).style;
+    final TextScaler textScaler = MediaQuery.textScalerOf(context);
+    final TextDirection textDirection = Directionality.of(context);
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        TextStyle styleOf(double fontSize) => baseStyle.merge(
+          TextStyle(
+            fontSize: fontSize,
+            height: lineHeight,
+            fontWeight: FontWeight.w900,
+            color: color,
+          ),
+        );
+
+        TextStyle style = styleOf(fontSizes.last);
+        for (final double fontSize in fontSizes) {
+          final TextStyle candidate = styleOf(fontSize);
+          if (_fits(
+            candidate,
+            value,
+            constraints.maxWidth,
+            textScaler,
+            textDirection,
+          )) {
+            style = candidate;
+            break;
+          }
+        }
+
+        return Text(
+          value,
+          maxLines: maxLines,
+          overflow: TextOverflow.ellipsis,
+          style: style,
+        );
+      },
+    );
+  }
+
+  bool _fits(
+    TextStyle style,
+    String value,
+    double maxWidth,
+    TextScaler textScaler,
+    TextDirection textDirection,
+  ) {
+    if (!maxWidth.isFinite) {
+      return true;
+    }
+    final TextPainter painter = TextPainter(
+      text: TextSpan(text: value, style: style),
+      maxLines: maxLines,
+      textDirection: textDirection,
+      textScaler: textScaler,
+    )..layout(maxWidth: maxWidth);
+    final bool fits = !painter.didExceedMaxLines;
+    painter.dispose();
+    return fits;
   }
 }
 
@@ -336,42 +499,33 @@ class _HoverFloatCoverState extends State<_HoverFloatCover> {
   }
 }
 
-class InfoChip extends StatelessWidget {
-  const InfoChip({required this.label, required this.value});
+/// 章节分组切换的淡入容器：只让当前内容参与布局。
+///
+/// AnimatedSwitcher 默认的 layoutBuilder 会把旧内容一起塞进 Stack，切换章节
+/// tab 时卡片高度被钉在旧列表上、旧章节压在新章节下面；同一话同时出现在两个
+/// 分组里时，[ChapterGrid] 复用的 GlobalKey 还会撞车。旧内容直接退出即可。
+class DetailSectionSwitcher extends StatelessWidget {
+  const DetailSectionSwitcher({required this.contentKey, required this.child});
 
-  final String label;
-  final String value;
+  final String contentKey;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      constraints: const BoxConstraints(minWidth: 132),
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            ChineseConverter.instance.convert(label),
-            style: TextStyle(
-              color: colorScheme.onSurface.withValues(alpha: 0.62),
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 320),
+      switchInCurve: Curves.easeOutCubic,
+      layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) =>
+          currentChild ?? const SizedBox.shrink(),
+      transitionBuilder: (Widget child, Animation<double> animation) =>
+          FadeTransition(
+            opacity: CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
             ),
+            child: child,
           ),
-          const SizedBox(height: 4),
-          Text(
-            ChineseConverter.instance.convert(value),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w800),
-          ),
-        ],
-      ),
+      child: KeyedSubtree(key: ValueKey<String>(contentKey), child: child),
     );
   }
 }
