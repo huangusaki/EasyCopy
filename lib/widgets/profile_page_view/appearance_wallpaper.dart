@@ -1,63 +1,116 @@
 part of '../profile_page_view.dart';
 
-class _AppearanceSettingsCard extends StatelessWidget {
-  const _AppearanceSettingsCard({
-    required this.themePreference,
-    this.onChanged,
-    this.wallpaper = const WallpaperPreferences(),
-    this.wallpaperActions,
-  });
+class _ThemePreferenceBlock extends StatelessWidget {
+  const _ThemePreferenceBlock({required this.value, required this.onChanged});
 
-  final AppThemePreference themePreference;
+  final AppThemePreference value;
   final ValueChanged<AppThemePreference>? onChanged;
-  final WallpaperPreferences wallpaper;
-  final WallpaperEditingActions? wallpaperActions;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return AppSurfaceCard(
-      title: '外观',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text(
-              '主题配色',
-              style: TextStyle(
-                color: colorScheme.onSurface.withValues(alpha: 0.72),
-                fontWeight: FontWeight.w700,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Text(
+            '主题配色',
+            style: TextStyle(
+              color: colorScheme.onSurface.withValues(alpha: 0.72),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: AppThemePreference.values
+              .map(
+                (AppThemePreference option) => _ThemeSwatch(
+                  option: option,
+                  selected: option == value,
+                  onTap: onChanged == null ? null : () => onChanged!(option),
+                ),
+              )
+              .toList(growable: false),
+        ),
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+}
+
+/// 壁纸入口行，预览、裁剪和滑块都在二级页里。
+class _WallpaperSettingsEntryRow extends StatelessWidget {
+  const _WallpaperSettingsEntryRow({
+    required this.wallpaper,
+    required this.actions,
+  });
+
+  final WallpaperPreferences wallpaper;
+  final WallpaperEditingActions actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final String statusLabel = !wallpaper.hasImage
+        ? '未设置'
+        : wallpaper.enabled
+        ? '已启用'
+        : '已隐藏';
+    return _SettingsEntryRow(
+      label: '壁纸',
+      valueLabel: statusLabel,
+      trailing: const Icon(Icons.chevron_right_rounded),
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (BuildContext context) {
+              return _WallpaperSettingsPage(
+                wallpaper: wallpaper,
+                actions: actions,
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _WallpaperSettingsPage extends StatelessWidget {
+  const _WallpaperSettingsPage({required this.wallpaper, required this.actions});
+
+  final WallpaperPreferences wallpaper;
+  final WallpaperEditingActions actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final Listenable? listenable = actions.listenable;
+    return Scaffold(
+      backgroundColor: opaquePageBackground(context),
+      appBar: AppBar(title: const Text('壁纸')),
+      body: SafeArea(
+        child: listenable == null
+            ? _buildBody(wallpaper)
+            : ListenableBuilder(
+                listenable: listenable,
+                builder: (BuildContext context, Widget? _) {
+                  return _buildBody(
+                    actions.readPreferences?.call() ?? wallpaper,
+                  );
+                },
               ),
-            ),
-          ),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: AppThemePreference.values
-                .map(
-                  (AppThemePreference option) => _ThemeSwatch(
-                    option: option,
-                    selected: option == themePreference,
-                    onTap: onChanged == null ? null : () => onChanged!(option),
-                  ),
-                )
-                .toList(growable: false),
-          ),
-          if (wallpaperActions != null) ...<Widget>[
-            const SizedBox(height: 20),
-            Divider(
-              height: 1,
-              color: colorScheme.outlineVariant.withValues(alpha: 0.6),
-            ),
-            const SizedBox(height: 16),
-            _WallpaperSettingsSection(
-              wallpaper: wallpaper,
-              actions: wallpaperActions!,
-            ),
-          ],
-        ],
       ),
+    );
+  }
+
+  Widget _buildBody(WallpaperPreferences value) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: <Widget>[
+        _WallpaperSettingsSection(wallpaper: value, actions: actions),
+      ],
     );
   }
 }

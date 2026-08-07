@@ -16,6 +16,13 @@ class _PageSkeletonState extends State<PageSkeleton>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(vsync: this);
 
+  /// 必须持有并 dispose：CurvedAnimation 构造时会向 parent 注册 statusListener，
+  /// 若每次 build 新建就会随重建次数线性泄漏监听器。
+  late final CurvedAnimation _pulse = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeInOut,
+  );
+
   bool _configured = false;
   bool _useSweep = true;
 
@@ -38,6 +45,7 @@ class _PageSkeletonState extends State<PageSkeleton>
 
   @override
   void dispose() {
+    _pulse.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -87,9 +95,7 @@ class _PageSkeletonState extends State<PageSkeleton>
             },
           )
         : FadeTransition(
-            opacity: Tween<double>(begin: 0.55, end: 1).animate(
-              CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-            ),
+            opacity: Tween<double>(begin: 0.55, end: 1).animate(_pulse),
             child: bones,
           );
 

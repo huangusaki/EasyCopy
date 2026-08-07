@@ -28,12 +28,16 @@ class WallpaperEditingActions {
     required this.clearImage,
     required this.previewPreferences,
     required this.commitPreferences,
+    this.listenable,
+    this.readPreferences,
   });
 
   final Future<void> Function() pickImage;
   final VoidCallback clearImage;
   final ValueChanged<WallpaperPreferences> previewPreferences;
   final ValueChanged<WallpaperPreferences> commitPreferences;
+  final Listenable? listenable;
+  final WallpaperPreferences Function()? readPreferences;
 }
 
 class ProfilePageView extends StatelessWidget {
@@ -188,7 +192,7 @@ class ProfilePageView extends StatelessWidget {
 
     if (page.collections.isNotEmpty) {
       addSection(
-        _SectionCard(
+        AppSurfaceCard(
           title: '我的收藏',
           action: _SectionHeaderAction(
             metaText: '$collectionsTotal 部漫画',
@@ -224,7 +228,7 @@ class ProfilePageView extends StatelessWidget {
 
     if (cachedComicCards.isNotEmpty) {
       addSection(
-        _SectionCard(
+        AppSurfaceCard(
           title: '已缓存漫画',
           action: _SectionHeaderAction(
             metaText: '${cachedComicCards.length} 部漫画',
@@ -264,7 +268,7 @@ class ProfilePageView extends StatelessWidget {
 
     if (page.continueReading != null) {
       addSection(
-        _SectionCard(
+        AppSurfaceCard(
           title: '继续阅读',
           child: _HistoryTile(
             item: page.continueReading!,
@@ -275,7 +279,7 @@ class ProfilePageView extends StatelessWidget {
     }
     if (page.history.isNotEmpty) {
       addSection(
-        _SectionCard(
+        AppSurfaceCard(
           title: '浏览历史',
           action: _SectionHeaderAction(
             metaText: '$historyTotal 条记录',
@@ -317,41 +321,28 @@ class ProfilePageView extends StatelessWidget {
     }
 
     addSection(
-      _AppearanceSettingsCard(
+      _SettingsCard(
         themePreference: themePreference,
-        onChanged: onThemePreferenceChanged,
+        onThemePreferenceChanged: onThemePreferenceChanged,
         wallpaper: wallpaperPreferences,
         wallpaperActions: wallpaperActions,
-      ),
-    );
-
-    addSection(
-      _ChineseConversionCard(
-        mode: chineseConversionMode,
-        onChanged: onChineseConversionModeChanged,
-      ),
-    );
-
-    if (showsHostSettings) {
-      addSection(
-        _HostSettingsEntryCard(
-          currentHost: currentHost,
-          knownHosts: knownHosts,
-          candidateHosts: candidateHosts,
-          candidateHostAliases: candidateHostAliases,
-          snapshot: hostSnapshot,
-          isRefreshing: isRefreshingHosts,
-          onRefresh: onRefreshHosts,
-          onUseAutomaticSelection: onUseAutomaticHostSelection,
-          onSelectHost: onSelectHost,
-          onAddHost: onAddHost,
-          onDeleteHost: onDeleteHost,
-        ),
-      );
-    }
-
-    addSection(
-      _VersionEntryCard(
+        chineseConversionMode: chineseConversionMode,
+        onChineseConversionModeChanged: onChineseConversionModeChanged,
+        hostEntry: showsHostSettings
+            ? _HostSettingsEntryRow(
+                currentHost: currentHost,
+                knownHosts: knownHosts,
+                candidateHosts: candidateHosts,
+                candidateHostAliases: candidateHostAliases,
+                snapshot: hostSnapshot,
+                isRefreshing: isRefreshingHosts,
+                onRefresh: onRefreshHosts,
+                onUseAutomaticSelection: onUseAutomaticHostSelection,
+                onSelectHost: onSelectHost,
+                onAddHost: onAddHost,
+                onDeleteHost: onDeleteHost,
+              )
+            : null,
         versionLabel: versionLabel,
         isCheckingForUpdates: isCheckingForUpdates,
         onCheckForUpdates: onCheckForUpdates,
@@ -381,9 +372,11 @@ class ProfilePageView extends StatelessWidget {
   }
 
   ComicCardData _historyCardData(ProfileHistoryItem item) {
+    final String chapterLabel = item.chapterLabel.trim();
     return ComicCardData(
       title: item.title,
-      subtitle: item.chapterLabel,
+      // 缺话数时也占住这一行，否则封面会被撑高、整列文字错位。
+      subtitle: chapterLabel.isEmpty ? '未阅读' : chapterLabel,
       secondaryText: item.visitedAt,
       coverUrl: item.coverUrl,
       href: item.comicHref,
@@ -441,7 +434,7 @@ class ProfilePageView extends StatelessWidget {
         message != '登录后可查看收藏、历史和继续阅读。' &&
         message != '登录后可发表评论并查看账号信息。';
 
-    return _SectionCard(
+    return AppSurfaceCard(
       child: Column(
         children: <Widget>[
           const Icon(Icons.person_outline_rounded, size: 48),
@@ -474,7 +467,7 @@ class ProfilePageView extends StatelessWidget {
     final String displayName = (user?.displayName ?? '').trim().isNotEmpty
         ? user!.displayName
         : '已登录';
-    return _SectionCard(
+    return AppSurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[

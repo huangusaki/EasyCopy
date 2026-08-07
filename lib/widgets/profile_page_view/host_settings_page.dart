@@ -1,7 +1,7 @@
 part of '../profile_page_view.dart';
 
-class _HostSettingsEntryCard extends StatelessWidget {
-  const _HostSettingsEntryCard({
+class _HostSettingsEntryRow extends StatelessWidget {
+  const _HostSettingsEntryRow({
     required this.currentHost,
     required this.knownHosts,
     required this.candidateHosts,
@@ -29,41 +29,31 @@ class _HostSettingsEntryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppSurfaceCard(
-      title: '访问域名',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.tonalIcon(
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (BuildContext context) {
-                      return _HostSettingsPage(
-                        currentHost: currentHost,
-                        knownHosts: knownHosts,
-                        candidateHosts: candidateHosts,
-                        candidateHostAliases: candidateHostAliases,
-                        snapshot: snapshot,
-                        isRefreshing: isRefreshing,
-                        onRefresh: onRefresh,
-                        onUseAutomaticSelection: onUseAutomaticSelection,
-                        onSelectHost: onSelectHost,
-                        onAddHost: onAddHost,
-                        onDeleteHost: onDeleteHost,
-                      );
-                    },
-                  ),
-                );
-              },
-              icon: const Icon(Icons.tune_rounded),
-              label: const Text('管理域名'),
-            ),
+    return _SettingsEntryRow(
+      label: '访问域名',
+      valueLabel: currentHost.trim().isEmpty ? '自动选择' : currentHost.trim(),
+      trailing: const Icon(Icons.chevron_right_rounded),
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (BuildContext context) {
+              return _HostSettingsPage(
+                currentHost: currentHost,
+                knownHosts: knownHosts,
+                candidateHosts: candidateHosts,
+                candidateHostAliases: candidateHostAliases,
+                snapshot: snapshot,
+                isRefreshing: isRefreshing,
+                onRefresh: onRefresh,
+                onUseAutomaticSelection: onUseAutomaticSelection,
+                onSelectHost: onSelectHost,
+                onAddHost: onAddHost,
+                onDeleteHost: onDeleteHost,
+              );
+            },
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

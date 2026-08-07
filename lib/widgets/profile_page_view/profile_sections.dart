@@ -1,42 +1,28 @@
 part of '../profile_page_view.dart';
 
-/// 简体显示设置卡片
-class _ChineseConversionCard extends StatelessWidget {
-  const _ChineseConversionCard({required this.mode, this.onChanged});
-
-  final ChineseConversionMode mode;
-  final ValueChanged<ChineseConversionMode>? onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return _SectionCard(
-      title: '文字显示',
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: SettingsSwitchRow(
-          label: '显示简体',
-          value: mode == ChineseConversionMode.t2s,
-          onChanged: (bool value) {
-            onChanged?.call(
-              value
-                  ? ChineseConversionMode.t2s
-                  : ChineseConversionMode.disabled,
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-class _VersionEntryCard extends StatelessWidget {
-  const _VersionEntryCard({
+/// 设置卡：主题色板铺在卡内，其余设置各占一行，行间用分隔线。
+class _SettingsCard extends StatelessWidget {
+  const _SettingsCard({
+    required this.themePreference,
+    required this.onThemePreferenceChanged,
+    required this.wallpaper,
+    required this.wallpaperActions,
+    required this.chineseConversionMode,
+    required this.onChineseConversionModeChanged,
+    required this.hostEntry,
     required this.versionLabel,
     required this.isCheckingForUpdates,
-    this.onCheckForUpdates,
-    this.onOpenProjectRepository,
+    required this.onCheckForUpdates,
+    required this.onOpenProjectRepository,
   });
 
+  final AppThemePreference themePreference;
+  final ValueChanged<AppThemePreference>? onThemePreferenceChanged;
+  final WallpaperPreferences wallpaper;
+  final WallpaperEditingActions? wallpaperActions;
+  final ChineseConversionMode chineseConversionMode;
+  final ValueChanged<ChineseConversionMode>? onChineseConversionModeChanged;
+  final Widget? hostEntry;
   final String versionLabel;
   final bool isCheckingForUpdates;
   final VoidCallback? onCheckForUpdates;
@@ -45,59 +31,77 @@ class _VersionEntryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return _SectionCard(
-      title: '版本',
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(22),
+    final List<Widget> rows = <Widget>[
+      if (wallpaperActions != null)
+        _WallpaperSettingsEntryRow(
+          wallpaper: wallpaper,
+          actions: wallpaperActions!,
         ),
-        child: Column(
-          children: <Widget>[
-            _VersionEntryRow(
-              label: '当前版本',
-              trailing: Text(
-                versionLabel,
-                style: TextStyle(
-                  color: colorScheme.onSurface.withValues(alpha: 0.72),
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            _VersionEntryDivider(color: colorScheme.outlineVariant),
-            _VersionEntryRow(
-              label: '检查更新',
-              onTap: onCheckForUpdates,
-              trailing: isCheckingForUpdates
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.chevron_right_rounded),
-            ),
-            _VersionEntryDivider(color: colorScheme.outlineVariant),
-            _VersionEntryRow(
-              label: 'GitHub',
-              onTap: onOpenProjectRepository,
-              trailing: const Icon(Icons.chevron_right_rounded),
-            ),
+      _SettingsEntryRow(
+        label: '显示简体',
+        trailing: Switch(
+          value: chineseConversionMode == ChineseConversionMode.t2s,
+          onChanged: onChineseConversionModeChanged == null
+              ? null
+              : (bool value) {
+                  onChineseConversionModeChanged!(
+                    value
+                        ? ChineseConversionMode.t2s
+                        : ChineseConversionMode.disabled,
+                  );
+                },
+        ),
+      ),
+      if (hostEntry != null) hostEntry!,
+      _SettingsEntryRow(label: '当前版本', valueLabel: versionLabel),
+      _SettingsEntryRow(
+        label: '检查更新',
+        onTap: onCheckForUpdates,
+        trailing: isCheckingForUpdates
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.chevron_right_rounded),
+      ),
+      _SettingsEntryRow(
+        label: 'GitHub',
+        onTap: onOpenProjectRepository,
+        trailing: const Icon(Icons.chevron_right_rounded),
+      ),
+    ];
+
+    return AppSurfaceCard(
+      title: '设置',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          _ThemePreferenceBlock(
+            value: themePreference,
+            onChanged: onThemePreferenceChanged,
+          ),
+          for (final Widget row in rows) ...<Widget>[
+            _SettingsEntryDivider(color: colorScheme.outlineVariant),
+            row,
           ],
-        ),
+        ],
       ),
     );
   }
 }
 
-class _VersionEntryRow extends StatelessWidget {
-  const _VersionEntryRow({
+class _SettingsEntryRow extends StatelessWidget {
+  const _SettingsEntryRow({
     required this.label,
-    required this.trailing,
+    this.valueLabel,
+    this.trailing,
     this.onTap,
   });
 
   final String label;
-  final Widget trailing;
+  final String? valueLabel;
+  final Widget? trailing;
   final VoidCallback? onTap;
 
   @override
@@ -105,58 +109,57 @@ class _VersionEntryRow extends StatelessWidget {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-        child: Row(
-          children: <Widget>[
-            Expanded(
-              child: Text(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 52),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            children: <Widget>[
+              Text(
                 label,
                 style: TextStyle(
                   color: colorScheme.onSurface,
                   fontWeight: FontWeight.w700,
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            IconTheme(
-              data: IconThemeData(
-                color: colorScheme.onSurface.withValues(alpha: 0.72),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  valueLabel ?? '',
+                  textAlign: TextAlign.end,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colorScheme.onSurface.withValues(alpha: 0.72),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
-              child: trailing,
-            ),
-          ],
+              if (trailing != null) ...<Widget>[
+                const SizedBox(width: 8),
+                IconTheme(
+                  data: IconThemeData(
+                    color: colorScheme.onSurface.withValues(alpha: 0.72),
+                  ),
+                  child: trailing!,
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _VersionEntryDivider extends StatelessWidget {
-  const _VersionEntryDivider({required this.color});
+class _SettingsEntryDivider extends StatelessWidget {
+  const _SettingsEntryDivider({required this.color});
 
   final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18),
-      child: Divider(height: 1, color: color.withValues(alpha: 0.56)),
-    );
-  }
-}
-
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.child, this.title, this.action});
-
-  final String? title;
-  final Widget? action;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppSurfaceCard(title: title, action: action, child: child);
+    return Divider(height: 1, color: color.withValues(alpha: 0.56));
   }
 }
 

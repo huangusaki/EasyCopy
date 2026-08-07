@@ -186,7 +186,7 @@ class SettingsSelectRow<T> extends StatelessWidget {
         );
       },
     );
-    if (!context.mounted) {
+    if (!context.mounted || nextValue == null) {
       return;
     }
     onChanged(nextValue);

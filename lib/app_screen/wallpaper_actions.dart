@@ -28,6 +28,8 @@ WallpaperEditingActions buildWallpaperActions({
     commitPreferences: (WallpaperPreferences value) {
       unawaited(preferencesController.updateWallpaperPreferences((_) => value));
     },
+    listenable: preferencesController,
+    readPreferences: () => preferencesController.wallpaperPreferences,
   );
 }
 
