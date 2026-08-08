@@ -27,10 +27,6 @@ class DeferredViewportCoordinator {
     _interactionEpoch += 1;
   }
 
-  void cancelPending() {
-    _requestId += 1;
-  }
-
   bool isActive(DeferredViewportTicket ticket) {
     return ticket.requestId == _requestId &&
         ticket.interactionEpoch == _interactionEpoch;

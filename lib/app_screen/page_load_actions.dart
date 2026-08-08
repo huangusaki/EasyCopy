@@ -461,7 +461,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       preserveVisiblePage: preserveVisiblePage,
       sourceKind: NavigationRequestSourceKind.navigation,
     );
-    final bool isReaderChapterRoute = _isReaderChapterUri(targetUri);
+    final bool isReaderChapterRoute = isReaderChapterUri(targetUri);
     final bool shouldPreferFreshReaderLoad =
         isReaderChapterRoute &&
         _downloadQueueManager.shouldBypassCachedReaderLookup;

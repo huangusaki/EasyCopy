@@ -431,7 +431,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
       }
       final SitePage? page = _page;
       final bool stillReaderRoute =
-          page is ReaderPageData || _isReaderChapterUri(_currentUri);
+          page is ReaderPageData || isReaderChapterUri(_currentUri);
       if (stillReaderRoute && _ui.readerShortcutFocusNode.canRequestFocus) {
         _ui.readerShortcutFocusNode.requestFocus();
       }
@@ -442,7 +442,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final SitePage? page = _page;
     final bool isReaderRoute =
-        page is ReaderPageData || _isReaderChapterUri(_currentUri);
+        page is ReaderPageData || isReaderChapterUri(_currentUri);
     _syncDesktopReaderShortcutFocus(isReaderRoute);
     return PopScope<Object?>(
       canPop: false,
@@ -511,7 +511,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
                           ),
                         ),
                       )
-                    : _isReaderChapterUri(_currentUri)
+                    : isReaderChapterUri(_currentUri)
                     ? KeyedSubtree(
                         key: const ValueKey<String>('reader-loading'),
                         child: _buildReaderLoadingScreen(context),

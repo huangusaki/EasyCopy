@@ -65,14 +65,7 @@ class AppSearchActions {
   }
 
   void syncFromCurrentUri() {
-    final String query = _currentUri().queryParameters['q'] ?? '';
-    if (textController.text == query) {
-      return;
-    }
-    textController.value = TextEditingValue(
-      text: query,
-      selection: TextSelection.collapsed(offset: query.length),
-    );
+    prime(_currentUri().queryParameters['q'] ?? '');
   }
 
   void prime(String query) {

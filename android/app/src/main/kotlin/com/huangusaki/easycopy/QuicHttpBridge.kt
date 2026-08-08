@@ -69,8 +69,18 @@ class QuicHttpBridge(
                 followRedirects = followRedirects,
                 maxRedirects = maxRedirects.coerceAtLeast(0),
             )
+        // 引擎构造失败（native 库缺失、Cronet provider 不可用等）是本机永久状态，
+        // Dart 侧据此固定降级到普通 HTTP 客户端。必须与后面的单请求构建失败分开捕获：
+        // 一个畸形 URL 或非法 header 名不该让整个 App 永久丢掉 QUIC。
+        val activeEngine =
+            try {
+                engine
+            } catch (error: Throwable) {
+                result.error(ENGINE_UNAVAILABLE_CODE, error.message ?: error.toString(), null)
+                return
+            }
         try {
-            val builder = engine.newUrlRequestBuilder(url, callback, executor)
+            val builder = activeEngine.newUrlRequestBuilder(url, callback, executor)
             builder.setHttpMethod(method)
             for ((name, value) in headers) {
                 if (!name.equals("content-length", ignoreCase = true)) {
@@ -221,6 +231,7 @@ class QuicHttpBridge(
 
     companion object {
         private const val CHANNEL_NAME = "easy_copy/quic_http"
+        private const val ENGINE_UNAVAILABLE_CODE = "engine_unavailable"
         private const val HTTPS_PORT = 443
         private const val HTTP_CACHE_MAX_BYTES = 8L * 1024L * 1024L
         private const val BUFFER_SIZE = 64 * 1024

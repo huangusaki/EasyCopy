@@ -84,7 +84,6 @@ class AppShellState {
   String pendingReaderOpenAtEndKey = '';
 
   String appVersion = '';
-  String appBuildNumber = '';
 
   /// 移动端 CookieManager 同步指纹。
   String? syncedHostCookieFingerprint;

@@ -59,12 +59,10 @@ extension _AppScreenHostActions on _AppScreenState {
       final PackageInfo packageInfo = await PackageInfo.fromPlatform();
       if (!mounted) {
         _shell.appVersion = packageInfo.version.trim();
-        _shell.appBuildNumber = packageInfo.buildNumber.trim();
         return;
       }
       _setStateIfMounted(() {
         _shell.appVersion = packageInfo.version.trim();
-        _shell.appBuildNumber = packageInfo.buildNumber.trim();
       });
     } catch (_) {
       // 包信息不可用时保留占位值。
@@ -499,9 +497,9 @@ extension _AppScreenHostActions on _AppScreenState {
   }
 
   Future<void> _clearPlatformCookies() async {
+    _shell.syncedHostCookieFingerprint = null;
     if (PlatformCapabilities.usesMobileWebView) {
       await _ui.cookieManager?.clearCookies();
-      _shell.syncedHostCookieFingerprint = null;
       return;
     }
     if (PlatformCapabilities.supportsDesktopWebView) {

@@ -21,9 +21,14 @@ class QuicHttpClient extends http.BaseClient {
     : _fallbackClient = fallbackClient ?? http.Client();
 
   static const MethodChannel _channel = MethodChannel('easy_copy/quic_http');
+  static const String _engineUnavailableCode = 'engine_unavailable';
 
   final http.Client _fallbackClient;
   bool _closed = false;
+
+  /// Cronet 引擎不可用是本机永久状态（native 库缺失 / provider 不可用），
+  /// 一旦确认就固定走普通 HTTP 客户端，避免每个请求都白跑一次方法通道。
+  bool _engineUnavailable = false;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
@@ -32,6 +37,9 @@ class QuicHttpClient extends http.BaseClient {
     }
 
     final Uint8List body = await request.finalize().toBytes();
+    if (_engineUnavailable) {
+      return _sendWithFallback(request, body);
+    }
     try {
       final Object? rawResponse = await _channel
           .invokeMethod<Object?>('request', <String, Object?>{
@@ -44,8 +52,16 @@ class QuicHttpClient extends http.BaseClient {
           });
       return _buildResponse(request, rawResponse);
     } on MissingPluginException {
+      _engineUnavailable = true;
       return _sendWithFallback(request, body);
     } on PlatformException catch (error) {
+      if (error.code == _engineUnavailableCode) {
+        DebugTrace.log('net.cronet_unavailable', <String, Object?>{
+          'reason': error.message ?? error.code,
+        });
+        _engineUnavailable = true;
+        return _sendWithFallback(request, body);
+      }
       throw http.ClientException(
         error.message?.trim().isNotEmpty == true ? error.message! : error.code,
         request.url,

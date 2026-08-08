@@ -393,17 +393,30 @@ class HostManager {
   }
 
   Future<String> failover({Iterable<String> exclude = const <String>[]}) async {
+    // 必须在探测之前快照：_refreshProbes 会把 _currentHost 改成新的最优域名，
+    // 探测后再读会把刚选出的最优解错误地排除掉。
+    final String failingHost = _normalizeHost(currentHost);
     await refreshProbes(force: true);
     final Set<String> excludedHosts = exclude.map(_normalizeHost).toSet()
-      ..add(_normalizeHost(currentHost));
+      ..add(failingHost);
     final List<HostProbeRecord> ranked = _sortProbes(_snapshot?.probes ?? []);
-    final HostProbeRecord? nextHost = ranked
-        .cast<HostProbeRecord?>()
-        .firstWhere((HostProbeRecord? probe) {
-          return probe != null &&
-              probe.success &&
-              !excludedHosts.contains(_normalizeHost(probe.host));
-        }, orElse: () => null);
+    // 同一 alias 组（www/裸域、同 IP 签名）指向同一后端，转移到组内成员等于没转移，
+    // 所以优先整组排除。但候选域名可能全落在同一组（同一 CDN），排干净就无处可去，
+    // 因此这只是偏好：组外选不到时退回只排除失败域名本身，避免 failover 变成空操作。
+    final Set<String> aliasExcludedHosts = <String>{...excludedHosts};
+    for (final _HostAliasGroup group in _buildHostAliasGroups(ranked)) {
+      final bool groupContainsFailingHost =
+          group.primaryHost == failingHost ||
+          group.aliases.contains(failingHost);
+      if (groupContainsFailingHost) {
+        aliasExcludedHosts
+          ..add(group.primaryHost)
+          ..addAll(group.aliases);
+      }
+    }
+    final HostProbeRecord? nextHost =
+        _firstUsableProbe(ranked, aliasExcludedHosts) ??
+        _firstUsableProbe(ranked, excludedHosts);
     if (nextHost == null) {
       return currentHost;
     }
@@ -413,6 +426,17 @@ class HostManager {
     }
     await _persistCurrentState();
     return currentHost;
+  }
+
+  HostProbeRecord? _firstUsableProbe(
+    List<HostProbeRecord> ranked,
+    Set<String> excludedHosts,
+  ) {
+    return ranked.cast<HostProbeRecord?>().firstWhere((HostProbeRecord? probe) {
+      return probe != null &&
+          probe.success &&
+          !excludedHosts.contains(_normalizeHost(probe.host));
+    }, orElse: () => null);
   }
 
   Uri resolvePath(String path) {

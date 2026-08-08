@@ -359,10 +359,7 @@ extension _AppScreenTabNavigation on _AppScreenState {
     if (_shell.appVersion.isEmpty) {
       return '--';
     }
-    if (_shell.appBuildNumber.isEmpty) {
-      return _shell.appVersion;
-    }
-    return '${_shell.appVersion}+${_shell.appBuildNumber}';
+    return _shell.appVersion;
   }
 
   Uri _targetUriForPrimaryTab(int index, {bool resetToRoot = false}) {

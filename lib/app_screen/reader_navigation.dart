@@ -236,10 +236,6 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     }
   }
 
-  bool _isReaderChapterUri(Uri uri) {
-    return uri.pathSegments.contains('chapter');
-  }
-
   Future<bool> _tryOpenCachedChapterReader(
     Uri targetUri, {
     required NavigationRequestContext requestContext,

@@ -44,18 +44,6 @@ class CachedChapterNavigationContext {
       nextHref.trim().isNotEmpty ||
       catalogHref.trim().isNotEmpty;
 
-  CachedChapterNavigationContext copyWith({
-    String? prevHref,
-    String? nextHref,
-    String? catalogHref,
-  }) {
-    return CachedChapterNavigationContext(
-      prevHref: prevHref ?? this.prevHref,
-      nextHref: nextHref ?? this.nextHref,
-      catalogHref: catalogHref ?? this.catalogHref,
-    );
-  }
-
   CachedChapterNavigationContext mergeMissing(
     CachedChapterNavigationContext fallback,
   ) {
