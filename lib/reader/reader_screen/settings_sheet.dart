@@ -11,13 +11,24 @@ extension _ReaderSettingsSheet on ReaderScreenState {
       child: BackdropFilter(
         filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
         child: ColoredBox(
-          color: colorScheme.surface.withValues(alpha: 0.78),
+          // 分组的不透明底色去掉之后，文字直接压在磨砂面板上，面板要稍微再实一点
+          // 才能保证漫画页偏亮时的可读性。
+          color: colorScheme.surface.withValues(alpha: 0.86),
           child: AnimatedBuilder(
             animation: preferencesController,
             builder: (BuildContext context, Widget? _) {
               final ReaderPreferences preferences = _controller.preferences;
               return ReaderSheetSwipeDismissRegion(
                 dismissDistance: _settingsDismissDistance,
+                // 只有列表停在顶部时才允许下滑关闭，否则滚列表会被误判成关闭手势。
+                canDismiss: () {
+                  if (!_settingsSheetScrollController.hasClients) {
+                    return true;
+                  }
+                  final ScrollPosition position =
+                      _settingsSheetScrollController.position;
+                  return position.pixels <= position.minScrollExtent;
+                },
                 onDismiss: () => Navigator.of(context).maybePop(),
                 child: SafeArea(
                   child: SizedBox(
@@ -44,6 +55,7 @@ extension _ReaderSettingsSheet on ReaderScreenState {
                           child: Padding(
                             padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                             child: ListView(
+                              controller: _settingsSheetScrollController,
                               children: <Widget>[
                                 SettingsSection(
                                   children: <Widget>[
@@ -214,7 +226,7 @@ extension _ReaderSettingsSheet on ReaderScreenState {
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 16),
+                                const SizedBox(height: 24),
                                 SettingsSection(
                                   children: <Widget>[
                                     SettingsSwitchRow(

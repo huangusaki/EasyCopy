@@ -47,6 +47,7 @@ import 'package:reader/services/primary_tab_session_store.dart';
 import 'package:reader/services/rank_filter_selection.dart';
 import 'package:reader/services/reader_navigation_repairer.dart';
 import 'package:reader/services/reader_page_download_resolver.dart';
+import 'package:reader/services/reader_platform_bridge.dart';
 import 'package:reader/services/site_api_client.dart';
 import 'package:reader/services/site_html_page_loader.dart';
 import 'package:reader/services/standard_page_load_controller.dart';
@@ -438,12 +439,32 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// 桌面端全屏归外壳按路由管，而不是跟着 [ReaderScreen] 的生死走。
+  ///
+  /// 切章时阅读器会被卸载去渲染加载页，它 dispose 里的 restoreDefaultPresentation
+  /// 会把窗口退出全屏，新章节挂载后再进一次——看起来就是全屏闪断。这里在真正
+  /// 离开阅读器路由时才放行退出。
+  void _syncDesktopReaderFullscreenRetention(bool isReaderRoute) {
+    if (!PlatformCapabilities.isDesktop) {
+      return;
+    }
+    final ReaderPlatformBridge bridge = ReaderPlatformBridge.instance;
+    if (bridge.retainDesktopFullscreen == isReaderRoute) {
+      return;
+    }
+    bridge.retainDesktopFullscreen = isReaderRoute;
+    if (!isReaderRoute) {
+      unawaited(bridge.restoreDefaultPresentation());
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final SitePage? page = _page;
     final bool isReaderRoute =
         page is ReaderPageData || isReaderChapterUri(_currentUri);
     _syncDesktopReaderShortcutFocus(isReaderRoute);
+    _syncDesktopReaderFullscreenRetention(isReaderRoute);
     return PopScope<Object?>(
       canPop: false,
       onPopInvokedWithResult: (bool didPop, Object? result) async {

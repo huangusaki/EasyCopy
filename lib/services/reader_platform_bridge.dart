@@ -30,6 +30,14 @@ class ReaderPlatformBridge {
   final EventChannel _batteryChannel;
   final EventChannel _volumeKeyChannel;
 
+  /// 桌面端：路由仍在阅读器内时，禁止把窗口退出全屏。
+  ///
+  /// 由外壳按路由维护，而不是由 ReaderScreen 的生命周期维护——切章时阅读器会被
+  /// 整个卸载去渲染加载页，那次 dispose 不代表用户离开了阅读器。
+  /// 只作用于 [restoreDefaultPresentation]；设置里手动关全屏走的是
+  /// [applyReaderPresentation]，不受这个开关影响。
+  bool retainDesktopFullscreen = false;
+
   bool get isAndroidSupported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -100,7 +108,12 @@ class ReaderPlatformBridge {
 
   Future<void> restoreDefaultPresentation() async {
     if (_isDesktop) {
-      await _setDesktopFullscreen(false);
+      // 路由还在阅读器里就别退全屏：切章时 ReaderScreen 会被整个卸载去渲染加载页，
+      // 它 dispose 里的这次恢复会把窗口退出全屏，等新章节挂载后再进一次，
+      // 观感上就是全屏闪断一下。退全屏交给外壳在真正离开阅读器路由时做。
+      if (!retainDesktopFullscreen) {
+        await _setDesktopFullscreen(false);
+      }
       return;
     }
     if (supportsOrientationLock) {

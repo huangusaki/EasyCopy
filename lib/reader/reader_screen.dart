@@ -4,7 +4,8 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/gestures.dart' show DragStartBehavior;
+import 'package:flutter/gestures.dart'
+    show DragStartBehavior, PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/chapter_comment.dart';
@@ -29,6 +30,7 @@ import 'package:reader/services/reader_progress_store.dart';
 import 'package:reader/services/site_api_client.dart';
 import 'package:reader/services/site_session.dart';
 import 'package:reader/services/tree_image_provider.dart';
+import 'package:reader/utils/platform_capabilities.dart';
 import 'package:reader/widgets/responsive_layout.dart';
 import 'package:reader/widgets/settings_ui.dart';
 import 'package:reader/widgets/top_notice.dart';
@@ -43,6 +45,21 @@ const double _tapTurnSideZoneRatio = 0.33;
 const double _settingsDismissDistance = 72;
 const double _instantPageSwipeDistance = 72;
 const double _instantPageSwipeVelocity = 220;
+
+/// 桌面端把鼠标补进可拖拽设备。
+///
+/// Flutter 默认的 [MaterialScrollBehavior.dragDevices] 只含触摸／触控笔／触控板，
+/// 不含鼠标，所以 Windows 上按住左键拖动阅读器是完全没反应的——只能滚轮。
+/// 只覆盖 dragDevices，滚动条等其它行为沿用 Material 默认。
+class _ReaderMouseDragScrollBehavior extends MaterialScrollBehavior {
+  const _ReaderMouseDragScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => <PointerDeviceKind>{
+    ...super.dragDevices,
+    PointerDeviceKind.mouse,
+  };
+}
 
 class ReaderScreen extends StatefulWidget {
   const ReaderScreen({
@@ -76,6 +93,7 @@ class ReaderScreen extends StatefulWidget {
 
 class ReaderScreenState extends State<ReaderScreen> {
   late final ReaderController _controller;
+  final ScrollController _settingsSheetScrollController = ScrollController();
   double _instantPageDragDx = 0;
 
   ReaderController get controller => _controller;
@@ -128,6 +146,7 @@ class ReaderScreenState extends State<ReaderScreen> {
 
   @override
   void dispose() {
+    _settingsSheetScrollController.dispose();
     _controller.dispose();
     unawaited(_controller.restoreDefaultEnvironment());
     super.dispose();
@@ -864,6 +883,13 @@ class ReaderScreenState extends State<ReaderScreen> {
         Widget readerContent = preferences.isPaged
             ? _buildReaderPagedContent(context, page)
             : _buildReaderScrollableContent(context, page);
+
+        if (PlatformCapabilities.isDesktop) {
+          readerContent = ScrollConfiguration(
+            behavior: const _ReaderMouseDragScrollBehavior(),
+            child: readerContent,
+          );
+        }
 
         readerContent = ClipRect(
           child: Transform.translate(

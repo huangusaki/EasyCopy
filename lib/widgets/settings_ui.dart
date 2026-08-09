@@ -83,6 +83,12 @@ class SettingsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    // 分组不再自带底色：它只用在阅读器的磨砂设置面板里，铺一层不透明的
+    // surfaceContainerLow 既是面板里的第二层卡片，又会把背后的模糊挡掉。
+    // 改成用分隔线划出行与行的边界，面板本身就是唯一的那层容器。
+    final Color dividerColor = colorScheme.outlineVariant.withValues(
+      alpha: 0.3,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -98,13 +104,18 @@ class SettingsSection extends StatelessWidget {
             ),
           ),
         ],
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(22),
-          ),
-          child: Column(children: children),
-        ),
+        for (int index = 0; index < children.length; index += 1) ...<Widget>[
+          // 分隔线从标签文字的左边缘起，和 _SettingsRow 的 18 横向内边距对齐。
+          if (index > 0)
+            Divider(
+              height: 1,
+              thickness: 1,
+              indent: 18,
+              endIndent: 18,
+              color: dividerColor,
+            ),
+          children[index],
+        ],
       ],
     );
   }
