@@ -43,12 +43,14 @@ class DetailChapterToolbar extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
+        // 排序是动作不是选项，之前跟着 enabled 一起给了"选中"态，
+        // 结果一排里有两个 chip 看着都像被选中。
         DetailChapterControlChip(
           label: isAscending ? '正序' : '倒序',
           icon: isAscending
               ? Icons.arrow_upward_rounded
               : Icons.arrow_downward_rounded,
-          active: onToggleSort != null,
+          active: false,
           enabled: onToggleSort != null,
           onTap: onToggleSort,
         ),
@@ -76,11 +78,13 @@ class DetailChapterControlChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final bool interactive = enabled && onTap != null;
-    final Color backgroundColor = !enabled
-        ? colorScheme.surfaceContainerLow
-        : active
+    // chip 同样贴在卡片上，暗色下 surfaceContainerLowest 是纯黑，会比卡片更暗。
+    final Color raisedSurface = colorScheme.brightness == Brightness.light
+        ? colorScheme.surfaceContainerLowest
+        : colorScheme.surfaceContainerHighest;
+    final Color backgroundColor = enabled && active
         ? colorScheme.primaryContainer.withValues(alpha: 0.78)
-        : colorScheme.surfaceContainerLowest;
+        : raisedSurface;
     final Color borderColor = !enabled
         ? colorScheme.outlineVariant.withValues(alpha: 0.45)
         : active
@@ -115,7 +119,7 @@ class DetailChapterControlChip extends StatelessWidget {
     );
     final BoxDecoration chipDecoration = BoxDecoration(
       color: backgroundColor,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(999),
       border: Border.all(color: borderColor),
     );
     final Widget chipBody = usesWideLayout(context)
@@ -135,7 +139,7 @@ class DetailChapterControlChip extends StatelessWidget {
       opacity: enabled ? 1 : 0.72,
       child: InkWell(
         onTap: interactive ? onTap : null,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(999),
         child: chipBody,
       ),
     );

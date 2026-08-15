@@ -315,15 +315,14 @@ class _HistoryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    // 条目直接落在卡片上，不再自带一层底：同页的 _LibraryCard 就是这么画的，
+    // 而原来那层 surfaceContainerLow 在亮色下和卡片同色（等于没画），
+    // 暗色下又比卡片更暗，变成卡片上的一个洞。
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
-      child: Ink(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(20),
-        ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
           children: <Widget>[
             SizedBox(
@@ -372,7 +371,10 @@ class _HistoryTile extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: colorScheme.onSurface.withValues(alpha: 0.42),
+            ),
           ],
         ),
       ),

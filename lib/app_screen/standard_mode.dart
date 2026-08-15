@@ -45,7 +45,6 @@ extension _AppScreenStandardMode on _AppScreenState {
           body: Column(
             children: <Widget>[
               DesktopTitleBar(
-                title: _routes.pageTitle,
                 showBackButton: _routes.shouldShowBackButton,
                 onBack: () => unawaited(_handleBackNavigation()),
                 isLoading: _isLoading,
@@ -271,7 +270,6 @@ extension _AppScreenStandardMode on _AppScreenState {
       contentKey: '${_nav.selectedIndex}::${_currentEntry.routeKey}',
       tabIndex: _nav.selectedIndex,
       routeDepth: _tabSessionStore.depth(_nav.selectedIndex),
-      reducedMotion: !usesDesktopWindowShell(context),
       child: RefreshIndicator(
         onRefresh: () {
           if (!PlatformCapabilities.isDesktop) {

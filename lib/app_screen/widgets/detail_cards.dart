@@ -558,6 +558,16 @@ class ChapterGrid extends StatelessWidget {
       colorScheme.primary,
     );
     final Color downloadedColor = semanticColors.success;
+    // 格子铺在卡片里，填充必须比卡片高一档。暗色主题的 surfaceContainerLow 比卡片
+    // 用的 surfaceContainerHigh 还暗，直接用会让格子变成挖在卡片上的黑洞。
+    final Color tileColor = colorScheme.brightness == Brightness.light
+        ? colorScheme.surfaceContainerLowest
+        : colorScheme.surfaceContainerHighest;
+    // 已缓存的底色跟着对勾图标走 success 色，之前的 primaryContainer 和状态本身没关系。
+    final Color downloadedTileColor = Color.alphaBlend(
+      downloadedColor.withValues(alpha: 0.12),
+      tileColor,
+    );
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final double maxWidth = constraints.maxWidth.isFinite
@@ -579,7 +589,7 @@ class ChapterGrid extends StatelessWidget {
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
-            childAspectRatio: isWideLayout ? 2.35 : 1.7,
+            childAspectRatio: isWideLayout ? 2.6 : 2.0,
           ),
           itemBuilder: (BuildContext context, int index) {
             final ChapterData chapter = chapters[index];
@@ -595,7 +605,7 @@ class ChapterGrid extends StatelessWidget {
                 chapterPathKey == lastReadChapterPathKey;
             final Widget child = InkWell(
               onTap: () => onTap(chapter.href),
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(14),
               child: Ink(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -605,14 +615,20 @@ class ChapterGrid extends StatelessWidget {
                   color: isLastRead
                       ? lastReadColor
                       : isDownloaded
-                      ? colorScheme.primaryContainer.withValues(alpha: 0.38)
-                      : colorScheme.surfaceContainerLow,
-                  borderRadius: BorderRadius.circular(18),
+                      ? downloadedTileColor
+                      : tileColor,
+                  borderRadius: BorderRadius.circular(14),
                   border: isLastRead
                       ? Border.all(color: lastReadBorderColor, width: 1.2)
                       : isDownloaded
-                      ? Border.all(color: downloadedColor)
-                      : null,
+                      ? Border.all(
+                          color: downloadedColor.withValues(alpha: 0.72),
+                        )
+                      : Border.all(
+                          color: colorScheme.outlineVariant.withValues(
+                            alpha: 0.34,
+                          ),
+                        ),
                 ),
                 child: Row(
                   children: <Widget>[

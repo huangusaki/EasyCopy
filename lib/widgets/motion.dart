@@ -88,7 +88,6 @@ class ContentSwitchTransition extends StatefulWidget {
     required this.tabIndex,
     required this.routeDepth,
     required this.child,
-    this.reducedMotion = false,
     super.key,
   });
 
@@ -96,7 +95,6 @@ class ContentSwitchTransition extends StatefulWidget {
   final int tabIndex;
   final int routeDepth;
   final Widget child;
-  final bool reducedMotion;
 
   @override
   State<ContentSwitchTransition> createState() =>
@@ -132,22 +130,6 @@ class _ContentSwitchTransitionState extends State<ContentSwitchTransition>
       return;
     }
 
-    if (widget.reducedMotion) {
-      _scaleTween.begin = 1;
-      if (widget.tabIndex != oldWidget.tabIndex) {
-        final bool movingRight = widget.tabIndex > oldWidget.tabIndex;
-        _controller.duration = const Duration(milliseconds: 240);
-        _slideTween.begin = Offset(movingRight ? 0.06 : -0.06, 0);
-        _controller.forward(from: 0);
-        return;
-      }
-      _controller.duration = const Duration(milliseconds: 220);
-      _slideTween.begin = Offset.zero;
-      _controller.forward(from: 0.35);
-      return;
-    }
-
-    _controller.duration = const Duration(milliseconds: 400);
     if (widget.tabIndex != oldWidget.tabIndex) {
       final bool movingRight = widget.tabIndex > oldWidget.tabIndex;
       _slideTween.begin = Offset(movingRight ? 0.045 : -0.045, 0);
@@ -175,12 +157,6 @@ class _ContentSwitchTransitionState extends State<ContentSwitchTransition>
 
   @override
   Widget build(BuildContext context) {
-    if (widget.reducedMotion) {
-      return FadeTransition(
-        opacity: _curve,
-        child: SlideTransition(position: _slide, child: widget.child),
-      );
-    }
     return FadeTransition(
       opacity: _curve,
       child: SlideTransition(

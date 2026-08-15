@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/widgets/desktop/desktop_window_controls.dart';
 import 'package:window_manager/window_manager.dart';
 
 class DesktopTitleBar extends StatelessWidget {
   const DesktopTitleBar({
-    required this.title,
     required this.showBackButton,
     required this.onBack,
     required this.isLoading,
@@ -17,7 +15,6 @@ class DesktopTitleBar extends StatelessWidget {
 
   static const double height = 52;
 
-  final String title;
   final bool showBackButton;
   final VoidCallback onBack;
   final bool isLoading;
@@ -37,7 +34,7 @@ class DesktopTitleBar extends StatelessWidget {
           Positioned.fill(
             child: Row(
               children: <Widget>[
-                // 左侧：返回 + 页面标题，占据等宽弹性区。
+                // 左侧：返回按钮，占据等宽弹性区（和右侧对称，使搜索框居中）。
                 Expanded(
                   child: Row(
                     children: <Widget>[
@@ -46,7 +43,6 @@ class DesktopTitleBar extends StatelessWidget {
                         visible: showBackButton,
                         onBack: onBack,
                       ),
-                      Flexible(child: _AnimatedPageTitle(title: title)),
                     ],
                   ),
                 ),
@@ -163,60 +159,6 @@ class _AnimatedBackButton extends StatelessWidget {
   }
 }
 
-class _AnimatedPageTitle extends StatelessWidget {
-  const _AnimatedPageTitle({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return IgnorePointer(
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 300),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
-          layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) {
-            return Stack(
-              alignment: Alignment.centerLeft,
-              children: <Widget>[
-                ...previousChildren,
-                if (currentChild != null) currentChild,
-              ],
-            );
-          },
-          transitionBuilder: (Widget child, Animation<double> animation) {
-            return FadeTransition(
-              opacity: animation,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(0, 0.45),
-                  end: Offset.zero,
-                ).animate(animation),
-                child: child,
-              ),
-            );
-          },
-          child: Text(
-            ChineseConverter.instance.convert(title),
-            key: ValueKey<String>(title),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.2,
-              color: colorScheme.onSurface.withValues(alpha: 0.85),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _RefreshButton extends StatefulWidget {
   const _RefreshButton({required this.isLoading, required this.onRefresh});
 
@@ -325,27 +267,21 @@ class _HoverIconButtonState extends State<_HoverIconButton> {
         onExit: (_) => setState(() => _isHovered = false),
         child: GestureDetector(
           onTap: widget.onTap,
-          child: AnimatedScale(
-            duration: const Duration(milliseconds: 150),
+          // 尺寸／圆角／悬停底色都对齐 DesktopWindowControls 里的 _CaptionButton，
+          // 让标题栏右侧这一排看起来是同一套按钮。
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
             curve: Curves.easeOut,
-            scale: _isHovered && enabled ? 1.08 : 1,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: _isHovered && enabled
-                    ? colorScheme.onSurface.withValues(alpha: 0.07)
-                    : colorScheme.surfaceContainerLow.withValues(alpha: 0.45),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: colorScheme.outlineVariant.withValues(
-                    alpha: _isHovered && enabled ? 0.6 : 0.35,
-                  ),
-                ),
-              ),
-              child: Center(child: icon),
+            width: 42,
+            height: 32,
+            margin: const EdgeInsets.symmetric(horizontal: 1),
+            decoration: BoxDecoration(
+              color: _isHovered && enabled
+                  ? colorScheme.onSurface.withValues(alpha: 0.08)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(9),
             ),
+            child: Center(child: icon),
           ),
         ),
       ),

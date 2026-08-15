@@ -2,7 +2,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:reader/widgets/desktop/desktop_window_controls.dart';
-import 'package:window_manager/window_manager.dart';
 
 class DesktopFloatingWindowControls extends StatefulWidget {
   const DesktopFloatingWindowControls({super.key});
@@ -48,32 +47,7 @@ class _DesktopFloatingWindowControlsState
                       color: colorScheme.outlineVariant.withValues(alpha: 0.3),
                     ),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onPanStart: (_) => windowManager.startDragging(),
-                        child: MouseRegion(
-                          cursor: SystemMouseCursors.move,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 6,
-                            ),
-                            child: Icon(
-                              Icons.drag_indicator_rounded,
-                              size: 15,
-                              color: colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.7,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const DesktopWindowControls(),
-                    ],
-                  ),
+                  child: const DesktopWindowControls(),
                 ),
               ),
             ),

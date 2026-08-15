@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +16,8 @@ class MobileFloatingNavBar extends StatelessWidget {
   });
 
   static const double _barHeight = 62;
+  static const double _barPadding = 7;
+  static const double _pillExtent = 48;
 
   final int selectedIndex;
   final List<AppDestination> destinations;
@@ -30,40 +33,68 @@ class MobileFloatingNavBar extends StatelessWidget {
       minimum: const EdgeInsets.only(bottom: 12),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 18),
-        child: Container(
-          height: _barHeight,
-          padding: const EdgeInsets.all(7),
-          decoration: BoxDecoration(
-            color: colorScheme.surface.withValues(alpha: 0.94),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.42),
-            ),
-            boxShadow: <BoxShadow>[
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.09),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Row(
-            children: <Widget>[
-              for (int index = 0; index < destinations.length; index += 1)
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2),
-                    child: _NavItem(
-                      destination: destinations[index],
-                      isSelected: index == selectedIndex,
-                      onTap: () {
-                        unawaited(HapticFeedback.selectionClick());
-                        onDestinationSelected(index);
-                      },
-                    ),
-                  ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              height: _barHeight,
+              padding: const EdgeInsets.all(_barPadding),
+              decoration: BoxDecoration(
+                color: colorScheme.surface.withValues(alpha: 0.7),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.42),
                 ),
-            ],
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.09),
+                    blurRadius: 18,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  final double slotWidth =
+                      constraints.maxWidth / destinations.length;
+                  return Stack(
+                    children: <Widget>[
+                      AnimatedPositioned(
+                        duration: const Duration(milliseconds: 420),
+                        curve: Curves.easeOutBack,
+                        left:
+                            selectedIndex * slotWidth +
+                            (slotWidth - _pillExtent) / 2,
+                        top: 0,
+                        bottom: 0,
+                        width: _pillExtent,
+                        child: const _SelectionPill(),
+                      ),
+                      Row(
+                        children: <Widget>[
+                          for (
+                            int index = 0;
+                            index < destinations.length;
+                            index += 1
+                          )
+                            Expanded(
+                              child: _NavItem(
+                                destination: destinations[index],
+                                isSelected: index == selectedIndex,
+                                onTap: () {
+                                  unawaited(HapticFeedback.selectionClick());
+                                  onDestinationSelected(index);
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ),
@@ -84,6 +115,32 @@ class MobileFloatingNavBar extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _SelectionPill extends StatelessWidget {
+  const _SelectionPill();
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[colorScheme.primary, colorScheme.secondary],
+        ),
+        shape: BoxShape.circle,
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: colorScheme.primary.withValues(alpha: 0.38),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -113,68 +170,8 @@ class _NavItem extends StatelessWidget {
         button: true,
         selected: isSelected,
         label: destination.label,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOutCubic,
-          height: 48,
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          decoration: BoxDecoration(
-            gradient: isSelected
-                ? LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: <Color>[colorScheme.primary, colorScheme.secondary],
-                  )
-                : null,
-            borderRadius: BorderRadius.circular(999),
-            boxShadow: <BoxShadow>[
-              if (isSelected)
-                BoxShadow(
-                  color: colorScheme.primary.withValues(alpha: 0.35),
-                  blurRadius: 10,
-                  offset: const Offset(0, 3),
-                ),
-            ],
-          ),
-          child: Center(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 140),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeOutCubic,
-              transitionBuilder: (Widget child, Animation<double> animation) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-              child: isSelected
-                  ? FittedBox(
-                      key: const ValueKey<String>('selected'),
-                      fit: BoxFit.scaleDown,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          Icon(destination.icon, size: 22, color: foreground),
-                          const SizedBox(width: 7),
-                          Text(
-                            destination.label,
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0,
-                              color: foreground,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : Icon(
-                      destination.icon,
-                      key: const ValueKey<String>('idle'),
-                      size: 22,
-                      color: foreground,
-                    ),
-            ),
-          ),
+        child: Center(
+          child: Icon(destination.icon, size: 22, color: foreground),
         ),
       ),
     );
