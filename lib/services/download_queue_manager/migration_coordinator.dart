@@ -22,6 +22,17 @@ extension _DownloadMigrationCoordinator on DownloadQueueManager {
     _activeMigrationTask = task;
   }
 
+  /// 丢弃 copying 阶段的失败状态；后续阶段仍需恢复。
+  Future<void> _discardFailedMigration() async {
+    _pendingMigration = null;
+    try {
+      await _migrationStore.clear();
+      await _deltaJournalStore.clear();
+    } catch (_) {
+      // 清理失败不覆盖原始迁移异常。
+    }
+  }
+
   Future<void> _runMigrationFlow(
     PendingDownloadStorageMigration pendingMigration, {
     required bool isRecovery,
@@ -57,12 +68,18 @@ extension _DownloadMigrationCoordinator on DownloadQueueManager {
         'elapsedMs': stopwatch.elapsedMilliseconds,
       });
     } catch (error) {
+      final DownloadStorageMigrationStep failedPhase =
+          _pendingMigration?.phase ?? pendingMigration.phase;
       DebugTrace.log('storage_migration.flow_failed', <String, Object?>{
         'migrationId': pendingMigration.storageKey,
-        'phase': _pendingMigration?.phase.name ?? pendingMigration.phase.name,
+        'phase': failedPhase.name,
         'elapsedMs': stopwatch.elapsedMilliseconds,
         'error': error.toString(),
       });
+      // 后续阶段保留记录，以便恢复切换并清理旧目录。
+      if (failedPhase == DownloadStorageMigrationStep.copying) {
+        await _discardFailedMigration();
+      }
       if (!_disposed) {
         storageBusyNotifier.value = false;
         _storageSwitchPending = false;

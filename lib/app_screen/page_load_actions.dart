@@ -715,6 +715,8 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       preserveVisiblePage: preserveVisiblePage,
       sourceKind: NavigationRequestSourceKind.profile,
     );
+    // 先恢复会话，避免个人页按 guest 缓存。
+    await _services.session.ensureInitialized();
     final PageQueryKey key = _pageQueryKeyForUri(resolvedTargetUri);
     final ProfileSubview activeSubview = AppConfig.profileSubviewForUri(
       resolvedTargetUri,

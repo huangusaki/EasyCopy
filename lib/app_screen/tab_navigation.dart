@@ -437,8 +437,16 @@ extension _AppScreenTabNavigation on _AppScreenState {
         index,
         resetToRoot: shouldResetToRoot,
       );
+      final PrimaryTabRouteEntry profileEntry = _tabSessionStore.currentEntry(
+        index,
+      );
       if (!shouldResetToRoot &&
-          _tabSessionStore.currentEntry(index).page != null) {
+          profileEntry.page != null &&
+          !profileNeedsAccountRefresh(
+            uri: profileEntry.uri,
+            page: profileEntry.page,
+            isAuthenticated: _services.session.isAuthenticated,
+          )) {
         _scrollState.persistVisiblePageState();
         if (_activateRestoredPrimaryTab(index)) {
           return;

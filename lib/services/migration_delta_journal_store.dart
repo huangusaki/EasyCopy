@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -52,8 +53,23 @@ class MigrationDeltaJournalStore {
   Future<void>? _initialization;
   File? _file;
 
+  /// 串行化 append/clear，避免读改写互相覆盖。
+  Future<void> _mutations = Future<void>.value();
+
   Future<void> ensureInitialized() {
     return _initialization ??= _initialize();
+  }
+
+  Future<T> _serialize<T>(Future<T> Function() action) {
+    final Completer<T> completer = Completer<T>();
+    _mutations = _mutations.then((_) async {
+      try {
+        completer.complete(await action());
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    return completer.future;
   }
 
   Future<List<MigrationDeltaEntry>> read(String storageKey) async {
@@ -89,27 +105,31 @@ class MigrationDeltaJournalStore {
     }
   }
 
-  Future<void> append(String storageKey, MigrationDeltaEntry entry) async {
-    final List<MigrationDeltaEntry> entries = await read(storageKey);
-    await _write(storageKey, <MigrationDeltaEntry>[...entries, entry]);
+  Future<void> append(String storageKey, MigrationDeltaEntry entry) {
+    return _serialize(() async {
+      final List<MigrationDeltaEntry> entries = await read(storageKey);
+      await _write(storageKey, <MigrationDeltaEntry>[...entries, entry]);
+    });
   }
 
-  Future<void> clear([String? storageKey]) async {
-    await ensureInitialized();
-    final File file = _file!;
-    if (!await file.exists()) {
-      return;
-    }
-    if (storageKey == null) {
-      await file.delete();
-      return;
-    }
-    final List<MigrationDeltaEntry> entries = await read(storageKey);
-    if (entries.isEmpty) {
-      await file.delete();
-    } else {
-      await _write(storageKey, const <MigrationDeltaEntry>[]);
-    }
+  Future<void> clear([String? storageKey]) {
+    return _serialize(() async {
+      await ensureInitialized();
+      final File file = _file!;
+      if (!await file.exists()) {
+        return;
+      }
+      if (storageKey == null) {
+        await file.delete();
+        return;
+      }
+      final List<MigrationDeltaEntry> entries = await read(storageKey);
+      if (entries.isEmpty) {
+        await file.delete();
+      } else {
+        await _write(storageKey, const <MigrationDeltaEntry>[]);
+      }
+    });
   }
 
   Future<void> _write(

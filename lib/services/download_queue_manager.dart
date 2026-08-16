@@ -294,16 +294,26 @@ class DownloadQueueManager {
 
   Future<void> removeComicAndDeleteCache(DownloadQueueTask task) async {
     final bool removesRunningComic = _isComicRunning(task.comicKey);
+    // 先登记删除，避免任务在持久化期间结束而丢失请求。
+    final String? runningTaskId = _runningTaskId;
+    final bool deferredToRunningTask =
+        removesRunningComic && runningTaskId != null;
+    if (deferredToRunningTask) {
+      _pendingCancelledComicDeletions[runningTaskId] = task.comicTitle;
+    }
     final List<DownloadQueueTask> removedTasks = await _removeComicFromQueue(
       task.comicKey,
       deferCleanupToRunningTask: removesRunningComic,
     );
 
-    if (removesRunningComic) {
-      if (_runningTaskId != null) {
-        _pendingCancelledComicDeletions[_runningTaskId!] = task.comicTitle;
+    if (deferredToRunningTask) {
+      if (_runningTaskId == runningTaskId) {
+        return;
       }
-      return;
+      // 任务已结束且未消费登记项，由当前调用兜底。
+      if (_pendingCancelledComicDeletions.remove(runningTaskId) == null) {
+        return;
+      }
     }
 
     await _downloadService.cleanupIncompleteTasks(removedTasks);
@@ -340,22 +350,32 @@ class DownloadQueueManager {
     required String comicKey,
   }) async {
     final bool removesRunningComic = _isComicRunning(comicKey);
+    // 先登记删除，避免任务在持久化期间结束而丢失请求。
+    final String? runningTaskId = _runningTaskId;
+    final bool deferredToRunningTask =
+        removesRunningComic && runningTaskId != null;
+    if (deferredToRunningTask) {
+      _pendingCancelledComicDeletions[runningTaskId] = entry.comicTitle;
+    }
     final List<DownloadQueueTask> removedTasks = await _removeComicFromQueue(
       comicKey,
       deferCleanupToRunningTask: removesRunningComic,
     );
 
-    if (!removesRunningComic) {
-      await _downloadService.cleanupIncompleteTasks(removedTasks);
-      await _downloadService.deleteCachedComic(entry);
-      await _recordComicDeletion(entry.comicTitle);
-      await _notifyLibraryChanged(CacheLibraryRefreshReason.queueChanged);
-      return;
+    if (deferredToRunningTask) {
+      if (_runningTaskId == runningTaskId) {
+        return;
+      }
+      // 任务已结束且未消费登记项，由当前调用兜底。
+      if (_pendingCancelledComicDeletions.remove(runningTaskId) == null) {
+        return;
+      }
     }
 
-    if (_runningTaskId != null) {
-      _pendingCancelledComicDeletions[_runningTaskId!] = entry.comicTitle;
-    }
+    await _downloadService.cleanupIncompleteTasks(removedTasks);
+    await _downloadService.deleteCachedComic(entry);
+    await _recordComicDeletion(entry.comicTitle);
+    await _notifyLibraryChanged(CacheLibraryRefreshReason.queueChanged);
   }
 
   String? storageEditBlockReason() {
@@ -440,24 +460,25 @@ class DownloadQueueManager {
       return;
     }
 
-    final DownloadStorageState nextStorageState = await _downloadService
-        .resolveStorageState();
-    if (_disposed) {
-      return;
-    }
-    storageStateNotifier.value = nextStorageState;
-    if (!nextStorageState.isReady) {
-      await _persistSnapshot(snapshot.copyWith(isPaused: true));
-      _notify(
-        nextStorageState.errorMessage.isEmpty
-            ? '缓存目录不可用，请检查下载管理页中的目录设置。'
-            : '缓存目录不可用：${nextStorageState.errorMessage}',
-      );
-      return;
-    }
-
+    // 磁盘检查前锁定队列，防止并发启动同一任务。
     _isProcessingQueue = true;
     try {
+      final DownloadStorageState nextStorageState = await _downloadService
+          .resolveStorageState();
+      if (_disposed) {
+        return;
+      }
+      storageStateNotifier.value = nextStorageState;
+      if (!nextStorageState.isReady) {
+        await _persistSnapshot(snapshot.copyWith(isPaused: true));
+        _notify(
+          nextStorageState.errorMessage.isEmpty
+              ? '缓存目录不可用，请检查下载管理页中的目录设置。'
+              : '缓存目录不可用：${nextStorageState.errorMessage}',
+        );
+        return;
+      }
+
       while (!_disposed) {
         if (_storageSwitchPending) {
           break;

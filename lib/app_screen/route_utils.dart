@@ -46,6 +46,22 @@ bool isSecondaryProfileRoute(Uri uri) {
       AppConfig.profileSubviewForUri(uri) != ProfileSubview.root;
 }
 
+/// 登录后若仍是本地占位页，则重新拉取账号数据。
+bool profileNeedsAccountRefresh({
+  required Uri uri,
+  required SitePage? page,
+  required bool isAuthenticated,
+}) {
+  if (!isAuthenticated || page is! ProfilePageData) {
+    return false;
+  }
+  // 缓存页无需账号数据。
+  if (AppConfig.profileSubviewForUri(uri) == ProfileSubview.cached) {
+    return false;
+  }
+  return page.user == null;
+}
+
 bool hideSecondaryDiscoverHeader(Uri uri) {
   if (!isSecondaryDiscoverRoute(uri)) {
     return false;
