@@ -30,6 +30,7 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
   static const Object _tapRegionGroup = 'desktop-search-field';
 
   final LayerLink _layerLink = LayerLink();
+  final GlobalKey _flyoutKey = GlobalKey();
   final OverlayPortalController _flyoutController = OverlayPortalController();
 
   late FocusNode _focusNode;
@@ -99,8 +100,21 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
     if (query.isEmpty) {
       return;
     }
-    _focusNode.unfocus();
     widget.onSubmit(query);
+    _focusNode.unfocus();
+  }
+
+  void _handleTapOutside(PointerDownEvent event) {
+    final BuildContext? flyoutContext = _flyoutKey.currentContext;
+    final RenderObject? renderObject = flyoutContext?.findRenderObject();
+    if (renderObject is RenderBox && renderObject.hasSize) {
+      final Rect flyoutBounds =
+          renderObject.localToGlobal(Offset.zero) & renderObject.size;
+      if (flyoutBounds.contains(event.position)) {
+        return;
+      }
+    }
+    _focusNode.unfocus();
   }
 
   @override
@@ -113,7 +127,7 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
       overlayChildBuilder: _buildFlyout,
       child: TapRegion(
         groupId: _tapRegionGroup,
-        onTapOutside: (_) => _focusNode.unfocus(),
+        onTapOutside: _handleTapOutside,
         child: CompositedTransformTarget(
           link: _layerLink,
           child: MouseRegion(
@@ -159,6 +173,7 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
                     child: TextField(
                       controller: widget.controller,
                       focusNode: _focusNode,
+                      onTapOutside: _handleTapOutside,
                       onSubmitted: _submit,
                       textInputAction: TextInputAction.search,
                       style: const TextStyle(
@@ -223,15 +238,18 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
         showWhenUnlinked: false,
         child: ExcludeSemantics(
           child: TapRegion(
+            key: _flyoutKey,
             groupId: _tapRegionGroup,
-            child: _HistoryFlyoutPanel(
-              history: widget.history,
-              onSelect: _submit,
-              onRemove: widget.onRemoveHistoryEntry,
-              onClear: () {
-                _focusNode.unfocus();
-                widget.onClearHistory();
-              },
+            child: TextFieldTapRegion(
+              child: _HistoryFlyoutPanel(
+                history: widget.history,
+                onSelect: _submit,
+                onRemove: widget.onRemoveHistoryEntry,
+                onClear: () {
+                  _focusNode.unfocus();
+                  widget.onClearHistory();
+                },
+              ),
             ),
           ),
         ),

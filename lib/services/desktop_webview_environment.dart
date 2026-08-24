@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:reader/services/host_manager.dart';
 import 'package:reader/utils/platform_capabilities.dart';
 import 'package:webview_windows/webview_windows.dart';
 
@@ -67,9 +68,28 @@ class DesktopWebViewEnvironment {
     );
     await userDataDirectory.create(recursive: true);
 
+    await HostManager.instance.ensureInitialized();
+    final List<String> quicOrigins =
+        <String>{
+              ...HostManager.instance.knownHosts,
+              HostManager.instance.currentHost,
+            }
+            .where((String host) => host.trim().isNotEmpty)
+            .map((String host) {
+              return '${host.trim().toLowerCase()}:443';
+            })
+            .toList(growable: false)
+          ..sort();
+    final String additionalArguments = <String>[
+      '--enable-quic',
+      if (quicOrigins.isNotEmpty)
+        '--origin-to-force-quic-on=${quicOrigins.join(',')}',
+    ].join(' ');
+
     try {
       await WebviewController.initializeEnvironment(
         userDataPath: userDataDirectory.path,
+        additionalArguments: additionalArguments,
       );
     } on PlatformException catch (error) {
       final String message = (error.message ?? error.code).toLowerCase();

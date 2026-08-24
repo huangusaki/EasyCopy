@@ -5,10 +5,12 @@ import 'package:http/http.dart' as http;
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/chapter_comment.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/desktop_search_api_bridge.dart';
 import 'package:reader/services/network_client.dart';
 import 'package:reader/services/quic_http_client.dart';
 import 'package:reader/services/site_json_utils.dart';
 import 'package:reader/services/site_session.dart';
+import 'package:reader/utils/platform_capabilities.dart';
 
 part 'site_api_client/parsing.dart';
 
@@ -45,16 +47,31 @@ class _PagedProfileSection {
   final int total;
 }
 
+typedef SearchResponseLoader =
+    Future<DesktopSearchResponse> Function(
+      Uri uri, {
+      required Map<String, String> headers,
+    });
+
 class SiteApiClient {
-  SiteApiClient({http.Client? client, SiteSession? session})
-    : _client = client ?? AppHttpClientFactory.create(),
-      _session = session ?? SiteSession.instance;
+  SiteApiClient({
+    http.Client? client,
+    SiteSession? session,
+    SearchResponseLoader? searchResponseLoader,
+  }) : _client = client ?? AppHttpClientFactory.create(),
+       _session = session ?? SiteSession.instance,
+       _searchResponseLoader =
+           searchResponseLoader ??
+           (PlatformCapabilities.supportsDesktopWebView
+               ? DesktopSearchApiBridge.instance.get
+               : null);
 
   static final SiteApiClient instance = SiteApiClient();
   static const String _chapterCommentApiHost = 'api.mangacopy.com';
 
   final http.Client _client;
   final SiteSession _session;
+  final SearchResponseLoader? _searchResponseLoader;
   static const int _searchPageSize = 12;
   static const int _profilePageSize = 20;
 
@@ -544,19 +561,17 @@ class SiteApiClient {
             'q_type': qType,
           },
         );
-        final http.Response response = await NetworkClient.get(
-          _client,
+        final Map<String, String> headers = <String, String>{
+          'Accept': 'application/json',
+          'User-Agent': AppConfig.desktopUserAgent,
+          'platform': '2',
+          if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
+        };
+        final DesktopSearchResponse response = await _loadSearchResponse(
           uri,
-          headers: <String, String>{
-            'Accept': 'application/json',
-            'User-Agent': AppConfig.desktopUserAgent,
-            'platform': '2',
-            if (_session.cookieHeader.isNotEmpty)
-              'Cookie': _session.cookieHeader,
-          },
-          label: 'api.search',
+          headers: headers,
         );
-        final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        final Object? decoded = jsonDecode(response.body);
         if (decoded is! Map) {
           throw SiteApiException('搜索接口返回格式异常。');
         }
@@ -580,6 +595,26 @@ class SiteApiClient {
       throw lastError;
     }
     throw SiteApiException('搜索失败，请稍后重试。');
+  }
+
+  Future<DesktopSearchResponse> _loadSearchResponse(
+    Uri uri, {
+    required Map<String, String> headers,
+  }) async {
+    final SearchResponseLoader? loader = _searchResponseLoader;
+    if (loader != null) {
+      return loader(uri, headers: headers);
+    }
+    final http.Response response = await NetworkClient.get(
+      _client,
+      uri,
+      headers: headers,
+      label: 'api.search',
+    );
+    return (
+      body: utf8.decode(response.bodyBytes),
+      statusCode: response.statusCode,
+    );
   }
 
   Future<SiteLoginResult> _loginWithPath(

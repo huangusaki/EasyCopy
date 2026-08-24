@@ -241,6 +241,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
       onChanged: _setStateIfMounted,
     );
     _pageRepository = PageRepository(
+      apiClient: _services.siteApiClient,
       standardPageLoader: _loadStandardPageFresh,
       htmlPageLoader: _loadHtmlPageFresh,
       profilePageLoader: _services.localProfilePageLoader.loadProfile,
