@@ -1,9 +1,9 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/persistence/atomic_json_file.dart';
 
 enum DownloadQueueTaskStatus { queued, parsing, downloading, paused, failed }
 
@@ -223,66 +223,30 @@ class DownloadQueueSnapshot {
 
 class DownloadQueueStore {
   DownloadQueueStore({Future<Directory> Function()? directoryProvider})
-    : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
+    : _file = AtomicJsonFile<DownloadQueueSnapshot>(
+        directoryProvider: directoryProvider ?? getApplicationSupportDirectory,
+        relativePath: 'download_queue/queue.json',
+        decode: (Object? json) => DownloadQueueSnapshot.fromJson(
+          Map<String, Object?>.from(json as Map),
+        ),
+        encode: (DownloadQueueSnapshot snapshot) => snapshot.toJson(),
+      );
 
   static final DownloadQueueStore instance = DownloadQueueStore();
 
-  final Future<Directory> Function() _directoryProvider;
+  final AtomicJsonFile<DownloadQueueSnapshot> _file;
 
-  Future<void>? _initialization;
-  File? _file;
-
-  Future<void> ensureInitialized() {
-    return _initialization ??= _initialize();
-  }
+  Future<void> ensureInitialized() => _file.ensureInitialized();
 
   Future<DownloadQueueSnapshot> read() async {
-    await ensureInitialized();
-    final File file = _file!;
-    if (!await file.exists()) {
-      return const DownloadQueueSnapshot();
-    }
-    try {
-      final Object? decoded = jsonDecode(await file.readAsString());
-      if (decoded is! Map) {
-        return const DownloadQueueSnapshot();
-      }
-      final DownloadQueueSnapshot snapshot = DownloadQueueSnapshot.fromJson(
-        decoded.map(
-          (Object? key, Object? value) => MapEntry(key.toString(), value),
-        ),
-      );
-      return snapshot.copyWith(tasks: _normalizeTasks(snapshot.tasks));
-    } catch (_) {
-      return const DownloadQueueSnapshot();
-    }
+    final DownloadQueueSnapshot snapshot =
+        await _file.read() ?? const DownloadQueueSnapshot();
+    return snapshot.copyWith(tasks: _normalizeTasks(snapshot.tasks));
   }
 
-  Future<void> write(DownloadQueueSnapshot snapshot) async {
-    await ensureInitialized();
-    final File file = _file!;
-    await file.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(snapshot.toJson()),
-      flush: true,
-    );
-  }
+  Future<void> write(DownloadQueueSnapshot snapshot) => _file.write(snapshot);
 
-  Future<void> clear() async {
-    await ensureInitialized();
-    final File file = _file!;
-    if (await file.exists()) {
-      await file.delete();
-    }
-  }
-
-  Future<void> _initialize() async {
-    final Directory directory = await _directoryProvider();
-    final Directory stateDirectory = Directory(
-      '${directory.path}${Platform.pathSeparator}download_queue',
-    );
-    await stateDirectory.create(recursive: true);
-    _file = File('${stateDirectory.path}${Platform.pathSeparator}queue.json');
-  }
+  Future<void> clear() => _file.clear();
 
   List<DownloadQueueTask> _normalizeTasks(List<DownloadQueueTask> tasks) {
     final DateTime now = DateTime.now();

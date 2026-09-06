@@ -212,9 +212,8 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
           return rawHosts.indexOf(left).compareTo(rawHosts.indexOf(right));
         });
 
-    return Scaffold(
-      backgroundColor: opaquePageBackground(context),
-      appBar: AppBar(title: const Text('访问域名')),
+    return SettingsPageScaffold(
+      title: '访问域名',
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),

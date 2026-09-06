@@ -1,8 +1,7 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
+import 'package:reader/services/persistence/atomic_json_file.dart';
 
 typedef JournalDirProvider = Future<Directory> Function();
 
@@ -43,120 +42,72 @@ class MigrationDeltaEntry {
 
 class MigrationDeltaJournalStore {
   MigrationDeltaJournalStore({JournalDirProvider? directoryProvider})
-    : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
+    : _file = AtomicJsonFile<_MigrationJournal>(
+        directoryProvider: directoryProvider ?? getApplicationSupportDirectory,
+        relativePath: 'download_queue/storage_migration_delta.json',
+        decode: _MigrationJournal.fromJson,
+        encode: (_MigrationJournal value) => value.toJson(),
+      );
 
   static final MigrationDeltaJournalStore instance =
       MigrationDeltaJournalStore();
 
-  final JournalDirProvider _directoryProvider;
+  final AtomicJsonFile<_MigrationJournal> _file;
 
-  Future<void>? _initialization;
-  File? _file;
-
-  /// 串行化 append/clear，避免读改写互相覆盖。
-  Future<void> _mutations = Future<void>.value();
-
-  Future<void> ensureInitialized() {
-    return _initialization ??= _initialize();
-  }
-
-  Future<T> _serialize<T>(Future<T> Function() action) {
-    final Completer<T> completer = Completer<T>();
-    _mutations = _mutations.then((_) async {
-      try {
-        completer.complete(await action());
-      } catch (error, stackTrace) {
-        completer.completeError(error, stackTrace);
-      }
-    });
-    return completer.future;
-  }
+  Future<void> ensureInitialized() => _file.ensureInitialized();
 
   Future<List<MigrationDeltaEntry>> read(String storageKey) async {
-    await ensureInitialized();
-    final File file = _file!;
-    if (!await file.exists()) {
-      return const <MigrationDeltaEntry>[];
-    }
-    try {
-      final Object? decoded = jsonDecode(await file.readAsString());
-      if (decoded is! Map) {
-        return const <MigrationDeltaEntry>[];
-      }
-      final String persistedStorageKey =
-          (decoded['storageKey'] as String?)?.trim() ?? '';
-      if (persistedStorageKey != storageKey) {
-        return const <MigrationDeltaEntry>[];
-      }
-      final List<Object?> rawEntries =
-          (decoded['entries'] as List<Object?>?) ?? const <Object?>[];
-      return rawEntries
-          .whereType<Map<Object?, Object?>>()
-          .map(
-            (Map<Object?, Object?> entry) => MigrationDeltaEntry.fromJson(
-              entry.map(
-                (Object? key, Object? value) => MapEntry(key.toString(), value),
-              ),
-            ),
-          )
-          .toList(growable: false);
-    } catch (_) {
-      return const <MigrationDeltaEntry>[];
-    }
+    final _MigrationJournal? journal = await _file.read();
+    return journal?.storageKey == storageKey
+        ? journal!.entries
+        : const <MigrationDeltaEntry>[];
   }
 
   Future<void> append(String storageKey, MigrationDeltaEntry entry) {
-    return _serialize(() async {
-      final List<MigrationDeltaEntry> entries = await read(storageKey);
-      await _write(storageKey, <MigrationDeltaEntry>[...entries, entry]);
-    });
+    return _file.update(
+      (_MigrationJournal? current) =>
+          _MigrationJournal(storageKey, <MigrationDeltaEntry>[
+            if (current?.storageKey == storageKey) ...current!.entries,
+            entry,
+          ]),
+    );
   }
 
   Future<void> clear([String? storageKey]) {
-    return _serialize(() async {
-      await ensureInitialized();
-      final File file = _file!;
-      if (!await file.exists()) {
-        return;
-      }
-      if (storageKey == null) {
-        await file.delete();
-        return;
-      }
-      final List<MigrationDeltaEntry> entries = await read(storageKey);
-      if (entries.isEmpty) {
-        await file.delete();
-      } else {
-        await _write(storageKey, const <MigrationDeltaEntry>[]);
-      }
-    });
+    return _file.clear(
+      when: storageKey == null
+          ? null
+          : (_MigrationJournal? current) => current?.storageKey == storageKey,
+    );
   }
+}
 
-  Future<void> _write(
-    String storageKey,
-    List<MigrationDeltaEntry> entries,
-  ) async {
-    await ensureInitialized();
-    final File file = _file!;
-    await file.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(<String, Object?>{
-        'storageKey': storageKey,
-        'entries': entries
-            .map((MigrationDeltaEntry entry) => entry.toJson())
-            .toList(),
-      }),
-      flush: true,
+class _MigrationJournal {
+  const _MigrationJournal(this.storageKey, this.entries);
+
+  factory _MigrationJournal.fromJson(Object? value) {
+    final Map<String, Object?> json = Map<String, Object?>.from(value as Map);
+    final List<Object?> entries =
+        (json['entries'] as List<Object?>?) ?? const <Object?>[];
+    return _MigrationJournal(
+      (json['storageKey'] as String?)?.trim() ?? '',
+      entries
+          .whereType<Map>()
+          .map(
+            (Map entry) =>
+                MigrationDeltaEntry.fromJson(Map<String, Object?>.from(entry)),
+          )
+          .toList(growable: false),
     );
   }
 
-  Future<void> _initialize() async {
-    final Directory directory = await _directoryProvider();
-    final Directory stateDirectory = Directory(
-      '${directory.path}${Platform.pathSeparator}download_queue',
-    );
-    await stateDirectory.create(recursive: true);
-    _file = File(
-      '${stateDirectory.path}${Platform.pathSeparator}storage_migration_delta.json',
-    );
-  }
+  final String storageKey;
+  final List<MigrationDeltaEntry> entries;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'storageKey': storageKey,
+    'entries': entries
+        .map((MigrationDeltaEntry entry) => entry.toJson())
+        .toList(),
+  };
 }

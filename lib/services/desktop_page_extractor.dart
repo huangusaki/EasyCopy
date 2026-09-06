@@ -11,9 +11,12 @@ import 'package:reader/webview/page_extractor_script.dart';
 import 'package:webview_windows/webview_windows.dart';
 
 class DesktopPageExtractor {
-  DesktopPageExtractor._();
+  DesktopPageExtractor({SiteSession? session})
+    : _session = session ?? SiteSession.instance;
 
-  static final DesktopPageExtractor instance = DesktopPageExtractor._();
+  static final DesktopPageExtractor instance = DesktopPageExtractor();
+
+  final SiteSession _session;
 
   static const Duration _timeout = Duration(seconds: 30);
   static const String _bridgeBootstrap = '''
@@ -100,14 +103,18 @@ class DesktopPageExtractor {
 
   /// WebView2 共享 profile 的会话 Cookie 指纹。
   String? _lastPrimedCookieFingerprint;
+  int _cookieGeneration = 0;
 
   void invalidateCookiePriming() {
+    _cookieGeneration += 1;
     _lastPrimedCookieFingerprint = null;
   }
 
   Future<void> _primeCookies(WebviewController controller) async {
-    await SiteSession.instance.ensureInitialized();
-    final Map<String, String> cookies = SiteSession.instance.cookies;
+    final int generation = _cookieGeneration;
+    await _session.ensureInitialized();
+    if (generation != _cookieGeneration) return;
+    final Map<String, String> cookies = _session.cookies;
     if (cookies.isEmpty) {
       return;
     }
@@ -123,8 +130,11 @@ class DesktopPageExtractor {
           .timeout(const Duration(seconds: 8));
       await controller.loadUrl(AppConfig.baseUri.toString());
       await loaded;
+      if (generation != _cookieGeneration) return;
       await controller.executeScript(_buildCookieScript(cookies));
-      _lastPrimedCookieFingerprint = fingerprint;
+      if (generation == _cookieGeneration) {
+        _lastPrimedCookieFingerprint = fingerprint;
+      }
     } catch (_) {
       return;
     }

@@ -2,10 +2,6 @@ part of '../comic_download_service.dart';
 
 const String _comicOwnershipMarkerName = '.easycopy_comic';
 
-typedef ChapterDownloadProgressCallback =
-    Future<void> Function(ChapterDownloadProgress progress);
-typedef ChapterDownloadPauseChecker = bool Function();
-typedef ChapterDownloadCancelChecker = bool Function();
 typedef MigrationProgressCallback =
     FutureOr<void> Function(StorageMigrationProgress progress);
 
@@ -16,25 +12,6 @@ enum CacheLibraryRefreshReason {
   migrationSwitched,
   storageRescan,
   manual,
-}
-
-class ChapterDownloadProgress {
-  const ChapterDownloadProgress({
-    required this.completedCount,
-    required this.totalCount,
-    required this.currentLabel,
-  });
-
-  final int completedCount;
-  final int totalCount;
-  final String currentLabel;
-
-  double get fraction {
-    if (totalCount <= 0) {
-      return 0;
-    }
-    return completedCount / totalCount;
-  }
 }
 
 class ChapterDownloadResult {
@@ -96,24 +73,6 @@ class StorageMigrationProgress {
     }
     return completedItems / totalItems;
   }
-}
-
-class DownloadPausedException implements Exception {
-  const DownloadPausedException([this.message = '缓存已暂停。']);
-
-  final String message;
-
-  @override
-  String toString() => message;
-}
-
-class DownloadCancelledException implements Exception {
-  const DownloadCancelledException([this.message = '缓存任务已取消。']);
-
-  final String message;
-
-  @override
-  String toString() => message;
 }
 
 class CachedChapterEntry {

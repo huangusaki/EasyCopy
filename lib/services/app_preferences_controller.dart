@@ -1,10 +1,9 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/shortcut_preferences.dart';
 import 'package:reader/services/app_preferences_store.dart';
+import 'package:reader/services/persistence/serial_executor.dart';
 
 class AppPreferencesController extends ChangeNotifier {
   AppPreferencesController({
@@ -19,7 +18,8 @@ class AppPreferencesController extends ChangeNotifier {
 
   AppPreferences _preferences;
   Future<void>? _initialization;
-  Future<void> _persistChain = Future<void>.value();
+  final SerialExecutor _updates = SerialExecutor();
+  final SerialExecutor _writes = SerialExecutor();
 
   AppPreferences get preferences => _preferences;
 
@@ -49,61 +49,61 @@ class AppPreferencesController extends ChangeNotifier {
   }
 
   Future<void> setThemePreference(AppThemePreference preference) {
-    return _replacePreferences(
-      _preferences.copyWith(themePreference: preference),
+    return _updatePreferences(
+      (AppPreferences current) => current.copyWith(themePreference: preference),
     );
   }
 
-  Future<void> setLastPrimaryTabIndex(int index) async {
-    await ensureInitialized();
-    final int normalizedIndex = index.clamp(0, 3).toInt();
-    if (_preferences.lastPrimaryTabIndex == normalizedIndex) {
-      return;
-    }
-    return _replacePreferences(
-      _preferences.copyWith(lastPrimaryTabIndex: normalizedIndex),
-    );
+  Future<void> setLastPrimaryTabIndex(int index) {
+    return _updatePreferences((AppPreferences current) {
+      final int normalizedIndex = index.clamp(0, 3).toInt();
+      return current.lastPrimaryTabIndex == normalizedIndex
+          ? current
+          : current.copyWith(lastPrimaryTabIndex: normalizedIndex);
+    });
   }
 
   Future<void> setProfileCollectionSort(ProfileCollectionSort sort) {
-    return _replacePreferences(
-      _preferences.copyWith(profileCollectionSort: sort),
+    return _updatePreferences(
+      (AppPreferences current) => current.copyWith(profileCollectionSort: sort),
     );
   }
 
   Future<void> updateReaderPreferences(
     ReaderPreferences Function(ReaderPreferences current) transform,
   ) {
-    return _replacePreferences(
-      _preferences.copyWith(
-        readerPreferences: transform(_preferences.readerPreferences),
+    return _updatePreferences(
+      (AppPreferences current) => current.copyWith(
+        readerPreferences: transform(current.readerPreferences),
       ),
     );
   }
 
+  /// Storage migration may remove its source only after this commit succeeds.
   Future<void> updateDownloadPreferences(
     DownloadPreferences Function(DownloadPreferences current) transform,
   ) {
-    return _replacePreferences(
-      _preferences.copyWith(
-        downloadPreferences: transform(_preferences.downloadPreferences),
+    return _updatePreferences(
+      (AppPreferences current) => current.copyWith(
+        downloadPreferences: transform(current.downloadPreferences),
       ),
+      requirePersistence: true,
     );
   }
 
   Future<void> updateShortcutPreferences(
     ShortcutPreferences Function(ShortcutPreferences current) transform,
   ) {
-    return _replacePreferences(
-      _preferences.copyWith(
-        shortcutPreferences: transform(_preferences.shortcutPreferences),
+    return _updatePreferences(
+      (AppPreferences current) => current.copyWith(
+        shortcutPreferences: transform(current.shortcutPreferences),
       ),
     );
   }
 
   Future<void> setChineseConversionMode(ChineseConversionMode mode) {
-    return _replacePreferences(
-      _preferences.copyWith(chineseConversionMode: mode),
+    return _updatePreferences(
+      (AppPreferences current) => current.copyWith(chineseConversionMode: mode),
     );
   }
 
@@ -111,9 +111,9 @@ class AppPreferencesController extends ChangeNotifier {
     WallpaperPreferences Function(WallpaperPreferences current) transform, {
     bool persist = true,
   }) {
-    return _replacePreferences(
-      _preferences.copyWith(
-        wallpaperPreferences: transform(_preferences.wallpaperPreferences),
+    return _updatePreferences(
+      (AppPreferences current) => current.copyWith(
+        wallpaperPreferences: transform(current.wallpaperPreferences),
       ),
       persist: persist,
     );
@@ -123,23 +123,42 @@ class AppPreferencesController extends ChangeNotifier {
     _preferences = await _store.read();
   }
 
-  Future<void> _replacePreferences(
-    AppPreferences nextPreferences, {
+  Future<void> _updatePreferences(
+    AppPreferences Function(AppPreferences current) transform, {
     bool persist = true,
+    bool requirePersistence = false,
   }) async {
-    await ensureInitialized();
-    if (nextPreferences == _preferences) {
-      return;
-    }
-    _preferences = nextPreferences;
-    notifyListeners();
-    if (!persist) {
-      return;
-    }
-    final AppPreferences preferencesToPersist = nextPreferences;
-    _persistChain = _persistChain.then(
-      (_) => _store.write(preferencesToPersist),
-    );
-    await _persistChain;
+    Future<void>? persistence;
+    await _updates.run(() async {
+      await ensureInitialized();
+      final AppPreferences next = transform(_preferences);
+      if (identical(next, _preferences) && !requirePersistence) {
+        return;
+      }
+      if (requirePersistence) {
+        await _writes.run(() async {
+          await _store.write(next);
+          final AppPreferences persisted = await _store.read();
+          if (!mapEquals(
+            persisted.downloadPreferences.toJson(),
+            next.downloadPreferences.toJson(),
+          )) {
+            throw StateError('Download preferences were not persisted.');
+          }
+        });
+      }
+      _preferences = next;
+      notifyListeners();
+      if (persist && !requirePersistence) {
+        persistence = _writes.run(() async {
+          try {
+            await _store.write(next);
+          } catch (_) {
+            // Ordinary UI preferences remain available if storage is unavailable.
+          }
+        });
+      }
+    });
+    await persistence;
   }
 }

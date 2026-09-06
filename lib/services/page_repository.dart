@@ -4,24 +4,9 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
-import 'package:reader/services/debug_trace.dart';
 import 'package:reader/services/navigation_request_guard.dart';
-import 'package:reader/services/network_diagnostics.dart';
 import 'package:reader/services/page_cache_store.dart';
-import 'package:reader/services/site_api_client.dart';
-
-typedef StandardPageFreshLoader =
-    Future<SitePage> Function(
-      Uri uri, {
-      required String authScope,
-      NavigationRequestContext? requestContext,
-    });
-
-typedef ProfilePageFreshLoader =
-    Future<ProfilePageData> Function(Uri uri, {required String authScope});
-
-typedef HtmlPageFreshLoader =
-    Future<SitePage> Function(Uri uri, {required String authScope});
+import 'package:reader/services/site_page_source.dart';
 
 @immutable
 class PageQueryKey {
@@ -81,30 +66,14 @@ class CachedPageHit {
 class PageRepository {
   PageRepository({
     PageCacheStore? cacheStore,
-    SiteApiClient? apiClient,
-    ProfilePageFreshLoader? profilePageLoader,
-    required StandardPageFreshLoader standardPageLoader,
-    HtmlPageFreshLoader? htmlPageLoader,
+    required SitePageSource source,
     this.memoryCapacity = 48,
   }) : _cacheStore = cacheStore ?? PageCacheStore.instance,
-       _apiClient = apiClient ?? SiteApiClient.instance,
-       _profilePageLoader =
-           profilePageLoader ??
-           ((Uri uri, {required String authScope}) {
-             return (apiClient ?? SiteApiClient.instance).loadProfile(uri: uri);
-           }),
-       _standardPageLoader = standardPageLoader,
-       _htmlPageLoader =
-           htmlPageLoader ??
-           ((Uri uri, {required String authScope}) {
-             return standardPageLoader(uri, authScope: authScope);
-           });
+       _source = source,
+       assert(memoryCapacity >= 0);
 
   final PageCacheStore _cacheStore;
-  final SiteApiClient _apiClient;
-  final ProfilePageFreshLoader _profilePageLoader;
-  final StandardPageFreshLoader _standardPageLoader;
-  final HtmlPageFreshLoader _htmlPageLoader;
+  final SitePageSource _source;
   final int memoryCapacity;
 
   final LinkedHashMap<PageQueryKey, CachedPageHit> _memoryCache =
@@ -113,12 +82,17 @@ class PageRepository {
       <PageQueryKey, Future<SitePage>>{};
   final Map<PageQueryKey, Future<void>> _inFlightRevalidations =
       <PageQueryKey, Future<void>>{};
+  int _authenticatedGeneration = 0;
+  final Map<String, int> _scopeGenerations = <String, int>{};
 
   static const String _readerCacheFingerprintVersion = 'reader-v2';
 
   Future<CachedPageHit?> readCached(PageQueryKey key) async {
+    final (int, int) generation = _generationFor(key.authScope);
     final CachedPageHit? inMemory = _memoryCache.remove(key);
-    if (inMemory != null && _isSupportedCache(inMemory.envelope)) {
+    if (inMemory != null &&
+        _isSupportedCache(inMemory.envelope) &&
+        !inMemory.envelope.isHardExpired(DateTime.now())) {
       _memoryCache[key] = inMemory.copyWith(fromMemory: true);
       return _memoryCache[key];
     }
@@ -127,7 +101,7 @@ class PageRepository {
       key.routeKey,
       authScope: key.authScope,
     );
-    if (envelope == null) {
+    if (envelope == null || generation != _generationFor(key.authScope)) {
       return null;
     }
     if (!_isSupportedCache(envelope)) {
@@ -161,6 +135,7 @@ class PageRepository {
     final Future<SitePage> future = _loadFreshInternal(
       targetUri,
       requestedKey: requestedKey,
+      generation: _generationFor(authScope),
       requestContext: requestContext,
     );
     _inFlightLoads[requestedKey] = future;
@@ -168,10 +143,9 @@ class PageRepository {
     try {
       return await future;
     } finally {
-      final Future<SitePage>? removed = _inFlightLoads.remove(requestedKey);
-      if (removed != null) {
-        unawaited(removed);
-      }
+      _inFlightLoads.removeWhere(
+        (key, pending) => key == requestedKey && identical(pending, future),
+      );
     }
   }
 
@@ -190,6 +164,7 @@ class PageRepository {
       AppConfig.rewriteToCurrentHost(uri),
       key: key,
       envelope: envelope,
+      generation: _generationFor(key.authScope),
       requestContext: requestContext,
     );
     _inFlightRevalidations[key] = future;
@@ -197,24 +172,22 @@ class PageRepository {
     try {
       await future;
     } finally {
-      final Future<void>? removed = _inFlightRevalidations.remove(key);
-      if (removed != null) {
-        unawaited(removed);
-      }
+      _inFlightRevalidations.removeWhere(
+        (pendingKey, pending) =>
+            pendingKey == key && identical(pending, future),
+      );
     }
   }
 
   Future<void> removeAuthenticatedEntries() async {
-    _memoryCache.removeWhere(
-      (PageQueryKey key, CachedPageHit _) => key.authScope != 'guest',
-    );
+    _authenticatedGeneration += 1;
+    _invalidateWhere((PageQueryKey key) => key.authScope != 'guest');
     await _cacheStore.removeAuthenticatedEntries();
   }
 
   Future<void> removeAuthScope(String authScope) async {
-    _memoryCache.removeWhere(
-      (PageQueryKey key, CachedPageHit _) => key.authScope == authScope,
-    );
+    _scopeGenerations[authScope] = (_scopeGenerations[authScope] ?? 0) + 1;
+    _invalidateWhere((PageQueryKey key) => key.authScope == authScope);
     await _cacheStore.removeAuthScope(authScope);
   }
 
@@ -222,6 +195,7 @@ class PageRepository {
     SitePage page, {
     required String authScope,
   }) async {
+    final (int, int) generation = _generationFor(authScope);
     final Uri pageUri = AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
     final PageQueryKey key = PageQueryKey.forUri(pageUri, authScope: authScope);
     final CachedPageEnvelope envelope = PageCacheStore.buildEnvelope(
@@ -231,39 +205,40 @@ class PageRepository {
       authScope: authScope,
     );
     await _cacheStore.writeEnvelope(envelope);
-    _putMemory(CachedPageHit(key: key, page: page, envelope: envelope));
+    if (generation == _generationFor(authScope)) {
+      _putMemory(CachedPageHit(key: key, page: page, envelope: envelope));
+    }
   }
 
   void clearMemory() {
     _memoryCache.clear();
   }
 
+  (int, int) _generationFor(String authScope) => (
+    authScope == 'guest' ? 0 : _authenticatedGeneration,
+    _scopeGenerations[authScope] ?? 0,
+  );
+
+  void _invalidateWhere(bool Function(PageQueryKey key) matches) {
+    _memoryCache.removeWhere((key, _) => matches(key));
+    _inFlightLoads.removeWhere((key, _) => matches(key));
+    _inFlightRevalidations.removeWhere((key, _) => matches(key));
+  }
+
   Future<SitePage> _loadFreshInternal(
     Uri uri, {
     required PageQueryKey requestedKey,
+    required (int, int) generation,
     NavigationRequestContext? requestContext,
   }) async {
-    final SitePage page = _isProfileUri(uri)
-        ? await _profilePageLoader(uri, authScope: requestedKey.authScope)
-        : _isSearchUri(uri)
-        ? await _apiClient.loadSearchResults(
-            query: uri.queryParameters['q'] ?? '',
-            page: int.tryParse(uri.queryParameters['page'] ?? '') ?? 1,
-            qType: uri.queryParameters['q_type'] ?? '',
-          )
-        : _isReaderChapterUri(uri)
-        ? await _loadReaderPageWithFallback(
-            uri,
-            requestedKey: requestedKey,
-            requestContext: requestContext,
-          )
-        : _isHtmlStandardUri(uri)
-        ? await _htmlPageLoader(uri, authScope: requestedKey.authScope)
-        : await _standardPageLoader(
-            uri,
-            authScope: requestedKey.authScope,
-            requestContext: requestContext,
-          );
+    final SitePage page = await _source.load(
+      uri,
+      authScope: requestedKey.authScope,
+      requestContext: requestContext,
+    );
+    if (generation != _generationFor(requestedKey.authScope)) {
+      return page;
+    }
 
     final PageQueryKey finalKey = PageQueryKey.forUri(
       Uri.parse(page.uri),
@@ -276,6 +251,9 @@ class PageRepository {
       authScope: finalKey.authScope,
     );
     await _cacheStore.writeEnvelope(envelope);
+    if (generation != _generationFor(requestedKey.authScope)) {
+      return page;
+    }
 
     final CachedPageHit hit = CachedPageHit(
       key: finalKey,
@@ -289,60 +267,11 @@ class PageRepository {
     return page;
   }
 
-  Future<SitePage> _loadReaderPageWithFallback(
-    Uri uri, {
-    required PageQueryKey requestedKey,
-    NavigationRequestContext? requestContext,
-  }) async {
-    try {
-      DebugTrace.log('reader.html_loader_start', <String, Object?>{
-        'uri': uri.toString(),
-      });
-      final SitePage page = await _htmlPageLoader(
-        uri,
-        authScope: requestedKey.authScope,
-      );
-      if (page is ReaderPageData && page.imageUrls.isNotEmpty) {
-        unawaited(
-          NetworkDiagnostics.probeImageVariants(
-            page.imageUrls.first,
-            referer: page.uri,
-            label: 'reader.first_image',
-          ),
-        );
-      }
-      return page;
-    } catch (error) {
-      DebugTrace.log('reader.html_loader_fallback', <String, Object?>{
-        'uri': uri.toString(),
-        'error': error.toString(),
-      });
-      debugPrint(
-        'Reader HTML loader failed for ${uri.path}; '
-        'falling back to standard loader. $error',
-      );
-      final SitePage page = await _standardPageLoader(
-        uri,
-        authScope: requestedKey.authScope,
-        requestContext: requestContext,
-      );
-      if (page is ReaderPageData && page.imageUrls.isNotEmpty) {
-        unawaited(
-          NetworkDiagnostics.probeImageVariants(
-            page.imageUrls.first,
-            referer: page.uri,
-            label: 'reader.first_image_fallback',
-          ),
-        );
-      }
-      return page;
-    }
-  }
-
   Future<void> _revalidateInternal(
     Uri uri, {
     required PageQueryKey key,
     required CachedPageEnvelope envelope,
+    required (int, int) generation,
     NavigationRequestContext? requestContext,
   }) async {
     if (_canSkipNetworkRevalidate(uri, envelope: envelope)) {
@@ -350,7 +279,9 @@ class PageRepository {
         key.routeKey,
         authScope: key.authScope,
       );
-      _refreshMemoryValidation(key);
+      if (generation == _generationFor(key.authScope)) {
+        _refreshMemoryValidation(key);
+      }
       return;
     }
 
@@ -360,6 +291,9 @@ class PageRepository {
       authScope: key.authScope,
       requestContext: requestContext,
     );
+    if (generation != _generationFor(key.authScope)) {
+      return;
+    }
     final PageQueryKey finalKey = PageQueryKey.forUri(
       Uri.parse(page.uri),
       authScope: _authScopeForPage(page, key.authScope),
@@ -375,7 +309,8 @@ class PageRepository {
   }) {
     // Reader content is effectively immutable after publish; avoid reloading
     // large chapter payloads on soft-expiry and just refresh local validation.
-    return envelope.pageType == SitePageType.reader && _isReaderChapterUri(uri);
+    return envelope.pageType == SitePageType.reader &&
+        SitePageRoute.forUri(uri) == SitePageRoute.reader;
   }
 
   void _refreshMemoryValidation(PageQueryKey key) {
@@ -401,35 +336,6 @@ class PageRepository {
     while (_memoryCache.length > memoryCapacity) {
       _memoryCache.remove(_memoryCache.keys.first);
     }
-  }
-
-  bool _isProfileUri(Uri uri) {
-    return uri.path.startsWith(AppConfig.profilePath);
-  }
-
-  bool _isSearchUri(Uri uri) {
-    return uri.path.startsWith('/search');
-  }
-
-  bool _isDetailUri(Uri uri) {
-    final String path = uri.path.toLowerCase();
-    return path.startsWith('/comic/') && !path.contains('/chapter/');
-  }
-
-  bool _isReaderChapterUri(Uri uri) {
-    return uri.path.toLowerCase().contains('/chapter/');
-  }
-
-  bool _isHtmlStandardUri(Uri uri) {
-    final String path = uri.path.toLowerCase();
-    return path == '/' ||
-        path.startsWith('/comics') ||
-        path.startsWith('/filter') ||
-        path.startsWith('/recommend') ||
-        path.startsWith('/newest') ||
-        path.startsWith('/author') ||
-        path.startsWith('/rank') ||
-        _isDetailUri(uri);
   }
 
   String _authScopeForPage(SitePage page, String requestedAuthScope) {

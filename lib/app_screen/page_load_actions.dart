@@ -242,7 +242,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     required Uri targetUri,
   }) async {
     try {
-      final SitePage page = await DesktopPageExtractor.instance.loadPage(
+      final SitePage page = await _services.desktopPageLoader(
         targetUri,
         loadId: pendingLoad.loadId,
       );
@@ -267,47 +267,19 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     }
   }
 
-  Future<SitePage> _preparePageForApply(SitePage page) async {
-    if (page is! DetailPageData) {
-      return page;
-    }
-    if (_services.session.isAuthenticated) {
-      return page;
-    }
-    try {
-      final bool isCollected = await _services.localLibraryStore.isCollected(
-        LocalLibraryStore.guestScope,
-        page.uri,
-      );
-      if (isCollected == page.isCollected) {
-        return page;
-      }
-      final DetailPageData updated = page.copyWith(isCollected: isCollected);
-      unawaited(_persistDetailPageCache(updated));
-      return updated;
-    } catch (_) {
-      return page;
-    }
-  }
-
-  Future<void> _persistDetailPageCache(DetailPageData page) async {
-    try {
-      final String authScope = _pageQueryKeyForUri(
-        Uri.parse(page.uri),
-      ).authScope;
-      await _pageRepository.writeCachedPage(page, authScope: authScope);
-    } catch (_) {
-      // 缓存修复失败不影响当前页面。
-    }
-  }
-
-  Future<SitePage> _loadHtmlPageFresh(Uri uri, {required String authScope}) {
-    if (PlatformCapabilities.supportsDesktopWebView) {
-      return DesktopPageExtractor.instance.loadPage(
-        AppConfig.rewriteToCurrentHost(uri),
-      );
-    }
-    return SiteHtmlPageLoader.instance.loadPage(uri, authScope: authScope);
+  PagePreparation _createPagePreparation({
+    required int sessionGeneration,
+    required String authScope,
+    required bool Function() isRequestCurrent,
+  }) {
+    return PagePreparation(
+      sessionController: _sessionController,
+      pageRepository: _pageRepository,
+      localLibraryStore: _services.localLibraryStore,
+      sessionGeneration: sessionGeneration,
+      authScope: authScope,
+      isRequestCurrent: () => mounted && isRequestCurrent(),
+    );
   }
 
   bool _applyLoadedPage(
@@ -407,10 +379,13 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     CachedChapterNavigationContext cachedChapterContext =
         const CachedChapterNavigationContext(),
   }) async {
+    final int sessionGeneration = _sessionController.generation;
+    if (!_sessionController.accepts(sessionGeneration)) return;
     if (!skipPersistVisiblePageState) {
       _scrollState.persistVisiblePageState();
     }
     await _services.hostManager.ensureInitialized();
+    if (!_sessionController.accepts(sessionGeneration)) return;
     final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
     final int resolvedTargetTabIndex =
         targetTabIndexOverride ??
@@ -461,6 +436,11 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       preserveVisiblePage: preserveVisiblePage,
       sourceKind: NavigationRequestSourceKind.navigation,
     );
+    final PagePreparation preparation = _createPagePreparation(
+      sessionGeneration: sessionGeneration,
+      authScope: key.authScope,
+      isRequestCurrent: () => _canCommitRequest(requestContext),
+    );
     final bool isReaderChapterRoute = isReaderChapterUri(targetUri);
     final bool shouldPreferFreshReaderLoad =
         isReaderChapterRoute &&
@@ -501,7 +481,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
           return;
         }
       }
-      if (!_canCommitRequest(requestContext)) {
+      if (!preparation.isCurrent) {
         return;
       }
     }
@@ -513,7 +493,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
         '${cacheStopwatch.elapsedMilliseconds}ms '
         'hit=${cachedHit != null} memory=${cachedHit?.fromMemory ?? false}',
       );
-      if (!_canCommitRequest(requestContext)) {
+      if (!preparation.isCurrent) {
         _recordDiscardedMutation(requestContext, phase: 'cached-read');
         return;
       }
@@ -531,7 +511,8 @@ extension _AppScreenPageLoadActions on _AppScreenState {
               isReaderChapterRoute && cachedPage is ReaderPageData
               ? _mergeReaderPageNavigation(cachedPage, resolvedCachedContext)
               : cachedPage;
-          final SitePage preparedPage = await _preparePageForApply(displayPage);
+          final SitePage? preparedPage = await preparation.prepare(displayPage);
+          if (preparedPage == null || !preparation.isCurrent) return;
           _applyLoadedPage(
             preparedPage,
             requestContext: requestContext,
@@ -584,6 +565,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
                 key: key,
                 cachedEntry: cachedHit.envelope,
                 requestContext: revalidateContext,
+                preparation: preparation,
               );
             }),
           );
@@ -598,7 +580,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       });
     }
 
-    if (!_canCommitRequest(requestContext)) {
+    if (!preparation.isCurrent) {
       _recordDiscardedMutation(requestContext, phase: 'fresh-load');
       return;
     }
@@ -609,30 +591,33 @@ extension _AppScreenPageLoadActions on _AppScreenState {
           'uri': targetUri.toString(),
         });
       }
-      final SitePage freshPage = await _pageRepository.loadFresh(
-        targetUri,
-        authScope: key.authScope,
-        requestContext: requestContext,
+      final SitePage? preparedPage = await preparation.prepare(
+        _pageRepository.loadFresh(
+          targetUri,
+          authScope: key.authScope,
+          requestContext: requestContext,
+        ),
       );
+      if (preparedPage == null || !preparation.isCurrent) return;
       if (isReaderChapterRoute) {
         DebugTrace.log('reader.load_complete', <String, Object?>{
           'bootId': _shell.bootId,
           'uri': targetUri.toString(),
           'source': 'fresh',
-          'pageType': freshPage.type.name,
+          'pageType': preparedPage.type.name,
           'elapsedMs': readerLoadStopwatch?.elapsedMilliseconds,
         });
-        if (freshPage is ReaderPageData && freshPage.imageUrls.isNotEmpty) {
+        if (preparedPage is ReaderPageData &&
+            preparedPage.imageUrls.isNotEmpty) {
           unawaited(
             NetworkDiagnostics.probeImageVariants(
-              freshPage.imageUrls.first,
-              referer: freshPage.uri,
+              preparedPage.imageUrls.first,
+              referer: preparedPage.uri,
               label: 'reader.first_image_fresh',
             ),
           );
         }
       }
-      final SitePage preparedPage = await _preparePageForApply(freshPage);
       _applyLoadedPage(
         preparedPage,
         requestContext: requestContext,
@@ -658,24 +643,28 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     required PageQueryKey key,
     required CachedPageEnvelope cachedEntry,
     required NavigationRequestContext requestContext,
+    required PagePreparation preparation,
     Uri? visibleUri,
   }) async {
     try {
+      if (!preparation.isCurrent) return;
       await _pageRepository.revalidate(
         uri,
         key: key,
         envelope: cachedEntry,
         requestContext: requestContext,
       );
-      if (!_canCommitRequest(requestContext)) {
+      if (!preparation.isCurrent) {
         _recordDiscardedMutation(requestContext, phase: 'revalidate-complete');
         return;
       }
       final CachedPageHit? refreshedHit = await _pageRepository.readCached(key);
+      if (!preparation.isCurrent) return;
       if (refreshedHit != null) {
-        final SitePage preparedPage = await _preparePageForApply(
+        final SitePage? preparedPage = await preparation.prepare(
           refreshedHit.page,
         );
+        if (preparedPage == null || !preparation.isCurrent) return;
         _applyLoadedPage(
           preparedPage,
           requestContext: requestContext,
@@ -700,6 +689,8 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     bool preserveVisiblePage = false,
     NavigationIntent historyMode = NavigationIntent.push,
   }) async {
+    final int sessionGeneration = _sessionController.generation;
+    if (!_sessionController.accepts(sessionGeneration)) return;
     _scrollState.persistVisiblePageState();
     if (!preserveVisiblePage) {
       _scrollState.resetStandardScrollPosition();
@@ -717,7 +708,16 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     );
     // 先恢复会话，避免个人页按 guest 缓存。
     await _services.session.ensureInitialized();
+    if (!_sessionController.accepts(sessionGeneration) ||
+        !_canCommitRequest(requestContext)) {
+      return;
+    }
     final PageQueryKey key = _pageQueryKeyForUri(resolvedTargetUri);
+    final PagePreparation preparation = _createPagePreparation(
+      sessionGeneration: sessionGeneration,
+      authScope: key.authScope,
+      isRequestCurrent: () => _canCommitRequest(requestContext),
+    );
     final ProfileSubview activeSubview = AppConfig.profileSubviewForUri(
       resolvedTargetUri,
     );
@@ -727,7 +727,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
         final ProfilePageData localProfilePage = await _services
             .localProfilePageLoader
             .loadLocalProfile(resolvedTargetUri, authScope: key.authScope);
-        if (!_canCommitRequest(requestContext)) {
+        if (!preparation.isCurrent) {
           _recordDiscardedMutation(
             requestContext,
             phase: 'profile-cached-local',
@@ -754,18 +754,20 @@ extension _AppScreenPageLoadActions on _AppScreenState {
           resolvedTargetUri,
           key: key,
           requestContext: requestContext,
+          preparation: preparation,
         );
         if (appliedCachedOrLocal) {
           return;
         }
       }
 
+      if (!preparation.isCurrent) return;
       final SitePage profilePage = await _pageRepository.loadFresh(
         resolvedTargetUri,
         authScope: key.authScope,
         requestContext: requestContext,
       );
-      if (!_canCommitRequest(requestContext)) {
+      if (!preparation.isCurrent) {
         _recordDiscardedMutation(requestContext, phase: 'profile-load');
         return;
       }
@@ -795,9 +797,10 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     Uri targetUri, {
     required PageQueryKey key,
     required NavigationRequestContext requestContext,
+    required PagePreparation preparation,
   }) async {
     final CachedPageHit? cachedHit = await _pageRepository.readCached(key);
-    if (!_canCommitRequest(requestContext)) {
+    if (!preparation.isCurrent) {
       _recordDiscardedMutation(requestContext, phase: 'profile-cached-read');
       return true;
     }
@@ -822,6 +825,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
             key: key,
             cachedEntry: cachedHit.envelope,
             requestContext: revalidateContext,
+            preparation: preparation,
             visibleUri: targetUri,
           );
         }),
@@ -832,7 +836,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     final ProfilePageData localProfilePage = await _services
         .localProfilePageLoader
         .loadLocalProfile(targetUri, authScope: key.authScope);
-    if (!_canCommitRequest(requestContext)) {
+    if (!preparation.isCurrent) {
       _recordDiscardedMutation(requestContext, phase: 'profile-local-read');
       return true;
     }

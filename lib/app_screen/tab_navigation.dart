@@ -233,6 +233,17 @@ extension _AppScreenTabNavigation on _AppScreenState {
       setBusy: (bool value) => _shell.isUpdatingCollection = value,
       action: () async {
         final int sourceTabIndex = _nav.selectedIndex;
+        final String routeKey = _tabSessionStore
+            .currentEntry(sourceTabIndex)
+            .routeKey;
+        final PagePreparation preparation = _createPagePreparation(
+          sessionGeneration: _sessionController.generation,
+          authScope: _pageQueryKeyForUri(Uri.parse(page.uri)).authScope,
+          isRequestCurrent: () =>
+              _tabSessionStore.currentEntry(sourceTabIndex).routeKey ==
+              routeKey,
+        );
+        if (!preparation.isCurrent) return;
         final bool nextCollected = !page.isCollected;
         try {
           if (_services.session.isAuthenticated &&
@@ -264,13 +275,14 @@ extension _AppScreenTabNavigation on _AppScreenState {
               );
             }
           }
+          if (!preparation.isCurrent) return;
           final DetailPageData updatedPage = page.copyWith(
             isCollected: nextCollected,
           );
           _mutateSessionState(() {
             _tabSessionStore.updatePage(sourceTabIndex, updatedPage);
           }, syncSearch: sourceTabIndex == _nav.selectedIndex);
-          unawaited(_persistDetailPageCache(updatedPage));
+          unawaited(preparation.persistDetail(updatedPage));
           if (mounted) {
             if (!PlatformCapabilities.isDesktop) {
               unawaited(HapticFeedback.lightImpact());
@@ -278,6 +290,7 @@ extension _AppScreenTabNavigation on _AppScreenState {
             _showNotice(nextCollected ? '已加入书架' : '已取消收藏');
           }
         } catch (error) {
+          if (!preparation.isCurrent) return;
           final String message = error is SiteApiException
               ? error.message
               : error.toString();
@@ -293,21 +306,26 @@ extension _AppScreenTabNavigation on _AppScreenState {
   }
 
   Future<void> _openAuthFlow() async {
+    final int sessionGeneration = _sessionController.generation;
+    if (!_sessionController.accepts(sessionGeneration)) return;
     await _services.hostManager.ensureInitialized();
-    if (!mounted) {
+    if (!mounted || !_sessionController.accepts(sessionGeneration)) {
       return;
     }
     final AuthSessionResult? result = await Navigator.of(context).push(
       MaterialPageRoute<AuthSessionResult>(
         builder: (BuildContext context) {
           return NativeLoginScreen(
+            apiClient: _services.siteApiClient,
             loginUri: AppConfig.resolvePath('/web/login/?url=person/home'),
             userAgent: AppConfig.desktopUserAgent,
           );
         },
       ),
     );
-    if (result == null || !mounted) {
+    if (result == null ||
+        !mounted ||
+        !_sessionController.accepts(sessionGeneration)) {
       return;
     }
     final String? token = result.cookies['token'];
@@ -329,11 +347,10 @@ extension _AppScreenTabNavigation on _AppScreenState {
   }
 
   Future<void> _logout({bool showFeedback = true}) async {
+    if (_sessionController.isLoggingOut) return;
     _scrollState.persistVisiblePageState();
     _scrollState.resetStandardScrollPosition();
-    await _pageRepository.removeAuthenticatedEntries();
-    await _services.session.clear();
-    await _clearPlatformCookies();
+    await _sessionController.logout();
     _mutateSessionState(() {
       for (int index = 0; index < appDestinations.length; index += 1) {
         _abandonCurrentRequest(index, phase: 'logout');

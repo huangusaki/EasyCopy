@@ -1,8 +1,8 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:reader/models/app_preferences.dart';
+import 'package:reader/services/persistence/atomic_json_file.dart';
 
 typedef MigrationDirProvider = Future<Directory> Function();
 
@@ -89,66 +89,26 @@ class PendingDownloadStorageMigration {
 
 class DownloadStorageMigrationStore {
   DownloadStorageMigrationStore({MigrationDirProvider? directoryProvider})
-    : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
+    : _file = AtomicJsonFile<PendingDownloadStorageMigration>(
+        directoryProvider: directoryProvider ?? getApplicationSupportDirectory,
+        relativePath: 'download_queue/storage_migration.json',
+        decode: (Object? json) => PendingDownloadStorageMigration.fromJson(
+          Map<String, Object?>.from(json as Map),
+        ),
+        encode: (PendingDownloadStorageMigration value) => value.toJson(),
+      );
 
   static final DownloadStorageMigrationStore instance =
       DownloadStorageMigrationStore();
 
-  final MigrationDirProvider _directoryProvider;
+  final AtomicJsonFile<PendingDownloadStorageMigration> _file;
 
-  Future<void>? _initialization;
-  File? _file;
+  Future<void> ensureInitialized() => _file.ensureInitialized();
 
-  Future<void> ensureInitialized() {
-    return _initialization ??= _initialize();
-  }
+  Future<PendingDownloadStorageMigration?> read() => _file.read();
 
-  Future<PendingDownloadStorageMigration?> read() async {
-    await ensureInitialized();
-    final File file = _file!;
-    if (!await file.exists()) {
-      return null;
-    }
-    try {
-      final Object? decoded = jsonDecode(await file.readAsString());
-      if (decoded is! Map) {
-        return null;
-      }
-      return PendingDownloadStorageMigration.fromJson(
-        decoded.map(
-          (Object? key, Object? value) => MapEntry(key.toString(), value),
-        ),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
+  Future<void> write(PendingDownloadStorageMigration migration) =>
+      _file.write(migration);
 
-  Future<void> write(PendingDownloadStorageMigration migration) async {
-    await ensureInitialized();
-    final File file = _file!;
-    await file.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(migration.toJson()),
-      flush: true,
-    );
-  }
-
-  Future<void> clear() async {
-    await ensureInitialized();
-    final File file = _file!;
-    if (await file.exists()) {
-      await file.delete();
-    }
-  }
-
-  Future<void> _initialize() async {
-    final Directory directory = await _directoryProvider();
-    final Directory stateDirectory = Directory(
-      '${directory.path}${Platform.pathSeparator}download_queue',
-    );
-    await stateDirectory.create(recursive: true);
-    _file = File(
-      '${stateDirectory.path}${Platform.pathSeparator}storage_migration.json',
-    );
-  }
+  Future<void> clear() => _file.clear();
 }

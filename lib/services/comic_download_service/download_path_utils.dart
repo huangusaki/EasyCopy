@@ -18,34 +18,6 @@ extension _DownloadPathUtils on ComicDownloadService {
         : 'chapter';
   }
 
-  String _detectExtension(Uri imageUri, String? contentType) {
-    final RegExpMatch? pathMatch = RegExp(
-      r'\.(avif|bmp|gif|jpeg|jpg|png|webp)$',
-      caseSensitive: false,
-    ).firstMatch(imageUri.path);
-    if (pathMatch != null) {
-      return pathMatch.group(1)!.toLowerCase();
-    }
-
-    final String normalizedType = (contentType ?? '').toLowerCase();
-    if (normalizedType.contains('png')) {
-      return 'png';
-    }
-    if (normalizedType.contains('webp')) {
-      return 'webp';
-    }
-    if (normalizedType.contains('gif')) {
-      return 'gif';
-    }
-    if (normalizedType.contains('bmp')) {
-      return 'bmp';
-    }
-    if (normalizedType.contains('avif')) {
-      return 'avif';
-    }
-    return 'jpg';
-  }
-
   String _sanitizePathSegment(String rawValue) {
     final String normalized = rawValue
         .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_')

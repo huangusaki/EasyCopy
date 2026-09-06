@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:reader/services/persistence/atomic_json_file.dart';
 
 typedef IndexDirProvider = Future<Directory> Function();
 
@@ -13,86 +14,65 @@ class CachedLibraryIndexStore {
   static final CachedLibraryIndexStore instance = CachedLibraryIndexStore();
 
   final IndexDirProvider _directoryProvider;
+  final Map<String, AtomicJsonFile<_LibraryIndex>> _files =
+      <String, AtomicJsonFile<_LibraryIndex>>{};
 
-  Future<void>? _initialization;
-  Directory? _directory;
-
-  Future<void> ensureInitialized() {
-    return _initialization ??= _initialize();
+  Future<void> ensureInitialized() async {
+    final Directory directory = await _directoryProvider();
+    await Directory(
+      '${directory.path}${Platform.pathSeparator}cached_library_index',
+    ).create(recursive: true);
   }
 
   Future<List<Map<String, Object?>>?> read(String storageKey) async {
-    await ensureInitialized();
-    final File file = _fileForKey(storageKey);
-    if (!await file.exists()) {
-      return null;
-    }
-    try {
-      final Object? decoded = jsonDecode(await file.readAsString());
-      if (decoded is! Map) {
-        return null;
-      }
-      final String persistedStorageKey =
-          (decoded['storageKey'] as String?)?.trim() ?? '';
-      if (persistedStorageKey != storageKey) {
-        return null;
-      }
-      final List<Object?> rawEntries =
-          (decoded['entries'] as List<Object?>?) ?? const <Object?>[];
-      return rawEntries
-          .whereType<Map<Object?, Object?>>()
-          .map(
-            (Map<Object?, Object?> entry) => entry.map(
-              (Object? key, Object? value) => MapEntry(key.toString(), value),
-            ),
-          )
-          .toList(growable: false);
-    } catch (_) {
-      return null;
-    }
+    final _LibraryIndex? index = await _fileForKey(storageKey).read();
+    return index?.storageKey == storageKey ? index!.entries : null;
   }
 
-  Future<void> write(
-    String storageKey,
-    List<Map<String, Object?>> entries,
-  ) async {
-    await ensureInitialized();
-    final File file = _fileForKey(storageKey);
-    await file.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(<String, Object?>{
-        'storageKey': storageKey,
-        'entries': entries,
-      }),
-      flush: true,
-    );
-  }
+  Future<void> write(String storageKey, List<Map<String, Object?>> entries) =>
+      _fileForKey(storageKey).write(_LibraryIndex(storageKey, entries));
 
   Future<void> copy(String fromStorageKey, String toStorageKey) async {
     final List<Map<String, Object?>>? entries = await read(fromStorageKey);
-    if (entries == null) {
-      return;
-    }
-    await write(toStorageKey, entries);
-  }
-
-  Future<void> clear(String storageKey) async {
-    await ensureInitialized();
-    final File file = _fileForKey(storageKey);
-    if (await file.exists()) {
-      await file.delete();
+    if (entries != null) {
+      await write(toStorageKey, entries);
     }
   }
 
-  Future<void> _initialize() async {
-    final Directory directory = await _directoryProvider();
-    _directory = Directory(
-      '${directory.path}${Platform.pathSeparator}cached_library_index',
+  Future<void> clear(String storageKey) => _fileForKey(storageKey).clear();
+
+  AtomicJsonFile<_LibraryIndex> _fileForKey(String storageKey) {
+    return _files.putIfAbsent(storageKey, () {
+      final String hash = sha1.convert(utf8.encode(storageKey)).toString();
+      return AtomicJsonFile<_LibraryIndex>(
+        directoryProvider: _directoryProvider,
+        relativePath: 'cached_library_index/$hash.json',
+        decode: _LibraryIndex.fromJson,
+        encode: (_LibraryIndex index) => index.toJson(),
+      );
+    });
+  }
+}
+
+class _LibraryIndex {
+  const _LibraryIndex(this.storageKey, this.entries);
+
+  factory _LibraryIndex.fromJson(Object? value) {
+    final Map<String, Object?> json = Map<String, Object?>.from(value as Map);
+    return _LibraryIndex(
+      (json['storageKey'] as String?)?.trim() ?? '',
+      ((json['entries'] as List<Object?>?) ?? const <Object?>[])
+          .whereType<Map>()
+          .map((Map entry) => Map<String, Object?>.from(entry))
+          .toList(growable: false),
     );
-    await _directory!.create(recursive: true);
   }
 
-  File _fileForKey(String storageKey) {
-    final String hash = sha1.convert(utf8.encode(storageKey)).toString();
-    return File('${_directory!.path}${Platform.pathSeparator}$hash.json');
-  }
+  final String storageKey;
+  final List<Map<String, Object?>> entries;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'storageKey': storageKey,
+    'entries': entries,
+  };
 }

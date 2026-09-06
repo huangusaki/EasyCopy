@@ -1,53 +1,30 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:reader/models/app_preferences.dart';
+import 'package:reader/services/persistence/atomic_json_file.dart';
 
 typedef AppPreferencesDirectoryProvider = Future<Directory> Function();
 
 class AppPreferencesStore {
   AppPreferencesStore({AppPreferencesDirectoryProvider? directoryProvider})
-    : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory;
+    : _file = AtomicJsonFile<AppPreferences>(
+        directoryProvider: directoryProvider ?? getApplicationSupportDirectory,
+        relativePath: 'app_preferences.json',
+        decode: (Object? json) =>
+            AppPreferences.fromJson(Map<String, Object?>.from(json as Map)),
+        encode: (AppPreferences preferences) => preferences.toJson(),
+      );
 
-  final AppPreferencesDirectoryProvider _directoryProvider;
+  final AtomicJsonFile<AppPreferences> _file;
 
   Future<AppPreferences> read() async {
     try {
-      final File file = await _preferencesFile();
-      if (!await file.exists()) {
-        return const AppPreferences();
-      }
-      final Object? decoded = jsonDecode(await file.readAsString());
-      if (decoded is! Map) {
-        return const AppPreferences();
-      }
-      return AppPreferences.fromJson(
-        decoded.map(
-          (Object? key, Object? value) => MapEntry(key.toString(), value),
-        ),
-      );
+      return await _file.read() ?? const AppPreferences();
     } catch (_) {
       return const AppPreferences();
     }
   }
 
-  Future<void> write(AppPreferences preferences) async {
-    try {
-      final File file = await _preferencesFile();
-      await file.parent.create(recursive: true);
-      await file.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(preferences.toJson()),
-      );
-    } catch (_) {
-      // Best-effort persistence only.
-    }
-  }
-
-  Future<File> _preferencesFile() async {
-    final Directory directory = await _directoryProvider();
-    return File(
-      '${directory.path}${Platform.pathSeparator}app_preferences.json',
-    );
-  }
+  Future<void> write(AppPreferences preferences) => _file.write(preferences);
 }

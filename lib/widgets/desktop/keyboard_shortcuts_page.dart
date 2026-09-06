@@ -2,35 +2,33 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:reader/models/shortcut_preferences.dart';
 import 'package:reader/services/app_preferences_controller.dart';
-import 'package:reader/widgets/responsive_layout.dart';
+import 'package:reader/widgets/settings_page_scaffold.dart';
 
 class KeyboardShortcutsPage extends StatelessWidget {
-  const KeyboardShortcutsPage({super.key});
+  const KeyboardShortcutsPage({required this.preferencesController, super.key});
+
+  final AppPreferencesController preferencesController;
 
   @override
   Widget build(BuildContext context) {
-    final AppPreferencesController controller =
-        AppPreferencesController.instance;
-    return Scaffold(
-      backgroundColor: opaquePageBackground(context),
-      appBar: AppBar(
-        title: const Text('键盘快捷键'),
-        actions: <Widget>[
-          AnimatedBuilder(
-            animation: controller,
-            builder: (BuildContext context, Widget? _) {
-              final bool hasOverrides =
-                  controller.shortcutPreferences.overrides.isNotEmpty;
-              return TextButton(
-                onPressed: hasOverrides
-                    ? () => _confirmResetAll(context, controller)
-                    : null,
-                child: const Text('全部恢复默认'),
-              );
-            },
-          ),
-        ],
-      ),
+    final AppPreferencesController controller = preferencesController;
+    return SettingsPageScaffold(
+      title: '键盘快捷键',
+      actions: <Widget>[
+        AnimatedBuilder(
+          animation: controller,
+          builder: (BuildContext context, Widget? _) {
+            final bool hasOverrides =
+                controller.shortcutPreferences.overrides.isNotEmpty;
+            return TextButton(
+              onPressed: hasOverrides
+                  ? () => _confirmResetAll(context, controller)
+                  : null,
+              child: const Text('全部恢复默认'),
+            );
+          },
+        ),
+      ],
       body: AnimatedBuilder(
         animation: controller,
         builder: (BuildContext context, Widget? _) {

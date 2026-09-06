@@ -6,6 +6,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/host_manager.dart';
+import 'package:reader/services/persistence/atomic_json_file.dart';
+import 'package:reader/services/persistence/serial_executor.dart';
 
 typedef CacheNowProvider = DateTime Function();
 typedef CacheDirectoryProvider = Future<Directory> Function();
@@ -161,7 +163,21 @@ class PageCacheStore {
   PageCacheStore({
     CacheDirectoryProvider? directoryProvider,
     CacheNowProvider? now,
-  }) : _directoryProvider = directoryProvider ?? getApplicationSupportDirectory,
+  }) : _file = AtomicJsonFile<List<CachedPageEnvelope>>(
+         directoryProvider: directoryProvider ?? getApplicationSupportDirectory,
+         relativePath: 'page_cache.json',
+         decode: (Object? json) => (json as List)
+             .whereType<Map>()
+             .map(
+               (Map value) => CachedPageEnvelope.fromJson(
+                 Map<String, Object?>.from(value),
+               ),
+             )
+             .toList(growable: true),
+         encode: (List<CachedPageEnvelope> entries) => entries
+             .map((CachedPageEnvelope entry) => entry.toJson())
+             .toList(growable: false),
+       ),
        _now = now ?? DateTime.now;
 
   static final PageCacheStore instance = PageCacheStore();
@@ -169,7 +185,8 @@ class PageCacheStore {
   static const int maxEntries = 120;
   static const int maxBytes = 10 * 1024 * 1024;
 
-  final CacheDirectoryProvider _directoryProvider;
+  final AtomicJsonFile<List<CachedPageEnvelope>> _file;
+  final SerialExecutor _operations = SerialExecutor();
   final CacheNowProvider _now;
 
   Future<void>? _initialization;
@@ -182,114 +199,104 @@ class PageCacheStore {
   Future<CachedPageEnvelope?> read(
     String routeKey, {
     required String authScope,
-  }) async {
-    await ensureInitialized();
-    final DateTime now = _now();
-    final int entryCountBeforePrune = _entries.length;
-    _entries = _entries
-        .where((CachedPageEnvelope entry) => !entry.isHardExpired(now))
-        .toList(growable: true);
-    final bool prunedExpiredEntries = _entries.length != entryCountBeforePrune;
-    final int index = _entries.indexWhere((CachedPageEnvelope entry) {
-      return entry.routeKey == routeKey && entry.authScope == authScope;
-    });
-    if (index == -1) {
+  }) {
+    return _operations.run(() async {
+      await ensureInitialized();
+      final DateTime now = _now();
+      final int entryCountBeforePrune = _entries.length;
+      _entries = _entries
+          .where((CachedPageEnvelope entry) => !entry.isHardExpired(now))
+          .toList(growable: true);
+      final bool prunedExpiredEntries =
+          _entries.length != entryCountBeforePrune;
+      final int index = _entries.indexWhere((CachedPageEnvelope entry) {
+        return entry.routeKey == routeKey && entry.authScope == authScope;
+      });
+      if (index == -1) {
+        if (prunedExpiredEntries) {
+          await _persist();
+        }
+        return null;
+      }
+      final CachedPageEnvelope entry = _entries[index].copyWith(
+        lastAccessedAt: now,
+      );
+      _entries[index] = entry;
       if (prunedExpiredEntries) {
         await _persist();
       }
-      return null;
-    }
-    final CachedPageEnvelope entry = _entries[index].copyWith(
-      lastAccessedAt: now,
-    );
-    _entries[index] = entry;
-    if (prunedExpiredEntries) {
+      return entry;
+    });
+  }
+
+  Future<void> writeEnvelope(CachedPageEnvelope envelope) {
+    return _operations.run(() async {
+      await ensureInitialized();
+      _entries.removeWhere((CachedPageEnvelope entry) {
+        return entry.routeKey == envelope.routeKey &&
+            entry.authScope == envelope.authScope;
+      });
+      _entries.add(envelope.copyWith(lastAccessedAt: _now()));
+      _trimToBudget();
       await _persist();
-    }
-    return entry;
-  }
-
-  Future<void> writeEnvelope(CachedPageEnvelope envelope) async {
-    await ensureInitialized();
-    _entries.removeWhere((CachedPageEnvelope entry) {
-      return entry.routeKey == envelope.routeKey &&
-          entry.authScope == envelope.authScope;
     });
-    _entries.add(envelope.copyWith(lastAccessedAt: _now()));
-    _trimToBudget();
-    await _persist();
   }
 
-  Future<void> refreshValidation(
-    String routeKey, {
-    required String authScope,
-  }) async {
-    await ensureInitialized();
-    final DateTime now = _now();
-    _entries = _entries
-        .map((CachedPageEnvelope entry) {
-          if (entry.routeKey == routeKey && entry.authScope == authScope) {
-            return entry.copyWith(
-              fetchedAt: now,
-              validatedAt: now,
-              lastAccessedAt: now,
-            );
-          }
-          return entry;
-        })
-        .toList(growable: true);
-    await _persist();
-  }
-
-  Future<void> removeAuthScope(String authScope) async {
-    await ensureInitialized();
-    _entries.removeWhere((CachedPageEnvelope entry) {
-      return entry.authScope == authScope;
+  Future<void> refreshValidation(String routeKey, {required String authScope}) {
+    return _operations.run(() async {
+      await ensureInitialized();
+      final DateTime now = _now();
+      _entries = _entries
+          .map((CachedPageEnvelope entry) {
+            if (entry.routeKey == routeKey && entry.authScope == authScope) {
+              return entry.copyWith(
+                fetchedAt: now,
+                validatedAt: now,
+                lastAccessedAt: now,
+              );
+            }
+            return entry;
+          })
+          .toList(growable: true);
+      await _persist();
     });
-    await _persist();
   }
 
-  Future<void> removeAuthenticatedEntries() async {
-    await ensureInitialized();
-    _entries.removeWhere((CachedPageEnvelope entry) {
-      return entry.authScope != 'guest';
+  Future<void> removeAuthScope(String authScope) {
+    return _operations.run(() async {
+      await ensureInitialized();
+      _entries.removeWhere((CachedPageEnvelope entry) {
+        return entry.authScope == authScope;
+      });
+      await _persist();
     });
-    await _persist();
   }
 
-  Future<void> clear() async {
-    _entries = <CachedPageEnvelope>[];
-    await _persist();
+  Future<void> removeAuthenticatedEntries() {
+    return _operations.run(() async {
+      await ensureInitialized();
+      _entries.removeWhere((CachedPageEnvelope entry) {
+        return entry.authScope != 'guest';
+      });
+      await _persist();
+    });
+  }
+
+  Future<void> clear() {
+    return _operations.run(() async {
+      await ensureInitialized();
+      _entries = <CachedPageEnvelope>[];
+      await _persist();
+    });
   }
 
   Future<void> _initialize() async {
     try {
-      final File file = await _cacheFile();
-      if (!await file.exists()) {
-        return;
-      }
-      final Object? decoded = jsonDecode(await file.readAsString());
-      if (decoded is! List) {
-        return;
-      }
-      _entries = decoded
-          .whereType<Map>()
-          .map(
-            (Map<Object?, Object?> value) => CachedPageEnvelope.fromJson(
-              value.map(
-                (Object? key, Object? value) => MapEntry(key.toString(), value),
-              ),
-            ),
-          )
-          .toList(growable: true);
+      _entries = await _file.read() ?? <CachedPageEnvelope>[];
+      _trimToBudget();
     } catch (_) {
       _entries = <CachedPageEnvelope>[];
     }
-  }
-
-  Future<File> _cacheFile() async {
-    final Directory directory = await _directoryProvider();
-    return File('${directory.path}${Platform.pathSeparator}page_cache.json');
   }
 
   void _trimToBudget() {
@@ -314,15 +321,9 @@ class PageCacheStore {
 
   Future<void> _persist() async {
     try {
-      final File file = await _cacheFile();
-      await file.parent.create(recursive: true);
-      await file.writeAsString(
-        jsonEncode(
-          _entries.map((CachedPageEnvelope entry) => entry.toJson()).toList(),
-        ),
-      );
+      await _file.write(_entries);
     } catch (_) {
-      // 缓存写入失败不阻断页面加载。
+      // Cache failures must not prevent page loading.
     }
   }
 

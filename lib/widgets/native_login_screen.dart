@@ -10,6 +10,7 @@ import 'package:reader/widgets/responsive_layout.dart';
 
 class NativeLoginScreen extends StatefulWidget {
   const NativeLoginScreen({
+    required this.apiClient,
     required this.loginUri,
     required this.userAgent,
     this.credentialsStore,
@@ -17,6 +18,7 @@ class NativeLoginScreen extends StatefulWidget {
   });
 
   final Uri loginUri;
+  final SiteApiClient apiClient;
   final String userAgent;
   final LoginCredentialsStore? credentialsStore;
 
@@ -81,7 +83,7 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
     });
 
     try {
-      final SiteLoginResult result = await SiteApiClient.instance.login(
+      final SiteLoginResult result = await widget.apiClient.login(
         username: username,
         password: password,
       );

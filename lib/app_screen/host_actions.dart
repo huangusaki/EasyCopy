@@ -503,8 +503,8 @@ extension _AppScreenHostActions on _AppScreenState {
       return;
     }
     if (PlatformCapabilities.supportsDesktopWebView) {
+      _services.desktopPageExtractor.invalidateCookiePriming();
       await DesktopWebViewEnvironment.instance.clearCookies();
-      DesktopPageExtractor.instance.invalidateCookiePriming();
     }
   }
 }

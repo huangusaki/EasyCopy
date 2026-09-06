@@ -309,41 +309,9 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
     }
   }
 
-  Future<ReaderPageData> _prepareReaderPageForDownload(Uri uri) async {
-    final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
-    return ReaderPageDownloadResolver.resolve(
-      targetUri,
-      loadFromStorageCache: (Uri chapterUri) {
-        return _services.downloadService.loadCachedReaderPage(
-          chapterUri.toString(),
-        );
-      },
-      loadFromPageCache: (Uri chapterUri) async {
-        final PageQueryKey key = _pageQueryKeyForUri(chapterUri);
-        final CachedPageHit? cachedHit = await _pageRepository.readCached(key);
-        final SitePage? page = cachedHit?.page;
-        if (page is ReaderPageData && page.imageUrls.isNotEmpty) {
-          return page;
-        }
-        return null;
-      },
-      loadFromLightweightSource: (Uri chapterUri) async {
-        final SitePage page = await _loadHtmlPageFresh(
-          chapterUri,
-          authScope: _authScopeForUri(chapterUri),
-        );
-        if (page is ReaderPageData && page.imageUrls.isNotEmpty) {
-          return page;
-        }
-        throw StateError('章节解析失败');
-      },
-      loadFromWebViewFallback: _extractDownloadPageWithWebView,
-    );
-  }
-
   Future<ReaderPageData> _extractDownloadPageWithWebView(Uri uri) async {
     if (!PlatformCapabilities.usesMobileWebView) {
-      final SitePage page = await DesktopPageExtractor.instance.loadPage(
+      final SitePage page = await _services.desktopPageLoader(
         AppConfig.rewriteToCurrentHost(uri),
       );
       if (page is ReaderPageData) {

@@ -79,7 +79,10 @@ class _WallpaperSettingsEntryRow extends StatelessWidget {
 }
 
 class _WallpaperSettingsPage extends StatelessWidget {
-  const _WallpaperSettingsPage({required this.wallpaper, required this.actions});
+  const _WallpaperSettingsPage({
+    required this.wallpaper,
+    required this.actions,
+  });
 
   final WallpaperPreferences wallpaper;
   final WallpaperEditingActions actions;
@@ -87,9 +90,8 @@ class _WallpaperSettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Listenable? listenable = actions.listenable;
-    return Scaffold(
-      backgroundColor: opaquePageBackground(context),
-      appBar: AppBar(title: const Text('壁纸')),
+    return SettingsPageScaffold(
+      title: '壁纸',
       body: SafeArea(
         child: listenable == null
             ? _buildBody(wallpaper)

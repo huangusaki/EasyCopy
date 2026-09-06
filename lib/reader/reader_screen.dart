@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/chapter_comment.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/reader/dependencies.dart';
 import 'package:reader/reader/internal/reader_comment_layout.dart';
 import 'package:reader/reader/internal/reader_paged_scroll_physics.dart';
 import 'package:reader/reader/reader_controller.dart';
@@ -22,12 +23,8 @@ import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/document_tree_image_provider.dart';
 import 'package:reader/services/image_cache.dart';
-import 'package:reader/services/local_library_store.dart';
 import 'package:reader/services/reader_comment_utils.dart';
 import 'package:reader/services/reader_history_recorder.dart';
-import 'package:reader/services/reader_platform_bridge.dart';
-import 'package:reader/services/reader_progress_store.dart';
-import 'package:reader/services/site_api_client.dart';
 import 'package:reader/services/site_session.dart';
 import 'package:reader/services/tree_image_provider.dart';
 import 'package:reader/utils/platform_capabilities.dart';
@@ -63,6 +60,7 @@ class _ReaderMouseDragScrollBehavior extends MaterialScrollBehavior {
 
 class ReaderScreen extends StatefulWidget {
   const ReaderScreen({
+    required this.services,
     required this.page,
     required this.isExitTransitionActive,
     required this.onRequestChapterNavigation,
@@ -75,6 +73,7 @@ class ReaderScreen extends StatefulWidget {
   });
 
   final ReaderPageData page;
+  final ReaderScreenServices services;
   final bool isExitTransitionActive;
   final ReaderChapterNavigationCallback onRequestChapterNavigation;
   final Future<void> Function() onRequestAuth;
@@ -102,14 +101,16 @@ class ReaderScreenState extends State<ReaderScreen> {
   void initState() {
     super.initState();
     _controller = ReaderController(
-      preferencesController: AppPreferencesController.instance,
-      progressStore: ReaderProgressStore.instance,
-      platformBridge: ReaderPlatformBridge.instance,
-      apiClient: SiteApiClient.instance,
-      session: SiteSession.instance,
-      localLibraryStore: LocalLibraryStore.instance,
+      preferencesController: widget.services.preferencesController,
+      progressStore: widget.services.progressStore,
+      platformBridge: widget.services.platformBridge,
+      apiClient: widget.services.apiClient,
+      session: widget.services.session,
+      localLibraryStore: widget.services.localLibraryStore,
       historyRecorder: ReaderHistoryRecorder(
         resolveCoverUrl: widget.onResolveHistoryCover,
+        localLibraryStore: widget.services.localLibraryStore,
+        session: widget.services.session,
       ),
       onRequestChapterNavigation: widget.onRequestChapterNavigation,
       onRequestAuth: widget.onRequestAuth,

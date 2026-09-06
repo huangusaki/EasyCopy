@@ -50,7 +50,7 @@ class SiteHtmlPageLoader {
     await _session.ensureInitialized();
 
     final _LoadedTextResponse response = await _getTextResponse(
-      AppConfig.rewriteToCurrentHost(uri),
+      _hostManager.rewriteToCurrentHost(uri),
       headers: _defaultHeaders(
         accept:
             'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -66,9 +66,10 @@ class SiteHtmlPageLoader {
     // 详情页外的 HTML 解析移到后台 isolate。
     final Uri responseUri = response.uri;
     final String responseBody = response.body;
+    final SiteHtmlPageParser parser = _parser;
     final Stopwatch parseStopwatch = Stopwatch()..start();
     final SitePage page = await Isolate.run(() {
-      return const SiteHtmlPageParser().parsePage(responseUri, responseBody);
+      return parser.parsePage(responseUri, responseBody);
     });
     perfLog(
       '[parse] off-main ${parseStopwatch.elapsedMilliseconds}ms '
@@ -84,7 +85,7 @@ class SiteHtmlPageLoader {
 
   Future<String> _loadDetailChapterResults(DetailChapterRequest request) async {
     final _LoadedTextResponse response = await _getTextResponse(
-      AppConfig.resolvePath('/comicdetail/${request.slug}/chapters'),
+      _hostManager.resolvePath('/comicdetail/${request.slug}/chapters'),
       headers: _defaultHeaders(
         accept: 'application/json, text/plain, */*',
         extra: <String, String>{
@@ -115,7 +116,7 @@ class SiteHtmlPageLoader {
     Uri uri, {
     required Map<String, String> headers,
   }) async {
-    Uri currentUri = AppConfig.rewriteToCurrentHost(uri);
+    Uri currentUri = _hostManager.rewriteToCurrentHost(uri);
     for (
       int redirectCount = 0;
       redirectCount <= _maxRedirects;
@@ -147,7 +148,7 @@ class SiteHtmlPageLoader {
         if (location.isEmpty) {
           throw SiteHtmlPageLoadException('页面重定向缺少跳转地址：${currentUri.path}');
         }
-        currentUri = AppConfig.rewriteToCurrentHost(
+        currentUri = _hostManager.rewriteToCurrentHost(
           currentUri.resolve(location),
         );
         continue;

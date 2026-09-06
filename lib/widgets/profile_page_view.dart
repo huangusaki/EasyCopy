@@ -12,7 +12,7 @@ import 'package:reader/services/wallpaper_storage.dart';
 import 'package:reader/widgets/comic_grid.dart';
 import 'package:reader/widgets/cover_image.dart';
 import 'package:reader/widgets/cropped_wallpaper_image.dart';
-import 'package:reader/widgets/responsive_layout.dart';
+import 'package:reader/widgets/settings_page_scaffold.dart';
 import 'package:reader/widgets/settings_ui.dart';
 
 part 'profile_page_view/appearance_wallpaper.dart';

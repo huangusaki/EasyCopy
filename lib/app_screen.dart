@@ -12,10 +12,12 @@ import 'package:reader/app_screen/detail_chapter_controller.dart';
 import 'package:reader/app_screen/detail_download_picker.dart';
 import 'package:reader/app_screen/download_enqueue_result.dart';
 import 'package:reader/app_screen/models.dart';
+import 'package:reader/app_screen/page_preparation.dart';
 import 'package:reader/app_screen/route_state.dart';
 import 'package:reader/app_screen/route_utils.dart';
 import 'package:reader/app_screen/scroll_state.dart';
 import 'package:reader/app_screen/search_actions.dart';
+import 'package:reader/app_screen/session_controller.dart';
 import 'package:reader/app_screen/state_containers.dart';
 import 'package:reader/app_screen/wallpaper_actions.dart';
 import 'package:reader/app_screen/widgets.dart';
@@ -23,6 +25,7 @@ import 'package:reader/config/app_config.dart';
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/models/shortcut_preferences.dart';
+import 'package:reader/reader/dependencies.dart';
 import 'package:reader/reader/reader_screen.dart';
 import 'package:reader/services/android_document_tree_bridge.dart';
 import 'package:reader/services/app_preferences_controller.dart';
@@ -30,11 +33,11 @@ import 'package:reader/services/app_update_checker.dart';
 import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/debug_trace.dart';
-import 'package:reader/services/desktop_page_extractor.dart';
 import 'package:reader/services/desktop_webview_environment.dart';
 import 'package:reader/services/discover_filter_selection.dart';
 import 'package:reader/services/display_mode_service.dart';
 import 'package:reader/services/download_queue_manager.dart';
+import 'package:reader/services/download_queue_manager/retry_policy.dart';
 import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
 import 'package:reader/services/frame_jank_logger.dart';
@@ -46,10 +49,8 @@ import 'package:reader/services/page_repository.dart';
 import 'package:reader/services/primary_tab_session_store.dart';
 import 'package:reader/services/rank_filter_selection.dart';
 import 'package:reader/services/reader_navigation_repairer.dart';
-import 'package:reader/services/reader_page_download_resolver.dart';
 import 'package:reader/services/reader_platform_bridge.dart';
 import 'package:reader/services/site_api_client.dart';
-import 'package:reader/services/site_html_page_loader.dart';
 import 'package:reader/services/standard_page_load_controller.dart';
 import 'package:reader/services/tab_activation_policy.dart';
 import 'package:reader/services/uri_keys.dart';
@@ -102,44 +103,11 @@ Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
   );
 }
 
-class _AppScreenDownloadTaskRunner implements DownloadTaskRunner {
-  const _AppScreenDownloadTaskRunner(this._state);
-
-  final _AppScreenState _state;
-
-  @override
-  Future<ReaderPageData> prepare(DownloadQueueTask task) async {
-    await _state._services.session.ensureInitialized();
-    return _state._prepareReaderPageForDownload(Uri.parse(task.chapterHref));
-  }
-
-  @override
-  Future<void> download(
-    DownloadQueueTask task,
-    ReaderPageData page, {
-    required ChapterDownloadPauseChecker shouldPause,
-    required ChapterDownloadCancelChecker shouldCancel,
-    ChapterDownloadProgressCallback? onProgress,
-  }) {
-    return _state._services.downloadService.downloadChapter(
-      page,
-      cookieHeader: _state._services.session.cookieHeader,
-      comicUri: task.comicUri,
-      chapterHref: task.chapterHref,
-      chapterLabel: task.chapterLabel,
-      coverUrl: task.coverUrl,
-      detailSnapshot: task.detailSnapshot,
-      shouldPause: shouldPause,
-      shouldCancel: shouldCancel,
-      onProgress: onProgress,
-    );
-  }
-}
-
 class AppScreen extends StatefulWidget {
-  const AppScreen({super.key, this.preferencesController});
+  const AppScreen({super.key, this.preferencesController, this.services});
 
   final AppPreferencesController? preferencesController;
+  final AppScreenServices? services;
 
   @override
   State<AppScreen> createState() => _AppScreenState();
@@ -151,7 +119,8 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
   late final AppPreferencesController _preferencesController;
   ChineseConversionMode? _requestedChineseConversionMode;
   int _chineseConversionRequestGeneration = 0;
-  final AppScreenServices _services = AppScreenServices();
+  late final AppScreenServices _services;
+  late final ReaderScreenServices _readerServices;
   final AppScreenUiState _ui = AppScreenUiState();
   final AppNavigationState _nav = AppNavigationState();
   final AppWebViewState _web = AppWebViewState();
@@ -169,6 +138,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
     },
   );
   late final PageRepository _pageRepository;
+  late final AppSessionController _sessionController;
   final StandardPageLoadController<SitePage> _standardPageLoadController =
       StandardPageLoadController<SitePage>();
 
@@ -187,10 +157,12 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _services = widget.services ?? AppScreenServices();
     FrameJankLogger.install();
     WidgetsBinding.instance.addObserver(this);
     _preferencesController =
         widget.preferencesController ?? AppPreferencesController.instance;
+    _readerServices = _services.createReaderServices(_preferencesController);
     _shell.lastDownloadPrefs = _preferencesController.downloadPreferences;
     if (PlatformCapabilities.usesMobileWebView) {
       _controller = _buildController();
@@ -240,17 +212,27 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
       onViewportInteraction: _noteViewportInteraction,
       onChanged: _setStateIfMounted,
     );
-    _pageRepository = PageRepository(
-      apiClient: _services.siteApiClient,
-      standardPageLoader: _loadStandardPageFresh,
-      htmlPageLoader: _loadHtmlPageFresh,
-      profilePageLoader: _services.localProfilePageLoader.loadProfile,
+    _pageRepository = _services.createPageRepository(
+      standardLoader: _loadStandardPageFresh,
+    );
+    _sessionController = AppSessionController(
+      session: _services.session,
+      pageRepository: _pageRepository,
+      invalidateNavigation: () {
+        for (int index = 0; index < appDestinations.length; index += 1) {
+          _abandonCurrentRequest(index, phase: 'logout');
+        }
+      },
+      clearPlatformCookies: _clearPlatformCookies,
     );
     _downloadQueueManager = DownloadQueueManager(
       preferencesController: _preferencesController,
       downloadService: _services.downloadService,
       queueStore: _services.downloadQueueStore,
-      taskRunner: _AppScreenDownloadTaskRunner(this),
+      taskRunner: _services.createDownloadTaskRunner(
+        pageRepository: _pageRepository,
+        webViewFallback: _extractDownloadPageWithWebView,
+      ),
       onLibraryChanged: (CacheLibraryRefreshReason reason) {
         return _refreshCachedComics(reason: reason);
       },
@@ -491,6 +473,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
                         child: _wrapDesktopReaderShell(
                           context,
                           ReaderScreen(
+                            services: _readerServices,
                             key: _ui.readerScreenKey,
                             page: page,
                             isExitTransitionActive:

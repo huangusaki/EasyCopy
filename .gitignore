@@ -32,7 +32,6 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
-/test/
 /coverage/
 auth_cookies.txt
 login_headers.txt

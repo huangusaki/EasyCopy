@@ -51,8 +51,9 @@ extension _AppScreenStandardMode on _AppScreenState {
                 onRefresh: () => unawaited(_retryCurrentPage()),
                 onOpenShortcuts: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
-                    builder: (BuildContext context) =>
-                        const KeyboardShortcutsPage(),
+                    builder: (BuildContext context) => KeyboardShortcutsPage(
+                      preferencesController: _preferencesController,
+                    ),
                   ),
                 ),
                 searchField: DesktopSearchField(

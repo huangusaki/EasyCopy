@@ -11,12 +11,12 @@ import 'package:reader/models/page_models.dart';
 import 'package:reader/services/android_document_tree_bridge.dart';
 import 'package:reader/services/cached_chapter_locator_store.dart';
 import 'package:reader/services/cached_library_index_store.dart';
+import 'package:reader/services/comic_download_service/chapter_image_downloader.dart';
+import 'package:reader/services/comic_download_service/download_contracts.dart';
 import 'package:reader/services/debug_trace.dart';
 import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
 import 'package:reader/services/migration_delta_journal_store.dart';
-import 'package:reader/services/network_client.dart';
-import 'package:reader/services/quic_http_client.dart';
 import 'package:reader/services/tree_image_provider.dart';
 import 'package:reader/services/uri_keys.dart';
 
@@ -30,12 +30,14 @@ part 'comic_download_service/storage_roots.dart';
 class ComicDownloadService {
   ComicDownloadService({
     http.Client? client,
+    ChapterImageDownloader? imageDownloader,
     Future<Directory> Function()? baseDirectoryProvider,
     DownloadStorageService? storageService,
     AndroidDocumentTreeBridge? documentTreeBridge,
     CachedLibraryIndexStore? cachedLibraryIndexStore,
     CachedChapterLocatorStore? cachedChapterLocatorStore,
-  }) : _client = client ?? AppHttpClientFactory.create(),
+  }) : _imageDownloader =
+           imageDownloader ?? ChapterImageDownloader(client: client),
        _documentTreeBridge =
            documentTreeBridge ?? AndroidDocumentTreeBridge.instance,
        _cachedLibraryIndexStore =
@@ -53,9 +55,7 @@ class ComicDownloadService {
 
   static final ComicDownloadService instance = ComicDownloadService();
 
-  static const int _imageDownloadConcurrency = 3;
-
-  final http.Client _client;
+  final ChapterImageDownloader _imageDownloader;
   final AndroidDocumentTreeBridge _documentTreeBridge;
   final CachedLibraryIndexStore _cachedLibraryIndexStore;
   final CachedChapterLocatorStore _cachedChapterLocatorStore;
@@ -194,111 +194,24 @@ class ComicDownloadService {
       root,
       chapterDirectoryPath,
     );
-    final List<String> savedFiles = List<String>.filled(
-      page.imageUrls.length,
-      '',
-      growable: false,
-    );
-    existingFiles.forEach((int index, String fileName) {
-      if (index >= 0 && index < savedFiles.length) {
-        savedFiles[index] = fileName;
-      }
-    });
-    final Map<String, String> headers = <String, String>{
-      'User-Agent': AppConfig.desktopUserAgent,
-      'Referer': page.uri,
-      if (cookieHeader.trim().isNotEmpty) 'Cookie': cookieHeader.trim(),
-    };
-
-    int completedCount = savedFiles
-        .where((String fileName) => fileName.isNotEmpty)
-        .length;
-
-    Future<void> emitProgress(String label) async {
-      if (onProgress == null) {
-        return;
-      }
-      await onProgress(
-        ChapterDownloadProgress(
-          completedCount: completedCount,
-          totalCount: page.imageUrls.length,
-          currentLabel: label,
-        ),
-      );
-    }
-
-    Future<void> downloadImageAt(int index) async {
-      _throwIfCancelled(shouldCancel);
-      _throwIfPaused(shouldPause);
-
-      final String existingFileName = savedFiles[index];
-      if (existingFileName.isNotEmpty) {
-        await emitProgress('Restored $completedCount/${page.imageUrls.length}');
-        return;
-      }
-
-      final Uri imageUri = Uri.parse(page.imageUrls[index]);
-      final http.Response response = await NetworkClient.get(
-        _client,
-        imageUri,
-        headers: headers,
-        timeout: NetworkClient.imageTimeout,
-        maxRetries: 2,
-        label: 'download.image',
-      );
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException(
-          'Image download failed: ${response.statusCode}',
-          uri: imageUri,
-        );
-      }
-
-      final String extension = _detectExtension(
-        imageUri,
-        response.headers['content-type'],
-      );
-      final String fileName =
-          '${(index + 1).toString().padLeft(3, '0')}.$extension';
-      await root.writeBytes(
+    final List<String> orderedSavedFiles = await _imageDownloader.download(
+      imageUrls: page.imageUrls,
+      headers: <String, String>{
+        'User-Agent': AppConfig.desktopUserAgent,
+        'Referer': page.uri,
+        if (cookieHeader.trim().isNotEmpty) 'Cookie': cookieHeader.trim(),
+      },
+      existingFiles: existingFiles,
+      writeImage: (String fileName, Uint8List bytes) => root.writeBytes(
         _joinRelativePath(<String>[chapterDirectoryPath, fileName]),
-        response.bodyBytes,
-      );
-      savedFiles[index] = fileName;
-      completedCount += 1;
-
-      await emitProgress(
-        'Downloading $completedCount/${page.imageUrls.length}',
-      );
-    }
-
-    int nextImageIndex = 0;
-
-    Future<void> runDownloadWorker() async {
-      while (true) {
-        _throwIfCancelled(shouldCancel);
-        _throwIfPaused(shouldPause);
-        final int index = nextImageIndex;
-        nextImageIndex += 1;
-        if (index >= page.imageUrls.length) {
-          return;
-        }
-        await downloadImageAt(index);
-      }
-    }
-
-    final int workerCount = page.imageUrls.length < _imageDownloadConcurrency
-        ? page.imageUrls.length
-        : _imageDownloadConcurrency;
-    if (workerCount > 0) {
-      await Future.wait(<Future<void>>[
-        for (int worker = 0; worker < workerCount; worker += 1)
-          runDownloadWorker(),
-      ]);
-    }
-
-    final List<String> orderedSavedFiles = savedFiles
-        .where((String fileName) => fileName.isNotEmpty)
-        .toList(growable: false);
+        bytes,
+      ),
+      onProgress: onProgress,
+      shouldPause: shouldPause,
+      shouldCancel: shouldCancel,
+    );
+    _throwIfCancelled(shouldCancel);
+    _throwIfPaused(shouldPause);
     await root.writeString(
       manifestRelativePath,
       const JsonEncoder.withIndent('  ').convert(<String, Object?>{

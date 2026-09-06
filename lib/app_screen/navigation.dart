@@ -48,11 +48,12 @@ extension _AppScreenNavigation on _AppScreenState {
   }
 
   bool _canCommitRequest(NavigationRequestContext request) {
-    return canCommitNavigationRequest(
-      currentSelectedIndex: _nav.selectedIndex,
-      currentEntry: _tabSessionStore.currentEntry(request.targetTabIndex),
-      request: request,
-    );
+    return !_sessionController.isLoggingOut &&
+        canCommitNavigationRequest(
+          currentSelectedIndex: _nav.selectedIndex,
+          currentEntry: _tabSessionStore.currentEntry(request.targetTabIndex),
+          request: request,
+        );
   }
 
   void _recordSupersededRequest(
