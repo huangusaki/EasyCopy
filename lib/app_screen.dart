@@ -67,6 +67,7 @@ import 'package:reader/widgets/desktop/desktop_search_field.dart';
 import 'package:reader/widgets/desktop/desktop_shortcuts.dart';
 import 'package:reader/widgets/desktop/desktop_title_bar.dart';
 import 'package:reader/widgets/desktop/keyboard_shortcuts_page.dart';
+import 'package:reader/widgets/discover_results_sliver.dart';
 import 'package:reader/widgets/download_management_page.dart';
 import 'package:reader/widgets/mobile_floating_nav_bar.dart';
 import 'package:reader/widgets/motion.dart';

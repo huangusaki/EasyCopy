@@ -37,6 +37,18 @@ bool isDiscoverUri(Uri uri) {
       path.startsWith('/newest');
 }
 
+/// 筛选和分页属于同一页面；完整 URL 仍用于缓存与请求归属。
+String standardPageTransitionKey({
+  required Uri uri,
+  required int tabIndex,
+  required int routeDepth,
+}) {
+  final String location = isDiscoverUri(uri)
+      ? uri.replace(query: '', fragment: '').toString()
+      : AppConfig.routeKeyForUri(uri);
+  return '$tabIndex::$routeDepth::$location';
+}
+
 bool isSecondaryDiscoverRoute(Uri uri) {
   return isDiscoverUri(uri) && !isPrimaryDiscoverUri(uri);
 }

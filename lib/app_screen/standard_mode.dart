@@ -268,7 +268,11 @@ extension _AppScreenStandardMode on _AppScreenState {
     final List<Widget> slivers = _buildStandardBodySlivers(context);
 
     return ContentSwitchTransition(
-      contentKey: '${_nav.selectedIndex}::${_currentEntry.routeKey}',
+      contentKey: standardPageTransitionKey(
+        uri: _currentUri,
+        tabIndex: _nav.selectedIndex,
+        routeDepth: _tabSessionStore.depth(_nav.selectedIndex),
+      ),
       tabIndex: _nav.selectedIndex,
       routeDepth: _tabSessionStore.depth(_nav.selectedIndex),
       child: RefreshIndicator(

@@ -221,11 +221,6 @@ extension _AppScreenPageSections on _AppScreenState {
 
   List<Widget> _buildDiscoverSections(DiscoverPageData page) {
     final List<Widget> sections = <Widget>[];
-    final bool hasPager =
-        page.pager.hasPrev ||
-        page.pager.hasNext ||
-        page.pager.currentLabel.isNotEmpty ||
-        page.pager.totalLabel.isNotEmpty;
 
     if (page.filters.isNotEmpty) {
       final FilterGroupData primaryGroup = page.filters.first;
@@ -252,7 +247,8 @@ extension _AppScreenPageSections on _AppScreenState {
                         label: primaryGroup.label,
                         options: visibleThemeOptions,
                       ),
-                      onTap: _navigateDiscoverFilter,
+                      onTap: (String href) =>
+                          _navigateDiscoverFilter(href, group: primaryGroup),
                       actionLabel: themeOptions.length > 16
                           ? (expanded ? '收起' : '全部')
                           : null,
@@ -276,7 +272,8 @@ extension _AppScreenPageSections on _AppScreenState {
                           padding: const EdgeInsets.only(bottom: 16),
                           child: FilterGroup(
                             group: group,
-                            onTap: _navigateDiscoverFilter,
+                            onTap: (String href) =>
+                                _navigateDiscoverFilter(href, group: group),
                           ),
                         ),
                     ],
@@ -296,10 +293,27 @@ extension _AppScreenPageSections on _AppScreenState {
       ),
     );
 
-    if (_isLoading) {
-      // 切换题材/翻页时统一用骨架屏占位，避免和顶栏进度条叠出两条读条。
-      sections.add(const SliverToBoxAdapter(child: PageSkeleton.grid()));
-    } else if (page.items.isEmpty) {
+    sections.add(
+      DiscoverResultsSliver(
+        resultKey: AppConfig.routeKeyForUri(Uri.parse(page.uri)),
+        isLoading: _isLoading,
+        errorMessage: _errorMessage,
+        onRetry: () => unawaited(_retryCurrentPage()),
+        sliver: SliverMainAxisGroup(slivers: _buildDiscoverResults(page)),
+      ),
+    );
+    return sections;
+  }
+
+  List<Widget> _buildDiscoverResults(DiscoverPageData page) {
+    final List<Widget> sections = <Widget>[];
+    final bool hasPager =
+        page.pager.hasPrev ||
+        page.pager.hasNext ||
+        page.pager.currentLabel.isNotEmpty ||
+        page.pager.totalLabel.isNotEmpty;
+
+    if (page.items.isEmpty) {
       sections.add(
         _hPaddedBox(
           const Padding(
@@ -348,15 +362,10 @@ extension _AppScreenPageSections on _AppScreenState {
                   (BuildContext context, int index) {
                     final ComicCardData item = page.items[index];
                     return RepaintBoundary(
-                      child: StaggerIn(
-                        key: ValueKey<String>(item.href),
-                        index: index % (crossAxisCount * 2),
-                        enabled: usesWideLayout(context),
-                        child: ComicCardTile(
-                          item: item,
-                          onTap: _navigateToHref,
-                          onLongPress: (_) => _showComicQuickPreview(item),
-                        ),
+                      child: ComicCardTile(
+                        item: item,
+                        onTap: _navigateToHref,
+                        onLongPress: (_) => _showComicQuickPreview(item),
                       ),
                     );
                   },
@@ -370,7 +379,7 @@ extension _AppScreenPageSections on _AppScreenState {
       );
     }
 
-    if (hasPager && !_isLoading) {
+    if (hasPager) {
       sections.add(_hPaddedBox(const SizedBox(height: 18)));
       sections.add(
         _hPaddedBox(

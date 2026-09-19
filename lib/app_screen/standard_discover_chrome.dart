@@ -177,6 +177,7 @@ extension _AppScreenDiscoverChrome on _AppScreenState {
       targetUri,
       preserveVisiblePage: true,
       historyMode: NavigationIntent.preserve,
+      targetTabIndexOverride: _nav.selectedIndex,
     );
     _movePagerToDiscoverList(targetUri);
   }
@@ -206,12 +207,18 @@ extension _AppScreenDiscoverChrome on _AppScreenState {
       targetUri,
       preserveVisiblePage: true,
       historyMode: NavigationIntent.preserve,
+      targetTabIndexOverride: _nav.selectedIndex,
     );
     _movePagerToDiscoverList(targetUri);
   }
 
   void _movePagerToDiscoverList(Uri targetUri) {
     final String routeKey = AppConfig.routeKeyForUri(targetUri);
+    if (_currentEntry.routeKey != routeKey ||
+        _isLoading ||
+        _errorMessage != null) {
+      return;
+    }
     _scrollState.moveToAnchor(
       routeKey: routeKey,
       anchorContext: () {

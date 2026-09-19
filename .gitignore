@@ -43,6 +43,7 @@ build_arm64.ps1
 build_apk_arm64_v8a.ps1
 package_release.ps1
 docs/workflow.md
+docs/project.md
 docs/probe/
 docs/tasks/
 docs/mem/

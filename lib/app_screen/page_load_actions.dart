@@ -923,6 +923,10 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     final PrimaryTabRouteEntry entry = _tabSessionStore.currentEntry(
       requestContext.targetTabIndex,
     );
+    if (entry.page is DiscoverPageData) {
+      _finishTabEntryLoading(requestContext, message: message);
+      return;
+    }
     if (entry.page != null) {
       _finishTabEntryLoading(requestContext);
       if (requestContext.targetTabIndex == _nav.selectedIndex) {

@@ -111,20 +111,30 @@ extension _AppScreenTabNavigation on _AppScreenState {
     );
   }
 
-  void _navigateDiscoverFilter(String href) {
+  void _navigateDiscoverFilter(String href, {required FilterGroupData group}) {
     if (href.trim().isEmpty) {
       return;
     }
-    final Uri targetUri = AppConfig.resolveNavigationUri(
-      href,
+    final SitePage? page = _page;
+    if (page is! DiscoverPageData) {
+      return;
+    }
+    final Uri targetUri = resolveDiscoverFilterUri(
+      page,
+      group: group,
       currentUri: _currentUri,
+      href: href,
     );
+    if (_currentEntry.routeKey == AppConfig.routeKeyForUri(targetUri)) {
+      return;
+    }
     _applyDiscoverFilter(targetUri);
     unawaited(
       _loadUri(
         targetUri,
         preserveVisiblePage: true,
         historyMode: NavigationIntent.preserve,
+        targetTabIndexOverride: _nav.selectedIndex,
       ),
     );
   }
