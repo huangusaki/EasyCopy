@@ -100,13 +100,13 @@ extension _AppScreenStandardMode on _AppScreenState {
       return;
     }
     if (notification is ScrollUpdateNotification) {
+      final double? delta = notification.scrollDelta;
+      if (notification.dragDetails == null || delta == null || delta == 0) {
+        return;
+      }
       if (notification.metrics.pixels <= 48) {
         _ui.bottomBarScrollAccumulator = 0;
         _ui.bottomBarVisibleNotifier.value = true;
-        return;
-      }
-      final double? delta = notification.scrollDelta;
-      if (notification.dragDetails == null || delta == null || delta == 0) {
         return;
       }
       if (delta.sign != _ui.bottomBarScrollAccumulator.sign) {
@@ -331,7 +331,7 @@ extension _AppScreenStandardMode on _AppScreenState {
 
     if (_errorMessage != null && _page == null) {
       slivers.addAll(_buildErrorSections(context));
-      slivers.add(_buildBottomInsetSliver());
+      slivers.add(_buildBottomInsetSliver(context));
       return slivers;
     }
 
@@ -356,21 +356,17 @@ extension _AppScreenStandardMode on _AppScreenState {
       }
     }
 
-    slivers.add(_buildBottomInsetSliver());
+    slivers.add(_buildBottomInsetSliver(context));
     return slivers;
   }
 
-  Widget _buildBottomInsetSliver() {
+  Widget _buildBottomInsetSliver(BuildContext context) {
     return SliverToBoxAdapter(
-      child: Builder(
-        builder: (BuildContext context) {
-          final double dockInset = usesDesktopWindowShell(context)
-              ? DesktopDock.bottomOverlayExtent + 12
-              : 0;
-          return SizedBox(
-            height: MediaQuery.of(context).padding.bottom + 28 + dockInset,
-          );
-        },
+      child: StandardBottomInset(
+        isDesktop: usesDesktopWindowShell(context),
+        navigationVisible: _ui.bottomBarVisibleNotifier,
+        systemBottomInset: MediaQuery.viewPaddingOf(context).bottom,
+        keyboardVisible: MediaQuery.viewInsetsOf(context).bottom > 0,
       ),
     );
   }

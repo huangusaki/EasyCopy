@@ -76,6 +76,7 @@ import 'package:reader/widgets/page_skeleton.dart';
 import 'package:reader/widgets/profile_page_view.dart';
 import 'package:reader/widgets/responsive_layout.dart';
 import 'package:reader/widgets/settings_ui.dart';
+import 'package:reader/widgets/standard_bottom_inset.dart';
 import 'package:reader/widgets/top_notice.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';

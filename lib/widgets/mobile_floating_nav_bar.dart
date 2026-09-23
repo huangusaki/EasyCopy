@@ -16,8 +16,15 @@ class MobileFloatingNavBar extends StatelessWidget {
   });
 
   static const double _barHeight = 62;
+  static const double _minimumBottomMargin = 12;
   static const double _barPadding = 7;
   static const double _pillExtent = 48;
+
+  static double bottomOverlayExtent(double systemBottomInset) =>
+      _barHeight +
+      (systemBottomInset > _minimumBottomMargin
+          ? systemBottomInset
+          : _minimumBottomMargin);
 
   final int selectedIndex;
   final List<AppDestination> destinations;
@@ -30,7 +37,7 @@ class MobileFloatingNavBar extends StatelessWidget {
 
     final Widget bar = SafeArea(
       top: false,
-      minimum: const EdgeInsets.only(bottom: 12),
+      minimum: const EdgeInsets.only(bottom: _minimumBottomMargin),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 18),
         child: ClipRRect(
@@ -104,14 +111,17 @@ class MobileFloatingNavBar extends StatelessWidget {
       valueListenable: visibleListenable,
       child: RepaintBoundary(child: bar),
       builder: (BuildContext context, bool visible, Widget? child) {
-        return AnimatedSlide(
-          duration: const Duration(milliseconds: 300),
-          curve: visible ? Curves.easeOutCubic : Curves.easeInCubic,
-          offset: visible ? Offset.zero : const Offset(0, 1.8),
-          child: AnimatedOpacity(
-            duration: const Duration(milliseconds: 240),
-            opacity: visible ? 1 : 0,
-            child: child,
+        return IgnorePointer(
+          ignoring: !visible,
+          child: AnimatedSlide(
+            duration: const Duration(milliseconds: 300),
+            curve: visible ? Curves.easeOutCubic : Curves.easeInCubic,
+            offset: visible ? Offset.zero : const Offset(0, 1.8),
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 240),
+              opacity: visible ? 1 : 0,
+              child: child,
+            ),
           ),
         );
       },
