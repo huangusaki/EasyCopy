@@ -1,6 +1,5 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
+import 'package:reader/widgets/search_history_panel.dart';
 
 class DesktopSearchField extends StatefulWidget {
   const DesktopSearchField({
@@ -241,7 +240,7 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
             key: _flyoutKey,
             groupId: _tapRegionGroup,
             child: TextFieldTapRegion(
-              child: _HistoryFlyoutPanel(
+              child: SearchHistoryPanel(
                 history: widget.history,
                 onSelect: _submit,
                 onRemove: widget.onRemoveHistoryEntry,
@@ -251,204 +250,6 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
                 },
               ),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HistoryFlyoutPanel extends StatefulWidget {
-  const _HistoryFlyoutPanel({
-    required this.history,
-    required this.onSelect,
-    required this.onRemove,
-    required this.onClear,
-  });
-
-  final List<String> history;
-  final ValueChanged<String> onSelect;
-  final ValueChanged<String> onRemove;
-  final VoidCallback onClear;
-
-  @override
-  State<_HistoryFlyoutPanel> createState() => _HistoryFlyoutPanelState();
-}
-
-class _HistoryFlyoutPanelState extends State<_HistoryFlyoutPanel>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 220),
-  )..forward();
-
-  late final CurvedAnimation _curve = CurvedAnimation(
-    parent: _controller,
-    curve: Curves.easeOutCubic,
-  );
-
-  @override
-  void dispose() {
-    _curve.dispose();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return FadeTransition(
-      opacity: _curve,
-      child: SlideTransition(
-        position: Tween<Offset>(
-          begin: const Offset(0, -0.04),
-          end: Offset.zero,
-        ).animate(_curve),
-        child: ScaleTransition(
-          scale: Tween<double>(begin: 0.97, end: 1).animate(_curve),
-          alignment: Alignment.topCenter,
-          child: Material(
-            type: MaterialType.transparency,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerLow.withValues(
-                      alpha: 0.9,
-                    ),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: colorScheme.outlineVariant.withValues(alpha: 0.4),
-                    ),
-                    boxShadow: <BoxShadow>[
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.16),
-                        blurRadius: 32,
-                        offset: const Offset(0, 12),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Row(
-                        children: <Widget>[
-                          Icon(
-                            Icons.history_rounded,
-                            size: 14,
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            '最近搜索',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const Spacer(),
-                          _RoundIconButton(
-                            icon: Icons.delete_sweep_rounded,
-                            tooltip: '清空历史',
-                            onTap: widget.onClear,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: <Widget>[
-                          for (final String term in widget.history)
-                            _HistoryChip(
-                              term: term,
-                              onTap: () => widget.onSelect(term),
-                              onRemove: () => widget.onRemove(term),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HistoryChip extends StatefulWidget {
-  const _HistoryChip({
-    required this.term,
-    required this.onTap,
-    required this.onRemove,
-  });
-
-  final String term;
-  final VoidCallback onTap;
-  final VoidCallback onRemove;
-
-  @override
-  State<_HistoryChip> createState() => _HistoryChipState();
-}
-
-class _HistoryChipState extends State<_HistoryChip> {
-  bool _isHovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
-          curve: Curves.easeOut,
-          padding: const EdgeInsets.fromLTRB(11, 6, 9, 6),
-          decoration: BoxDecoration(
-            color: _isHovered
-                ? colorScheme.primaryContainer.withValues(alpha: 0.7)
-                : colorScheme.surfaceContainerHigh.withValues(alpha: 0.55),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Text(
-                widget.term,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: _isHovered
-                      ? colorScheme.onPrimaryContainer
-                      : colorScheme.onSurface.withValues(alpha: 0.85),
-                ),
-              ),
-              const SizedBox(width: 4),
-              AnimatedOpacity(
-                duration: const Duration(milliseconds: 140),
-                opacity: _isHovered ? 1 : 0.35,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: widget.onRemove,
-                  child: Icon(
-                    Icons.close_rounded,
-                    size: 13,
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-            ],
           ),
         ),
       ),
@@ -469,7 +270,6 @@ class _RoundIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return Tooltip(
       message: tooltip,
       excludeFromSemantics: true,
@@ -479,7 +279,11 @@ class _RoundIconButton extends StatelessWidget {
         customBorder: const CircleBorder(),
         child: Padding(
           padding: const EdgeInsets.all(3),
-          child: Icon(icon, size: 15, color: colorScheme.onSurfaceVariant),
+          child: Icon(
+            icon,
+            size: 15,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
       ),
     );

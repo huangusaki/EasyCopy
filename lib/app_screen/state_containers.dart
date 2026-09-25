@@ -15,6 +15,9 @@ class AppScreenUiState {
   final FocusNode desktopSearchFocusNode = FocusNode(
     debugLabel: 'desktop-global-search',
   );
+  final FocusNode mobileSearchFocusNode = FocusNode(
+    debugLabel: 'mobile-search',
+  );
   final FocusNode readerShortcutFocusNode = FocusNode(
     debugLabel: 'desktop-reader-shortcuts',
   );
@@ -35,6 +38,7 @@ class AppScreenUiState {
   void dispose() {
     searchController.dispose();
     desktopSearchFocusNode.dispose();
+    mobileSearchFocusNode.dispose();
     readerShortcutFocusNode.dispose();
     standardScrollController.dispose();
     discoverFilterExpandedNotifier.dispose();

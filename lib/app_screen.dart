@@ -70,6 +70,7 @@ import 'package:reader/widgets/desktop/keyboard_shortcuts_page.dart';
 import 'package:reader/widgets/discover_results_sliver.dart';
 import 'package:reader/widgets/download_management_page.dart';
 import 'package:reader/widgets/mobile_floating_nav_bar.dart';
+import 'package:reader/widgets/mobile_search_field.dart';
 import 'package:reader/widgets/motion.dart';
 import 'package:reader/widgets/native_login_screen.dart';
 import 'package:reader/widgets/page_skeleton.dart';

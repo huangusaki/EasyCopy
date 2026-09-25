@@ -322,6 +322,10 @@ extension _AppScreenReaderNavigation on _AppScreenState {
   }
 
   Future<void> _handleBackNavigation() async {
+    if (_ui.mobileSearchFocusNode.hasFocus) {
+      _ui.mobileSearchFocusNode.unfocus();
+      return;
+    }
     if (_isReaderMode) {
       await _runReaderExitTransition(() async {
         await _handleReaderBack();

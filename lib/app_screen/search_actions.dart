@@ -5,6 +5,7 @@ import 'package:reader/app_screen/route_utils.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/services/primary_tab_session_store.dart';
 import 'package:reader/services/search_history_store.dart';
+import 'package:reader/widgets/clear_search_history_dialog.dart';
 
 typedef SearchUriLoader =
     Future<void> Function(
@@ -135,22 +136,9 @@ class AppSearchActions {
     }
     final bool? confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('清空搜索历史'),
-          content: const Text('确认清空发现页的全部搜索历史吗？'),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('清空'),
-            ),
-          ],
-        );
-      },
+      barrierColor: Colors.black.withValues(alpha: 0.32),
+      builder: (BuildContext context) =>
+          ClearSearchHistoryDialog(entryCount: entries.length),
     );
     if (confirmed != true) {
       return;
