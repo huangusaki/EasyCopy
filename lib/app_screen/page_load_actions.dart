@@ -722,7 +722,8 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       resolvedTargetUri,
     );
 
-    if (activeSubview == ProfileSubview.cached) {
+    if (activeSubview == ProfileSubview.cached ||
+        activeSubview == ProfileSubview.blocked) {
       try {
         final ProfilePageData localProfilePage = await _services
             .localProfilePageLoader
@@ -740,7 +741,9 @@ extension _AppScreenPageLoadActions on _AppScreenState {
           switchToTab: _shouldActivateAsyncResultTab(
             requestContext.targetTabIndex,
           ),
-          visibleUri: resolvedTargetUri,
+          visibleUri: activeSubview == ProfileSubview.blocked
+              ? null
+              : resolvedTargetUri,
         );
       } catch (error) {
         await _handlePageLoadFailure(error, requestContext: requestContext);

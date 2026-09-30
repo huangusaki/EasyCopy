@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/app_preferences.dart';
+import 'package:reader/models/blocked_content.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/host_manager.dart';
@@ -50,11 +51,14 @@ class ProfilePageView extends StatelessWidget {
     required this.onOpenCollections,
     required this.onOpenHistoryPage,
     required this.onOpenCachedComicPage,
+    required this.onOpenBlockedPage,
     this.onOpenCollectionsPage,
     this.onOpenHistoryPageNumber,
+    this.onOpenBlockedPageNumber,
     this.onOpenCachedComic,
     this.onDeleteCachedComic,
     this.onDeleteHistory,
+    this.onRemoveBlocked,
     this.isCollectionLoading = false,
     this.versionLabel = '--',
     this.isCheckingForUpdates = false,
@@ -91,11 +95,14 @@ class ProfilePageView extends StatelessWidget {
   final VoidCallback onOpenCollections;
   final VoidCallback onOpenHistoryPage;
   final VoidCallback onOpenCachedComicPage;
+  final VoidCallback onOpenBlockedPage;
   final ValueChanged<int>? onOpenCollectionsPage;
   final ValueChanged<int>? onOpenHistoryPageNumber;
+  final ValueChanged<int>? onOpenBlockedPageNumber;
   final ValueChanged<String>? onOpenCachedComic;
   final ValueChanged<String>? onDeleteCachedComic;
   final ValueChanged<String>? onDeleteHistory;
+  final ValueChanged<BlockedContentItem>? onRemoveBlocked;
   final bool isCollectionLoading;
   final String versionLabel;
   final bool isCheckingForUpdates;
@@ -156,6 +163,10 @@ class ProfilePageView extends StatelessWidget {
       );
     }
 
+    if (activeSubview == ProfileSubview.blocked) {
+      return _buildBlockedSection(context);
+    }
+
     switch (activeSubview) {
       case ProfileSubview.collections:
         return _buildComicCollectionSection(
@@ -177,6 +188,7 @@ class ProfilePageView extends StatelessWidget {
         );
       case ProfileSubview.root:
       case ProfileSubview.cached:
+      case ProfileSubview.blocked:
         break;
     }
 
@@ -347,6 +359,7 @@ class ProfilePageView extends StatelessWidget {
         isCheckingForUpdates: isCheckingForUpdates,
         onCheckForUpdates: onCheckForUpdates,
         onOpenProjectRepository: onOpenProjectRepository,
+        onOpenBlockedPage: onOpenBlockedPage,
       ),
     );
 
@@ -358,6 +371,77 @@ class ProfilePageView extends StatelessWidget {
         }
         return content;
       },
+    );
+  }
+
+  Widget _buildBlockedSection(BuildContext context) {
+    final List<BlockedContentItem> comics = page.blockedItems
+        .where(
+          (BlockedContentItem item) => item.type == BlockedContentType.comic,
+        )
+        .toList(growable: false);
+    final List<BlockedContentItem> authors = page.blockedItems
+        .where(
+          (BlockedContentItem item) => item.type == BlockedContentType.author,
+        )
+        .toList(growable: false);
+    if (comics.isEmpty && authors.isEmpty) {
+      return const AppSurfaceCard(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 28),
+          child: Center(child: Text('还没有屏蔽内容。')),
+        ),
+      );
+    }
+    return Column(
+      children: <Widget>[
+        if (comics.isNotEmpty) _buildBlockedGroup(context, '漫画', comics),
+        if (comics.isNotEmpty && authors.isNotEmpty) const SizedBox(height: 16),
+        if (authors.isNotEmpty) _buildBlockedGroup(context, '作者', authors),
+        if (_shouldShowPager(page.blockedPager)) ...<Widget>[
+          const SizedBox(height: 16),
+          _ProfilePagerBar(
+            pager: page.blockedPager,
+            onOpenPage: onOpenBlockedPageNumber,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildBlockedGroup(
+    BuildContext context,
+    String title,
+    List<BlockedContentItem> items,
+  ) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return AppSurfaceCard(
+      title: title,
+      child: Column(
+        children: <Widget>[
+          for (int index = 0; index < items.length; index += 1) ...<Widget>[
+            if (index > 0)
+              Divider(height: 1, color: colorScheme.outlineVariant),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                items[index].label.isEmpty
+                    ? items[index].key
+                    : items[index].label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: IconButton(
+                tooltip: '解除屏蔽',
+                onPressed: onRemoveBlocked == null
+                    ? null
+                    : () => onRemoveBlocked!(items[index]),
+                icon: const Icon(Icons.remove_circle_outline_rounded),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

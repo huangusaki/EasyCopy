@@ -4,6 +4,8 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/blocked_content_filter.dart';
+import 'package:reader/services/blocked_content_store.dart';
 import 'package:reader/services/navigation_request_guard.dart';
 import 'package:reader/services/page_cache_store.dart';
 import 'package:reader/services/site_page_source.dart';
@@ -67,13 +69,18 @@ class PageRepository {
   PageRepository({
     PageCacheStore? cacheStore,
     required SitePageSource source,
+    BlockedContentStore? blockedContentStore,
     this.memoryCapacity = 48,
   }) : _cacheStore = cacheStore ?? PageCacheStore.instance,
        _source = source,
+       _blockedFilter = BlockedContentFilter(
+         blockedContentStore ?? BlockedContentStore.instance,
+       ),
        assert(memoryCapacity >= 0);
 
   final PageCacheStore _cacheStore;
   final SitePageSource _source;
+  final BlockedContentFilter _blockedFilter;
   final int memoryCapacity;
 
   final LinkedHashMap<PageQueryKey, CachedPageHit> _memoryCache =
@@ -88,13 +95,14 @@ class PageRepository {
   static const String _readerCacheFingerprintVersion = 'reader-v2';
 
   Future<CachedPageHit?> readCached(PageQueryKey key) async {
+    await _blockedFilter.store.ensureInitialized();
     final (int, int) generation = _generationFor(key.authScope);
     final CachedPageHit? inMemory = _memoryCache.remove(key);
     if (inMemory != null &&
         _isSupportedCache(inMemory.envelope) &&
         !inMemory.envelope.isHardExpired(DateTime.now())) {
       _memoryCache[key] = inMemory.copyWith(fromMemory: true);
-      return _memoryCache[key];
+      return _filteredHit(_memoryCache[key]!);
     }
 
     final CachedPageEnvelope? envelope = await _cacheStore.read(
@@ -114,7 +122,7 @@ class PageRepository {
       envelope: envelope,
     );
     _putMemory(hit);
-    return hit;
+    return _filteredHit(hit);
   }
 
   Future<SitePage> loadFresh(
@@ -231,13 +239,14 @@ class PageRepository {
     required (int, int) generation,
     NavigationRequestContext? requestContext,
   }) async {
+    await _blockedFilter.store.ensureInitialized();
     final SitePage page = await _source.load(
       uri,
       authScope: requestedKey.authScope,
       requestContext: requestContext,
     );
     if (generation != _generationFor(requestedKey.authScope)) {
-      return page;
+      return _blockedFilter.apply(page);
     }
 
     final PageQueryKey finalKey = PageQueryKey.forUri(
@@ -252,7 +261,7 @@ class PageRepository {
     );
     await _cacheStore.writeEnvelope(envelope);
     if (generation != _generationFor(requestedKey.authScope)) {
-      return page;
+      return _blockedFilter.apply(page);
     }
 
     final CachedPageHit hit = CachedPageHit(
@@ -264,7 +273,11 @@ class PageRepository {
     if (finalKey != requestedKey) {
       _memoryCache.remove(requestedKey);
     }
-    return page;
+    return _blockedFilter.apply(page);
+  }
+
+  CachedPageHit _filteredHit(CachedPageHit hit) {
+    return hit.copyWith(page: _blockedFilter.apply(hit.page));
   }
 
   Future<void> _revalidateInternal(

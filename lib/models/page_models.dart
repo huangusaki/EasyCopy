@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:reader/models/blocked_content.dart';
 
 part 'page_models/site_pages.dart';
 
@@ -192,6 +193,7 @@ class ComicCardData {
     this.subtitle = '',
     this.secondaryText = '',
     this.badge = '',
+    this.authorLinks = const <LinkAction>[],
   });
 
   factory ComicCardData.fromJson(Map<String, Object?> json) {
@@ -202,6 +204,11 @@ class ComicCardData {
       coverUrl: _stringValue(json['coverUrl']),
       href: _stringValue(json['href']),
       badge: _stringValue(json['badge']),
+      authorLinks: _readList<LinkAction>(
+        json,
+        'authorLinks',
+        LinkAction.fromJson,
+      ),
     );
   }
 
@@ -211,6 +218,10 @@ class ComicCardData {
   final String coverUrl;
   final String href;
   final String badge;
+  final List<LinkAction> authorLinks;
+
+  List<LinkAction> get resolvedAuthors =>
+      authorLinks.isNotEmpty ? authorLinks : authorLinksFromText(subtitle);
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
@@ -220,8 +231,28 @@ class ComicCardData {
       'coverUrl': coverUrl,
       'href': href,
       'badge': badge,
+      'authorLinks': authorLinks
+          .map((LinkAction item) => item.toJson())
+          .toList(),
     };
   }
+}
+
+/// 列表来源只有作者文字时，保留名称供展示和屏蔽使用。
+List<LinkAction> authorLinksFromText(String text) {
+  final String names = text
+      .replaceFirst(RegExp(r'^\s*作者\s*[:：]\s*'), '')
+      .replaceFirst(RegExp(r'\s+等\s*\d+\s*位\s*$'), '')
+      .trim();
+  if (names.isEmpty || names == '--') {
+    return const <LinkAction>[];
+  }
+  return names
+      .split(RegExp(r'\s*(?:/|／|、|,|，)\s*'))
+      .map((String name) => name.trim())
+      .where((String name) => name.isNotEmpty)
+      .map((String name) => LinkAction(label: name, href: ''))
+      .toList(growable: false);
 }
 
 @immutable

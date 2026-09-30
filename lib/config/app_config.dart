@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/host_manager.dart';
 
-enum ProfileSubview { root, collections, history, cached }
+enum ProfileSubview { root, collections, history, cached, blocked }
 
 enum ProfileCollectionSort { readingTime, latestUpdate, alphabetical }
 
@@ -83,6 +83,8 @@ class AppConfig {
         return ProfileSubview.history;
       case 'cached':
         return ProfileSubview.cached;
+      case 'blocked':
+        return ProfileSubview.blocked;
       default:
         return ProfileSubview.root;
     }
@@ -98,6 +100,8 @@ class AppConfig {
         return '浏览历史';
       case ProfileSubview.cached:
         return '已缓存漫画';
+      case ProfileSubview.blocked:
+        return '已屏蔽';
     }
   }
 
@@ -236,6 +240,8 @@ class AppConfig {
         return 'history';
       case ProfileSubview.cached:
         return 'cached';
+      case ProfileSubview.blocked:
+        return 'blocked';
     }
   }
 

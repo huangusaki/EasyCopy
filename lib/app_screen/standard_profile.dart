@@ -20,10 +20,13 @@ extension _AppScreenProfileSections on _AppScreenState {
           onOpenHistoryPage: () => _openProfileSubview(ProfileSubview.history),
           onOpenCachedComicPage: () =>
               _openProfileSubview(ProfileSubview.cached),
+          onOpenBlockedPage: () => _openProfileSubview(ProfileSubview.blocked),
           onOpenCollectionsPage: (int page) =>
               _openProfileSubview(ProfileSubview.collections, page: page),
           onOpenHistoryPageNumber: (int page) =>
               _openProfileSubview(ProfileSubview.history, page: page),
+          onOpenBlockedPageNumber: (int page) =>
+              _openProfileSubview(ProfileSubview.blocked, page: page),
           isCollectionLoading:
               _isLoading &&
               AppConfig.profileSubviewForUri(_currentUri) ==
@@ -73,6 +76,9 @@ extension _AppScreenProfileSections on _AppScreenState {
           onOpenCachedComic: _openCachedComicFromProfile,
           onDeleteCachedComic: _deleteCachedComicFromProfile,
           onDeleteHistory: _deleteLocalHistoryFromProfile,
+          onRemoveBlocked: (BlockedContentItem item) {
+            unawaited(_removeBlockedContent(item));
+          },
         ),
       ),
     ];
@@ -264,6 +270,13 @@ extension _AppScreenProfileSections on _AppScreenState {
 
   void _deleteLocalHistoryFromProfile(String comicHref) {
     unawaited(_confirmDeleteLocalHistory(comicHref));
+  }
+
+  Future<void> _removeBlockedContent(BlockedContentItem item) async {
+    await _services.blockedContentStore.unblock(item);
+    if (mounted) {
+      _showNotice('已解除屏蔽');
+    }
   }
 
   Future<void> _confirmDeleteLocalHistory(String comicHref) async {

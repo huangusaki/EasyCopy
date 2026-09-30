@@ -23,6 +23,7 @@ import 'package:reader/app_screen/wallpaper_actions.dart';
 import 'package:reader/app_screen/widgets.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/app_preferences.dart';
+import 'package:reader/models/blocked_content.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/models/shortcut_preferences.dart';
 import 'package:reader/reader/dependencies.dart';
@@ -30,6 +31,7 @@ import 'package:reader/reader/reader_screen.dart';
 import 'package:reader/services/android_document_tree_bridge.dart';
 import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/app_update_checker.dart';
+import 'package:reader/services/blocked_content_filter.dart';
 import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/debug_trace.dart';
@@ -242,6 +244,9 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
       onNotice: _handleDownloadQueueNotice,
     );
     _preferencesController.addListener(_handlePreferencesChanged);
+    _services.blockedContentStore.revision.addListener(
+      _handleBlockedContentChanged,
+    );
     _requestChineseConversionMode(_preferencesController.chineseConversionMode);
     _searchActions.attach();
     _ui.standardScrollController.addListener(_scrollState.handleStandardScroll);
@@ -255,6 +260,9 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _preferencesController.removeListener(_handlePreferencesChanged);
+    _services.blockedContentStore.revision.removeListener(
+      _handleBlockedContentChanged,
+    );
     _ui.standardScrollController.removeListener(
       _scrollState.handleStandardScroll,
     );

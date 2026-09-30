@@ -11,6 +11,8 @@ Future<void> showComicQuickPreview(
   BuildContext context, {
   required ComicCardData item,
   required VoidCallback onOpenDetail,
+  VoidCallback? onBlockComic,
+  ValueChanged<LinkAction>? onBlockAuthor,
 }) {
   unawaited(HapticFeedback.mediumImpact());
   return showModalBottomSheet<void>(
@@ -26,6 +28,8 @@ Future<void> showComicQuickPreview(
           return _ComicQuickPreviewSheet(
             item: item,
             onOpenDetail: onOpenDetail,
+            onBlockComic: onBlockComic,
+            onBlockAuthor: onBlockAuthor,
           );
         },
       );
@@ -37,14 +41,19 @@ class _ComicQuickPreviewSheet extends StatelessWidget {
   const _ComicQuickPreviewSheet({
     required this.item,
     required this.onOpenDetail,
+    this.onBlockComic,
+    this.onBlockAuthor,
   });
 
   final ComicCardData item;
   final VoidCallback onOpenDetail;
+  final VoidCallback? onBlockComic;
+  final ValueChanged<LinkAction>? onBlockAuthor;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final List<LinkAction> authors = item.resolvedAuthors;
 
     return ClipRRect(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
@@ -81,7 +90,7 @@ class _ComicQuickPreviewSheet extends StatelessWidget {
           ),
           SafeArea(
             top: false,
-            child: Padding(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -206,6 +215,59 @@ class _ComicQuickPreviewSheet extends StatelessWidget {
                       label: const Text('查看详情'),
                     ),
                   ),
+                  if (onBlockComic != null ||
+                      (authors.isNotEmpty &&
+                          onBlockAuthor != null)) ...<Widget>[
+                    const SizedBox(height: 10),
+                    if (onBlockComic != null)
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.of(context).pop();
+                            onBlockComic!();
+                          },
+                          icon: const Icon(Icons.visibility_off_rounded),
+                          label: const Text('屏蔽漫画'),
+                        ),
+                      ),
+                    if (authors.isNotEmpty &&
+                        onBlockAuthor != null) ...<Widget>[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '屏蔽作者',
+                          style: TextStyle(
+                            color: colorScheme.onSurface.withValues(
+                              alpha: 0.62,
+                            ),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      for (final LinkAction author in authors)
+                        SizedBox(
+                          width: double.infinity,
+                          child: TextButton.icon(
+                            onPressed: () {
+                              Navigator.of(context).pop();
+                              onBlockAuthor!(author);
+                            },
+                            icon: const Icon(Icons.person_off_rounded),
+                            label: Text(
+                              ChineseConverter.instance.convert(author.label),
+                              textAlign: TextAlign.left,
+                            ),
+                            style: TextButton.styleFrom(
+                              alignment: Alignment.centerLeft,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ],
                 ],
               ),
             ),

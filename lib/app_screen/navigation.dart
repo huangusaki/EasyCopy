@@ -9,11 +9,34 @@ extension _AppScreenNavigation on _AppScreenState {
 
   Uri get _currentUri => _currentEntry.uri;
 
-  SitePage? get _page => _currentEntry.page;
+  SitePage? get _page {
+    final SitePage? page = _currentEntry.page;
+    return page == null
+        ? null
+        : BlockedContentFilter(_services.blockedContentStore).apply(page);
+  }
 
   bool get _isLoading => _currentEntry.isLoading;
 
   String? get _errorMessage => _currentEntry.errorMessage;
+
+  void _handleBlockedContentChanged() {
+    if (!mounted) {
+      return;
+    }
+    _setStateIfMounted();
+    if (isProfileUri(_currentUri) &&
+        AppConfig.profileSubviewForUri(_currentUri) == ProfileSubview.blocked) {
+      unawaited(
+        _loadProfilePage(
+          targetUri: _currentUri,
+          forceRefresh: true,
+          preserveVisiblePage: true,
+          historyMode: NavigationIntent.preserve,
+        ),
+      );
+    }
+  }
 
   String _authScopeForUri(Uri uri) {
     if (isProfileUri(uri) || _routes.isUserScopedDetailUri(uri)) {

@@ -1,7 +1,9 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:reader/config/app_config.dart';
+import 'package:reader/models/blocked_content.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/uri_keys.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
@@ -28,6 +30,7 @@ class LocalLibraryStore {
   static const String _collectionsTable = 'collections';
   static const String _historyTable = 'browse_history';
   static const String _metaTable = 'library_meta';
+  static const String _blockedTable = 'blocked_content';
 
   final LocalLibraryDirectoryProvider _directoryProvider;
   final LocalLibraryNowProvider _now;
@@ -35,6 +38,10 @@ class LocalLibraryStore {
 
   Future<void>? _initialization;
   sqflite.Database? _database;
+  List<BlockedContentItem> _blockedItems = const <BlockedContentItem>[];
+  final ValueNotifier<int> blockedRevisionNotifier = ValueNotifier<int>(0);
+
+  List<BlockedContentItem> get blockedItems => _blockedItems;
 
   Future<void> ensureInitialized() {
     return _initialization ??= _initialize();
@@ -44,6 +51,7 @@ class LocalLibraryStore {
     final sqflite.Database? database = _database;
     _database = null;
     _initialization = null;
+    _blockedItems = const <BlockedContentItem>[];
     if (database == null) {
       return;
     }
@@ -236,6 +244,80 @@ class LocalLibraryStore {
       _historyTable,
       where: 'id = ?',
       whereArgs: <Object>[_entryId(normalizedScope, comicPathKey)],
+    );
+  }
+
+  Future<void> upsertBlocked(BlockedContentItem item) async {
+    await ensureInitialized();
+    final String type = item.type.name;
+    final String key = item.key.trim();
+    if (key.isEmpty) {
+      return;
+    }
+    await _database!.insert(_blockedTable, <String, Object?>{
+      'id': '$type::$key',
+      'type': type,
+      'item_key': key,
+      'label': item.label.trim(),
+      'href': item.href.trim(),
+      'added_at_ms': item.addedAtMs > 0
+          ? item.addedAtMs
+          : _now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
+    await _reloadBlockedItems(notify: true);
+  }
+
+  Future<void> removeBlocked(BlockedContentType type, String key) async {
+    await ensureInitialized();
+    final String normalizedKey = key.trim();
+    if (normalizedKey.isEmpty) {
+      return;
+    }
+    await _database!.delete(
+      _blockedTable,
+      where: 'type = ? AND item_key = ?',
+      whereArgs: <Object>[type.name, normalizedKey],
+    );
+    await _reloadBlockedItems(notify: true);
+  }
+
+  Future<List<BlockedContentItem>> readBlocked({
+    BlockedContentType? type,
+  }) async {
+    await ensureInitialized();
+    if (type == null) {
+      return List<BlockedContentItem>.unmodifiable(_blockedItems);
+    }
+    return _blockedItems
+        .where((BlockedContentItem item) => item.type == type)
+        .toList(growable: false);
+  }
+
+  bool isBlocked(BlockedContentType type, String key) {
+    final String normalizedKey = key.trim();
+    return normalizedKey.isNotEmpty &&
+        _blockedItems.any(
+          (BlockedContentItem item) =>
+              item.type == type && item.key == normalizedKey,
+        );
+  }
+
+  Future<({List<BlockedContentItem> items, int total, int page})>
+  readBlockedPage({required int page, int pageSize = 20}) async {
+    await ensureInitialized();
+    final int effectivePageSize = pageSize.clamp(1, 100);
+    final int total = _blockedItems.length;
+    final int totalPages = total == 0
+        ? 1
+        : (total + effectivePageSize - 1) ~/ effectivePageSize;
+    final int effectivePage = page.clamp(1, totalPages);
+    return (
+      items: _blockedItems
+          .skip((effectivePage - 1) * effectivePageSize)
+          .take(effectivePageSize)
+          .toList(growable: false),
+      total: total,
+      page: effectivePage,
     );
   }
 
@@ -495,7 +577,7 @@ class LocalLibraryStore {
     _database = await databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
-        version: 4,
+        version: 5,
         onCreate: (sqflite.Database db, int version) async {
           await db.execute('''
             CREATE TABLE IF NOT EXISTS $_collectionsTable (
@@ -548,6 +630,21 @@ class LocalLibraryStore {
               PRIMARY KEY(scope, key)
             )
           ''');
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS $_blockedTable (
+              id TEXT PRIMARY KEY,
+              type TEXT NOT NULL,
+              item_key TEXT NOT NULL,
+              label TEXT NOT NULL,
+              href TEXT NOT NULL,
+              added_at_ms INTEGER NOT NULL,
+              UNIQUE(type, item_key)
+            )
+          ''');
+          await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_blocked_type_added_at
+            ON $_blockedTable(type, added_at_ms DESC)
+          ''');
         },
         onUpgrade: (sqflite.Database db, int oldVersion, int newVersion) async {
           if (oldVersion < 2) {
@@ -576,9 +673,51 @@ class LocalLibraryStore {
               ON $_collectionsTable(scope, title COLLATE NOCASE)
             ''');
           }
+          if (oldVersion < 5) {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS $_blockedTable (
+                id TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                item_key TEXT NOT NULL,
+                label TEXT NOT NULL,
+                href TEXT NOT NULL,
+                added_at_ms INTEGER NOT NULL,
+                UNIQUE(type, item_key)
+              )
+            ''');
+            await db.execute('''
+              CREATE INDEX IF NOT EXISTS idx_blocked_type_added_at
+              ON $_blockedTable(type, added_at_ms DESC)
+            ''');
+          }
         },
       ),
     );
+    await _reloadBlockedItems();
+  }
+
+  Future<void> _reloadBlockedItems({bool notify = false}) async {
+    final List<Map<String, Object?>> rows = await _database!.query(
+      _blockedTable,
+      orderBy: 'type ASC, added_at_ms DESC',
+    );
+    _blockedItems = rows
+        .map(
+          (Map<String, Object?> row) => BlockedContentItem(
+            type: row['type'] == BlockedContentType.author.name
+                ? BlockedContentType.author
+                : BlockedContentType.comic,
+            key: (row['item_key'] as String?)?.trim() ?? '',
+            label: (row['label'] as String?)?.trim() ?? '',
+            href: (row['href'] as String?)?.trim() ?? '',
+            addedAtMs: (row['added_at_ms'] as num?)?.toInt() ?? 0,
+          ),
+        )
+        .where((BlockedContentItem item) => item.key.isNotEmpty)
+        .toList(growable: false);
+    if (notify) {
+      blockedRevisionNotifier.value += 1;
+    }
   }
 
   Future<Map<String, Object?>> _historyRowForId(String id) async {

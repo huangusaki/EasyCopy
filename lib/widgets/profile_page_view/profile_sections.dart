@@ -14,6 +14,7 @@ class _SettingsCard extends StatelessWidget {
     required this.isCheckingForUpdates,
     required this.onCheckForUpdates,
     required this.onOpenProjectRepository,
+    required this.onOpenBlockedPage,
   });
 
   final AppThemePreference themePreference;
@@ -27,6 +28,7 @@ class _SettingsCard extends StatelessWidget {
   final bool isCheckingForUpdates;
   final VoidCallback? onCheckForUpdates;
   final VoidCallback? onOpenProjectRepository;
+  final VoidCallback onOpenBlockedPage;
 
   @override
   Widget build(BuildContext context) {
@@ -54,6 +56,11 @@ class _SettingsCard extends StatelessWidget {
       ),
       if (hostEntry != null) hostEntry!,
       _SettingsEntryRow(label: '当前版本', valueLabel: versionLabel),
+      _SettingsEntryRow(
+        label: '已屏蔽',
+        onTap: onOpenBlockedPage,
+        trailing: const Icon(Icons.chevron_right_rounded),
+      ),
       _SettingsEntryRow(
         label: '检查更新',
         onTap: onCheckForUpdates,

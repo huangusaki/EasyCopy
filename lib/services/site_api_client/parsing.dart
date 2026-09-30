@@ -191,6 +191,7 @@ extension _SiteApiParsing on SiteApiClient {
       ]),
       coverUrl: pickString(source, <String>['cover', 'cover_url', 'image']),
       href: _buildComicHref(pathWord, source, item),
+      authorLinks: _searchAuthorLinks(source),
     );
   }
 
@@ -319,5 +320,43 @@ extension _SiteApiParsing on SiteApiClient {
       }
     }
     return pickString(source, const <String>['author_name', 'author']);
+  }
+
+  List<LinkAction> _searchAuthorLinks(Map<String, Object?> source) {
+    final Object? authorValue = source['author'];
+    if (authorValue is! List) {
+      return const <LinkAction>[];
+    }
+    return authorValue
+        .whereType<Map>()
+        .map((Map value) {
+          final Map<String, Object?> author = value.map(
+            (Object? key, Object? nested) => MapEntry(key.toString(), nested),
+          );
+          final String label = pickString(author, const <String>[
+            'name',
+            'author_name',
+            'title',
+          ]);
+          final String directHref = pickString(author, const <String>[
+            'href',
+            'url',
+          ]);
+          final String pathWord = pickString(author, const <String>[
+            'path_word',
+            'pathWord',
+            'slug',
+          ]);
+          final String href = directHref.isNotEmpty
+              ? AppConfig.resolveNavigationUri(directHref).toString()
+              : pathWord.isEmpty
+              ? ''
+              : AppConfig.resolvePath('/author/$pathWord').toString();
+          return LinkAction(label: label, href: href);
+        })
+        .where((LinkAction author) {
+          return author.label.isNotEmpty;
+        })
+        .toList(growable: false);
   }
 }

@@ -213,6 +213,15 @@ const String _pageExtractionScriptTemplate = r"""
       queryText(container, '.dailyRecommendation-span') ||
       queryText(container, '.oneLines');
     const secondaryText = queryText(container, '.update span');
+    const authorLinks = Array.from(
+      container.querySelectorAll('a[href*="/author/"]'),
+    )
+      .map((author) => ({
+        label: text(author),
+        href: linkUrl(author),
+        active: false,
+      }))
+      .filter((author) => author.label && author.href);
 
     return {
       title,
@@ -220,6 +229,7 @@ const String _pageExtractionScriptTemplate = r"""
       secondaryText,
       coverUrl: imageUrl(container.querySelector('img')),
       href: linkUrl(anchor),
+      authorLinks,
     };
   };
   const collectComicCards = (root, selector) =>

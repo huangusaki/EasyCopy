@@ -157,8 +157,34 @@ extension _AppScreenPageSections on _AppScreenState {
         context,
         item: item,
         onOpenDetail: () => _navigateToHref(item.href),
+        onBlockComic: () {
+          unawaited(_blockComic(item));
+        },
+        onBlockAuthor: (LinkAction author) {
+          unawaited(_blockAuthor(author));
+        },
       ),
     );
+  }
+
+  Future<void> _blockComic(ComicCardData item) async {
+    await _services.blockedContentStore.blockComic(
+      href: item.href,
+      title: item.title,
+    );
+    if (mounted) {
+      _showNotice('已屏蔽漫画');
+    }
+  }
+
+  Future<void> _blockAuthor(LinkAction author) async {
+    await _services.blockedContentStore.blockAuthor(
+      label: author.label,
+      href: author.href,
+    );
+    if (mounted) {
+      _showNotice('已屏蔽作者');
+    }
   }
 
   void _previewComicByHref(List<ComicCardData> items, String href) {

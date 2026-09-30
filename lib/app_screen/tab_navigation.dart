@@ -469,7 +469,7 @@ extension _AppScreenTabNavigation on _AppScreenState {
       );
       if (!shouldResetToRoot &&
           profileEntry.page != null &&
-          !profileNeedsAccountRefresh(
+          !profileNeedsRefresh(
             uri: profileEntry.uri,
             page: profileEntry.page,
             isAuthenticated: _services.session.isAuthenticated,

@@ -1,6 +1,7 @@
 import 'package:reader/models/page_models.dart';
 import 'package:reader/reader/dependencies.dart';
 import 'package:reader/services/app_preferences_controller.dart';
+import 'package:reader/services/blocked_content_store.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/desktop_page_extractor.dart';
 import 'package:reader/services/download_queue_store.dart';
@@ -28,6 +29,7 @@ class AppScreenServices {
     SiteApiClient? siteApiClient,
     ReaderProgressStore? readerProgressStore,
     LocalLibraryStore? localLibraryStore,
+    BlockedContentStore? blockedContentStore,
     LocalProfilePageLoader? localProfilePageLoader,
     SearchHistoryStore? searchHistoryStore,
     ComicDownloadService? downloadService,
@@ -48,6 +50,9 @@ class AppScreenServices {
             : SiteApiClient(session: resolvedSession));
     final LocalLibraryStore resolvedLibraryStore =
         localLibraryStore ?? LocalLibraryStore.instance;
+    final BlockedContentStore resolvedBlockedStore =
+        blockedContentStore ??
+        BlockedContentStore(libraryStore: resolvedLibraryStore);
     final DownloadStorageService resolvedStorageService =
         downloadStorageService ?? DownloadStorageService.instance;
     final DesktopPageExtractor resolvedDesktopExtractor =
@@ -63,6 +68,7 @@ class AppScreenServices {
       siteApiClient: resolvedApiClient,
       readerProgressStore: readerProgressStore ?? ReaderProgressStore.instance,
       localLibraryStore: resolvedLibraryStore,
+      blockedContentStore: resolvedBlockedStore,
       localProfilePageLoader:
           localProfilePageLoader ??
           LocalProfilePageLoader(
@@ -104,6 +110,7 @@ class AppScreenServices {
     required this.siteApiClient,
     required this.readerProgressStore,
     required this.localLibraryStore,
+    required this.blockedContentStore,
     required this.localProfilePageLoader,
     required this.searchHistoryStore,
     required this.downloadService,
@@ -120,6 +127,7 @@ class AppScreenServices {
   final SiteApiClient siteApiClient;
   final ReaderProgressStore readerProgressStore;
   final LocalLibraryStore localLibraryStore;
+  final BlockedContentStore blockedContentStore;
   final LocalProfilePageLoader localProfilePageLoader;
   final SearchHistoryStore searchHistoryStore;
   final ComicDownloadService downloadService;
@@ -148,6 +156,7 @@ class AppScreenServices {
   }) {
     return PageRepository(
       cacheStore: pageCacheStore,
+      blockedContentStore: blockedContentStore,
       source: RoutedSitePageSource(
         apiClient: siteApiClient,
         profileLoader: localProfilePageLoader.loadProfile,

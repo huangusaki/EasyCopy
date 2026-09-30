@@ -541,6 +541,8 @@ class ProfilePageData extends SitePage {
     this.historyPager = const PagerData(),
     this.collectionsTotal = 0,
     this.historyTotal = 0,
+    this.blockedItems = const <BlockedContentItem>[],
+    this.blockedPager = const PagerData(),
     this.message = '',
   }) : super(type: SitePageType.profile);
 
@@ -569,6 +571,12 @@ class ProfilePageData extends SitePage {
       historyPager: PagerData.fromJson(_mapValue(json['historyPager'])),
       collectionsTotal: _intValue(json['collectionsTotal']),
       historyTotal: _intValue(json['historyTotal']),
+      blockedItems: _readList<BlockedContentItem>(
+        json,
+        'blockedItems',
+        BlockedContentItem.fromJson,
+      ),
+      blockedPager: PagerData.fromJson(_mapValue(json['blockedPager'])),
       message: _stringValue(json['message']),
     );
   }
@@ -595,6 +603,8 @@ class ProfilePageData extends SitePage {
   final PagerData historyPager;
   final int collectionsTotal;
   final int historyTotal;
+  final List<BlockedContentItem> blockedItems;
+  final PagerData blockedPager;
   final String message;
 
   ProfilePageData copyWith({
@@ -611,6 +621,8 @@ class ProfilePageData extends SitePage {
     PagerData? historyPager,
     int? collectionsTotal,
     int? historyTotal,
+    List<BlockedContentItem>? blockedItems,
+    PagerData? blockedPager,
     String? message,
   }) {
     return ProfilePageData(
@@ -627,6 +639,8 @@ class ProfilePageData extends SitePage {
       historyPager: historyPager ?? this.historyPager,
       collectionsTotal: collectionsTotal ?? this.collectionsTotal,
       historyTotal: historyTotal ?? this.historyTotal,
+      blockedItems: blockedItems ?? this.blockedItems,
+      blockedPager: blockedPager ?? this.blockedPager,
       message: message ?? this.message,
     );
   }
@@ -650,6 +664,10 @@ class ProfilePageData extends SitePage {
       'historyPager': historyPager.toJson(),
       'collectionsTotal': collectionsTotal,
       'historyTotal': historyTotal,
+      'blockedItems': blockedItems
+          .map((BlockedContentItem item) => item.toJson())
+          .toList(),
+      'blockedPager': blockedPager.toJson(),
       'message': message,
     };
   }

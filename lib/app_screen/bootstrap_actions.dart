@@ -79,6 +79,7 @@ extension _AppScreenBootstrapActions on _AppScreenState {
       _preferencesController.ensureInitialized(),
       _services.readerProgressStore.ensureInitialized(),
       _services.localLibraryStore.ensureInitialized(),
+      _services.blockedContentStore.ensureInitialized(),
       _services.searchHistoryStore.ensureInitialized(),
       PageCacheStore.instance.ensureInitialized(),
     ]);

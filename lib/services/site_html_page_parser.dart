@@ -813,6 +813,17 @@ class SiteHtmlPageParser {
       secondaryText: _queryText(container, '.update span'),
       coverUrl: _imageUrl(uri, _querySelector(container, 'img')),
       href: href,
+      authorLinks: _querySelectorAll(container, 'a[href*="/author/"]')
+          .map((dom.Element author) {
+            return LinkAction(
+              label: _text(author),
+              href: _linkUrl(uri, author),
+            );
+          })
+          .where((LinkAction author) {
+            return author.label.isNotEmpty && author.href.isNotEmpty;
+          })
+          .toList(growable: false),
     );
   }
 
@@ -857,6 +868,22 @@ class SiteHtmlPageParser {
               )
               .where((String value) => value.isNotEmpty)
               .toList(growable: false);
+          final List<LinkAction> authorLinks = authors
+              .map((Map<String, Object?> author) {
+                final String label = _stringValue(author['name']);
+                final String href = _stringValue(author['href']).isNotEmpty
+                    ? _stringValue(author['href'])
+                    : _stringValue(author['path_word']).isEmpty
+                    ? ''
+                    : AppConfig.resolvePath(
+                        '/author/${_stringValue(author['path_word'])}',
+                      ).toString();
+                return LinkAction(label: label, href: href);
+              })
+              .where((LinkAction author) {
+                return author.label.isNotEmpty;
+              })
+              .toList(growable: false);
           final String subtitle = authorNames.isEmpty
               ? '作者：--'
               : authorNames.length == 1
@@ -868,6 +895,7 @@ class SiteHtmlPageParser {
             subtitle: subtitle,
             coverUrl: _stringValue(item['cover']),
             href: AppConfig.resolvePath('/comic/$pathWord').toString(),
+            authorLinks: authorLinks,
           );
         })
         .whereType<ComicCardData>()

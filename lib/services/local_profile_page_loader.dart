@@ -28,7 +28,9 @@ class LocalProfilePageLoader {
       authScope: authScope,
     );
     final ProfileSubview view = AppConfig.profileSubviewForUri(uri);
-    if (!localPage.isLoggedIn || view == ProfileSubview.cached) {
+    if (!localPage.isLoggedIn ||
+        view == ProfileSubview.cached ||
+        view == ProfileSubview.blocked) {
       return localPage;
     }
 
@@ -55,6 +57,25 @@ class LocalProfilePageLoader {
     final bool isLoggedIn = authScope != LocalLibraryStore.guestScope;
     final String guestScope = LocalLibraryStore.guestScope;
     final String continueScope = LocalLibraryStore.continueReadingScope;
+
+    if (view == ProfileSubview.blocked) {
+      final blockedPage = await _libraryStore.readBlockedPage(page: activePage);
+      return ProfilePageData(
+        title: '已屏蔽',
+        uri: AppConfig.buildProfileUri(
+          view: view,
+          page: blockedPage.page,
+        ).toString(),
+        isLoggedIn: isLoggedIn,
+        blockedItems: blockedPage.items,
+        blockedPager: _buildPager(
+          view: view,
+          currentPage: blockedPage.page,
+          totalItems: blockedPage.total,
+          pageSize: 20,
+        ),
+      );
+    }
 
     ProfileHistoryItem? continueReading;
     if (view == ProfileSubview.root) {
@@ -144,6 +165,7 @@ class LocalProfilePageLoader {
           historyTotal: historyTotal,
         );
       case ProfileSubview.cached:
+      case ProfileSubview.blocked:
       case ProfileSubview.root:
         return ProfilePageData(
           title: '我的',
