@@ -34,7 +34,6 @@ class HomePageData extends SitePage {
   HomePageData({
     required super.title,
     required super.uri,
-    required this.heroBanners,
     required this.sections,
   }) : super(type: SitePageType.home);
 
@@ -42,11 +41,6 @@ class HomePageData extends SitePage {
     return HomePageData(
       title: _stringValue(json['title'], fallback: '首页'),
       uri: _stringValue(json['uri']),
-      heroBanners: _readList<HeroBannerData>(
-        json,
-        'heroBanners',
-        HeroBannerData.fromJson,
-      ),
       sections:
           _readList<ComicSectionData>(
                 json,
@@ -63,7 +57,6 @@ class HomePageData extends SitePage {
     );
   }
 
-  final List<HeroBannerData> heroBanners;
   final List<ComicSectionData> sections;
 
   @override
@@ -72,9 +65,6 @@ class HomePageData extends SitePage {
       'type': 'home',
       'title': title,
       'uri': uri,
-      'heroBanners': heroBanners
-          .map((HeroBannerData banner) => banner.toJson())
-          .toList(),
       'sections': sections
           .map((ComicSectionData section) => section.toJson())
           .toList(),
@@ -89,7 +79,6 @@ class DiscoverPageData extends SitePage {
     required this.filters,
     required this.items,
     required this.pager,
-    required this.spotlight,
   }) : super(type: SitePageType.discover);
 
   factory DiscoverPageData.fromJson(Map<String, Object?> json) {
@@ -103,18 +92,12 @@ class DiscoverPageData extends SitePage {
       ),
       items: _readList<ComicCardData>(json, 'items', ComicCardData.fromJson),
       pager: PagerData.fromJson(_mapValue(json['pager'])),
-      spotlight: _readList<ComicCardData>(
-        json,
-        'spotlight',
-        ComicCardData.fromJson,
-      ),
     );
   }
 
   final List<FilterGroupData> filters;
   final List<ComicCardData> items;
   final PagerData pager;
-  final List<ComicCardData> spotlight;
 
   DiscoverPageData copyWith({
     String? title,
@@ -122,7 +105,6 @@ class DiscoverPageData extends SitePage {
     List<FilterGroupData>? filters,
     List<ComicCardData>? items,
     PagerData? pager,
-    List<ComicCardData>? spotlight,
   }) {
     return DiscoverPageData(
       title: title ?? this.title,
@@ -130,7 +112,6 @@ class DiscoverPageData extends SitePage {
       filters: filters ?? this.filters,
       items: items ?? this.items,
       pager: pager ?? this.pager,
-      spotlight: spotlight ?? this.spotlight,
     );
   }
 
@@ -145,9 +126,6 @@ class DiscoverPageData extends SitePage {
           .toList(),
       'items': items.map((ComicCardData item) => item.toJson()).toList(),
       'pager': pager.toJson(),
-      'spotlight': spotlight
-          .map((ComicCardData item) => item.toJson())
-          .toList(),
     };
   }
 }

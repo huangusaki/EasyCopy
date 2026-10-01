@@ -14,6 +14,15 @@ extension ComicCacheLibraryOps on ComicDownloadService {
       );
       final List<Map<String, Object?>>? previousIndexedEntries =
           await _cachedLibraryIndexStore.read(storageKey);
+      // The old SAF key omitted the selected relative root. Use it only for
+      // metadata after scanning the actual root, never as an authoritative list.
+      final String legacyKey = _storageService.legacyStorageKeyForState(
+        storageState,
+      );
+      final List<Map<String, Object?>>? legacyEntries =
+          previousIndexedEntries == null && legacyKey != storageKey
+          ? await _cachedLibraryIndexStore.read(legacyKey)
+          : null;
       final List<Map<String, Object?>>? indexedEntries = forceRescan
           ? null
           : previousIndexedEntries;
@@ -49,7 +58,7 @@ extension ComicCacheLibraryOps on ComicDownloadService {
       final List<CachedComicLibraryEntry> comics = _buildLibraryFromManifests(
         manifests,
         previousEntries:
-            previousIndexedEntries
+            (previousIndexedEntries ?? legacyEntries)
                 ?.map(CachedComicLibraryEntry.fromJson)
                 .toList(growable: false) ??
             const <CachedComicLibraryEntry>[],
@@ -211,12 +220,6 @@ extension ComicCacheLibraryOps on ComicDownloadService {
             if (_comicKeyForUri(entry.comicHref).isNotEmpty)
               _comicKeyForUri(entry.comicHref): entry,
         };
-    final Map<String, CachedComicLibraryEntry> previousEntriesByTitle =
-        <String, CachedComicLibraryEntry>{
-          for (final CachedComicLibraryEntry entry in previousEntries)
-            if (entry.comicTitle.isNotEmpty) entry.comicTitle: entry,
-        };
-
     return grouped.entries
         .map((MapEntry<String, List<CachedChapterEntry>> entry) {
           final List<CachedChapterEntry> chapters =
@@ -225,8 +228,7 @@ extension ComicCacheLibraryOps on ComicDownloadService {
                     right.downloadedAt.compareTo(left.downloadedAt),
               );
           final CachedComicLibraryEntry? previousEntry =
-              previousEntriesByKey[entry.key] ??
-              previousEntriesByTitle[comicTitles[entry.key] ?? ''];
+              previousEntriesByKey[entry.key];
           return CachedComicLibraryEntry(
             comicTitle: comicTitles[entry.key] ?? '未命名漫画',
             comicHref: comicHrefs[entry.key] ?? '',
@@ -326,14 +328,9 @@ extension ComicCacheLibraryOps on ComicDownloadService {
           targetComicKey.isNotEmpty &&
           _comicKeyForUri(entry.comicHref) == targetComicKey,
     );
-    CachedComicLibraryEntry? comic = comicIndex >= 0
+    final CachedComicLibraryEntry? comic = comicIndex >= 0
         ? comics[comicIndex]
         : null;
-    comic ??= comics.cast<CachedComicLibraryEntry?>().firstWhere(
-      (CachedComicLibraryEntry? entry) =>
-          entry != null && entry.comicTitle == comicTitle,
-      orElse: () => null,
-    );
     final List<CachedChapterEntry> chapters =
         (comic?.chapters ?? const <CachedChapterEntry>[]).toList(
           growable: true,
@@ -360,13 +357,6 @@ extension ComicCacheLibraryOps on ComicDownloadService {
     );
     if (comicIndex >= 0) {
       comics[comicIndex] = nextComic;
-    } else if (comic != null) {
-      final int fallbackIndex = comics.indexOf(comic);
-      if (fallbackIndex >= 0) {
-        comics[fallbackIndex] = nextComic;
-      } else {
-        comics.add(nextComic);
-      }
     } else {
       comics.add(nextComic);
     }
@@ -424,48 +414,6 @@ extension ComicCacheLibraryOps on ComicDownloadService {
     );
   }
 
-  Future<void> _removeComicFromIndex({
-    required String storageKey,
-    required String comicTitle,
-    String comicHref = '',
-    String comicRelativePath = '',
-  }) async {
-    final String targetComicKey = _comicKeyForUri(comicHref);
-    final List<CachedComicLibraryEntry> comics = await _readCachedLibraryIndex(
-      storageKey,
-    );
-    if (comics.isEmpty) {
-      return;
-    }
-    final List<CachedComicLibraryEntry> nextComics = comics
-        .where((CachedComicLibraryEntry comic) {
-          if (targetComicKey.isNotEmpty &&
-              _comicKeyForUri(comic.comicHref) == targetComicKey) {
-            return false;
-          }
-          if (comic.comicTitle == comicTitle) {
-            return false;
-          }
-          if (comicRelativePath.isNotEmpty &&
-              comic.chapters.any(
-                (CachedChapterEntry chapter) =>
-                    chapter.directoryPath == comicRelativePath ||
-                    chapter.directoryPath.startsWith('$comicRelativePath/'),
-              )) {
-            return false;
-          }
-          return true;
-        })
-        .toList(growable: false);
-    await _writeCachedLibraryIndex(storageKey, nextComics);
-    if (comicRelativePath.isNotEmpty) {
-      await _cachedChapterLocatorStore.removeComicDirectory(
-        storageKey: storageKey,
-        comicRelativePath: comicRelativePath,
-      );
-    }
-  }
-
   Future<List<CachedComicLibraryEntry>> _readCachedLibraryIndex(
     String storageKey,
   ) async {
@@ -477,6 +425,18 @@ extension ComicCacheLibraryOps on ComicDownloadService {
     return rawEntries
         .map(CachedComicLibraryEntry.fromJson)
         .toList(growable: true);
+  }
+
+  Future<List<CachedComicLibraryEntry>> _readCachedLibraryMetadata(
+    DownloadStorageState state,
+  ) async {
+    final String key = _storageService.storageKeyForState(state);
+    final List<CachedComicLibraryEntry> entries = await _readCachedLibraryIndex(
+      key,
+    );
+    if (entries.isNotEmpty) return entries;
+    final String legacyKey = _storageService.legacyStorageKeyForState(state);
+    return legacyKey == key ? entries : _readCachedLibraryIndex(legacyKey);
   }
 
   Future<void> _writeCachedLibraryIndex(

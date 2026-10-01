@@ -244,11 +244,14 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
       onNotice: _handleDownloadQueueNotice,
     );
     _preferencesController.addListener(_handlePreferencesChanged);
+    _services.readerProgressStore.chapterRevision.addListener(
+      _handleReaderChaptersChanged,
+    );
+    _library.cachedComicsNotifier.addListener(_handleCachedComicsChanged);
     _services.blockedContentStore.revision.addListener(
       _handleBlockedContentChanged,
     );
     _requestChineseConversionMode(_preferencesController.chineseConversionMode);
-    _searchActions.attach();
     _ui.standardScrollController.addListener(_scrollState.handleStandardScroll);
     unawaited(_loadAppVersionInfo());
     unawaited(DisplayModeService.requestHighRefreshRate());
@@ -260,6 +263,10 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _preferencesController.removeListener(_handlePreferencesChanged);
+    _services.readerProgressStore.chapterRevision.removeListener(
+      _handleReaderChaptersChanged,
+    );
+    _library.cachedComicsNotifier.removeListener(_handleCachedComicsChanged);
     _services.blockedContentStore.revision.removeListener(
       _handleBlockedContentChanged,
     );
@@ -269,6 +276,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
     _searchActions.dispose();
     _ui.dispose();
     _downloadQueueManager.dispose();
+    _library.dispose();
     super.dispose();
   }
 
@@ -517,6 +525,8 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
                                     nextHref: nextHref,
                                     catalogHref: catalogHref,
                                     sourceTabIndex: _nav.selectedIndex,
+                                    // 换章复用当前阅读页，不增加返回层级。
+                                    historyMode: NavigationIntent.preserve,
                                   );
                                 },
                             onRequestAuth: _openAuthFlow,

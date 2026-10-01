@@ -28,14 +28,10 @@ class BlockedContentFilter {
         return HomePageData(
           title: home.title,
           uri: home.uri,
-          heroBanners: home.heroBanners,
           sections: sections,
         );
       case DiscoverPageData discover:
-        return discover.copyWith(
-          items: _filterCards(discover.items),
-          spotlight: _filterCards(discover.spotlight),
-        );
+        return discover.copyWith(items: _filterCards(discover.items));
       case RankPageData rank:
         return RankPageData(
           title: rank.title,

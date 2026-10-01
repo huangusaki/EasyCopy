@@ -39,16 +39,6 @@ class ChineseConverter extends ChangeNotifier {
   Future<ChineseConversionEngine?>? _initialization;
   int _modeRequestGeneration = 0;
   int _resourceGeneration = 0;
-  Object? _lastInitializationError;
-
-  /// 是否已初始化
-  bool get isInitialized => _t2sEngine != null;
-
-  /// 是否正在准备转换引擎
-  bool get isInitializing => _initialization != null;
-
-  /// 最近一次初始化错误
-  Object? get lastInitializationError => _lastInitializationError;
 
   /// 获取当前转换模式
   ChineseConversionMode _currentMode = ChineseConversionMode.disabled;
@@ -115,11 +105,6 @@ class ChineseConverter extends ChangeNotifier {
     }
   }
 
-  /// 批量转换文本列表
-  List<String> convertAll(List<String> texts) {
-    return texts.map(convert).toList(growable: false);
-  }
-
   Future<ChineseConversionEngine?> _ensureEngine() {
     final ChineseConversionEngine? readyEngine = _t2sEngine;
     if (readyEngine != null) {
@@ -144,7 +129,6 @@ class ChineseConverter extends ChangeNotifier {
 
   Future<ChineseConversionEngine?> _createEngine(int resourceGeneration) async {
     try {
-      _lastInitializationError = null;
       final ChineseConversionEngine createdEngine =
           await Future<ChineseConversionEngine>.sync(_engineFactory);
       if (resourceGeneration != _resourceGeneration) {
@@ -159,10 +143,7 @@ class ChineseConverter extends ChangeNotifier {
       }
       _t2sEngine = createdEngine;
       return createdEngine;
-    } catch (error) {
-      if (resourceGeneration == _resourceGeneration) {
-        _lastInitializationError = error;
-      }
+    } catch (_) {
       return null;
     }
   }
@@ -174,7 +155,6 @@ class ChineseConverter extends ChangeNotifier {
     _resourceGeneration += 1;
     _currentMode = ChineseConversionMode.disabled;
     _initialization = null;
-    _lastInitializationError = null;
     _t2sEngine?.dispose();
     _t2sEngine = null;
     super.dispose();

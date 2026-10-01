@@ -152,39 +152,6 @@ class LinkAction {
 }
 
 @immutable
-class HeroBannerData {
-  const HeroBannerData({
-    required this.title,
-    required this.subtitle,
-    required this.imageUrl,
-    required this.href,
-  });
-
-  factory HeroBannerData.fromJson(Map<String, Object?> json) {
-    return HeroBannerData(
-      title: _stringValue(json['title']),
-      subtitle: _stringValue(json['subtitle']),
-      imageUrl: _stringValue(json['imageUrl']),
-      href: _stringValue(json['href']),
-    );
-  }
-
-  final String title;
-  final String subtitle;
-  final String imageUrl;
-  final String href;
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      'title': title,
-      'subtitle': subtitle,
-      'imageUrl': imageUrl,
-      'href': href,
-    };
-  }
-}
-
-@immutable
 class ComicCardData {
   const ComicCardData({
     required this.title,

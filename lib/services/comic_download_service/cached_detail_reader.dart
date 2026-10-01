@@ -80,6 +80,7 @@ extension ComicCacheDetailsOps on ComicDownloadService {
     String prevHref = '',
     String nextHref = '',
     String catalogHref = '',
+    bool forDownload = false,
   }) async {
     final Stopwatch stopwatch = Stopwatch()..start();
     final DownloadStorageState storageState = await resolveStorageState(
@@ -153,17 +154,70 @@ extension ComicCacheDetailsOps on ComicDownloadService {
           chapter: entry,
         );
       }
-      final List<String> fileNames =
-          ((manifest['files'] as List<Object?>?) ?? const <Object?>[])
-              .whereType<String>()
-              .map((String fileName) => fileName.trim())
-              .where((String fileName) => fileName.isNotEmpty)
-              .toList(growable: false);
+      if (_pathKeyForUri(_stringValue(manifest['chapterHref'])) !=
+              targetPathKey &&
+          _pathKeyForUri(_stringValue(manifest['sourceUri'])) !=
+              targetPathKey) {
+        return null;
+      }
+      final Object? rawFiles = manifest['files'];
+      if (rawFiles is! List ||
+          rawFiles.isEmpty ||
+          manifest['imageCount'] != rawFiles.length ||
+          rawFiles.any(
+            (Object? value) => value is! String || !_isCacheFileName(value),
+          )) {
+        return null;
+      }
+      final List<String> fileNames = rawFiles.cast<String>();
+      if (fileNames.toSet().length != fileNames.length) {
+        return null;
+      }
+      final List<String> sourceImageUrls = forDownload
+          ? ((manifest['sourceImageUrls'] as List<Object?>?) ??
+                    const <Object?>[])
+                .whereType<String>()
+                .toList(growable: false)
+          : const <String>[];
+      final bool hasDownloadSources =
+          sourceImageUrls.isNotEmpty &&
+          sourceImageUrls.length == fileNames.length &&
+          sourceImageUrls.every((String url) {
+            final Uri? uri = Uri.tryParse(url);
+            return uri != null &&
+                (uri.scheme == 'http' || uri.scheme == 'https') &&
+                uri.host.isNotEmpty;
+          });
+      if (!hasDownloadSources) {
+        if (forDownload) {
+          if (!await _isChapterCompleted(
+            root: root,
+            manifestRelativePath: _joinRelativePath(<String>[
+              entry.directoryPath,
+              'manifest.json',
+            ]),
+            chapterDirectoryPath: entry.directoryPath,
+            expectedImageCount: fileNames.length,
+          )) {
+            return null;
+          }
+        } else {
+          final Set<String> existingFiles =
+              (await root.listEntries(entry.directoryPath, recursive: false))
+                  .where(
+                    (_StorageEntry file) => !file.isDirectory && file.size > 0,
+                  )
+                  .map((_StorageEntry file) => file.name)
+                  .toSet();
+          if (!fileNames.every(existingFiles.contains)) {
+            return null;
+          }
+        }
+      }
       final Stopwatch imageRefStopwatch = Stopwatch()..start();
-      final List<String> imageUrls = root.buildReaderImageUrls(
-        entry.directoryPath,
-        fileNames,
-      );
+      final List<String> imageUrls = hasDownloadSources
+          ? sourceImageUrls
+          : root.buildReaderImageUrls(entry.directoryPath, fileNames);
       DebugTrace.log('cached_reader.manifest_loaded', <String, Object?>{
         'storageKey': storageKey,
         'directoryPath': entry.directoryPath,
@@ -243,47 +297,14 @@ extension ComicCacheDetailsOps on ComicDownloadService {
     }
   }
 
-  Future<void> deleteCachedComic(CachedComicLibraryEntry entry) async {
-    if (entry.chapters.isEmpty) {
-      await deleteComicCacheByTitle(entry.comicTitle);
-      return;
-    }
-
-    final String chapterDirectoryPath = entry.chapters.first.directoryPath;
-    if (chapterDirectoryPath.isEmpty) {
-      await deleteComicCacheByTitle(entry.comicTitle);
-      return;
-    }
-
-    final String comicRelativePath = _parentRelativePath(chapterDirectoryPath);
-    if (comicRelativePath.isEmpty) {
-      await deleteComicCacheByTitle(entry.comicTitle);
-      return;
-    }
-    try {
-      final DownloadStorageState storageState = await resolveStorageState(
-        verifyWritable: false,
-      );
-      final String storageKey = _storageService.storageKeyForState(
-        storageState,
-      );
-      final _ResolvedStorageRoot root = await _resolveStorageRootFromState(
-        storageState,
-      );
-      if (!await root.deletePath(comicRelativePath)) {
-        await deleteComicCacheByTitle(entry.comicTitle);
-        return;
-      }
-      await _removeComicFromIndex(
-        storageKey: storageKey,
+  Future<void> deleteCachedComic(CachedComicLibraryEntry entry) =>
+      deleteComicCache(
         comicTitle: entry.comicTitle,
-        comicHref: entry.comicHref,
-        comicRelativePath: comicRelativePath,
+        comicHref: _cachedComicDetailUri(entry),
+        chapterDirectoryPaths: entry.chapters.map(
+          (CachedChapterEntry chapter) => chapter.directoryPath,
+        ),
       );
-    } catch (_) {
-      await deleteComicCacheByTitle(entry.comicTitle);
-    }
-  }
 
   Future<Map<String, Object?>?> _readCachedChapterManifest(
     _ResolvedStorageRoot root,
@@ -337,32 +358,64 @@ extension ComicCacheDetailsOps on ComicDownloadService {
     return _findCachedChapterInLibrary(library, targetPathKey);
   }
 
-  Future<void> deleteComicCacheByTitle(String comicTitle) async {
-    try {
-      final DownloadStorageState storageState = await resolveStorageState(
-        verifyWritable: false,
+  Future<void> deleteComicCache({
+    required String comicTitle,
+    required String comicHref,
+    Iterable<String> chapterDirectoryPaths = const <String>[],
+  }) async {
+    final String comicKey = _comicKeyForUri(comicHref);
+    if (comicKey.isEmpty) return;
+    final DownloadStorageState storageState = await resolveStorageState(
+      verifyWritable: false,
+    );
+    final String storageKey = _storageService.storageKeyForState(storageState);
+    final _ResolvedStorageRoot root = await _resolveStorageRootFromState(
+      storageState,
+    );
+    final Set<String> comicDirectories = <String>{
+      _sanitizePathSegment(comicTitle),
+      ...chapterDirectoryPaths.map(_parentRelativePath),
+    }.where(_isCacheFileName).toSet();
+    for (final String comicDirectory in comicDirectories) {
+      final List<String> paths = await _cacheFilePaths(
+        root,
+        relativePath: comicDirectory,
+        comicKey: comicKey,
       );
-      final String storageKey = _storageService.storageKeyForState(
-        storageState,
-      );
-      final _ResolvedStorageRoot root = await _resolveStorageRootFromState(
-        storageState,
-      );
-      final String comicRelativePath = _sanitizePathSegment(comicTitle);
-      await root.deletePath(comicRelativePath);
-      await _removeComicFromIndex(
-        storageKey: storageKey,
-        comicTitle: comicTitle,
-        comicRelativePath: comicRelativePath,
-      );
-    } catch (_) {
-      return;
+      if (paths.isEmpty) continue;
+      final Set<String> existingFiles =
+          (await root.listEntries(comicDirectory, recursive: true))
+              .where((_StorageEntry entry) => !entry.isDirectory)
+              .map((_StorageEntry entry) => entry.relativePath)
+              .toSet();
+      final Set<String> chapterDirectories = <String>{};
+      for (final String path in paths) {
+        if (!existingFiles.contains(path)) continue;
+        await root.deletePath(path);
+        chapterDirectories.add(_parentRelativePath(path));
+      }
+      for (final String chapterDirectory in chapterDirectories) {
+        await _removeChapterFromIndex(
+          storageKey: storageKey,
+          chapterDirectoryPath: chapterDirectory,
+        );
+        if ((await root.listEntries(
+          chapterDirectory,
+          recursive: false,
+        )).isEmpty) {
+          await root.deletePath(chapterDirectory);
+        }
+      }
+      if ((await root.listEntries(comicDirectory, recursive: false)).isEmpty) {
+        await root.deletePath(comicDirectory);
+      }
     }
   }
 
   Future<void> cleanupIncompleteChapter({
     required String comicTitle,
     required String chapterLabel,
+    required String chapterHref,
   }) async {
     final DownloadStorageState storageState = await resolveStorageState(
       verifyWritable: false,
@@ -382,36 +435,74 @@ extension ComicCacheDetailsOps on ComicDownloadService {
       chapterDirectoryPath,
       'manifest.json',
     ]);
-    if (!await root.exists(manifestRelativePath)) {
-      await root.deletePath(chapterDirectoryPath);
-      await _removeChapterFromIndex(
-        storageKey: storageKey,
-        chapterDirectoryPath: chapterDirectoryPath,
-      );
+    final bool hasManifest = await root.exists(manifestRelativePath);
+    final String identityPath = hasManifest
+        ? manifestRelativePath
+        : _joinRelativePath(<String>[
+            chapterDirectoryPath,
+            _downloadIdentityFileName,
+          ]);
+    if (!await root.exists(identityPath)) return;
+    Object? identity;
+    try {
+      identity = jsonDecode(await root.readString(identityPath));
+    } on FormatException {
       return;
     }
+    final String targetKey = _pathKeyForUri(chapterHref);
+    if (identity is! Map ||
+        targetKey.isEmpty ||
+        (_pathKeyForUri(_stringValue(identity['chapterHref'])) != targetKey &&
+            _pathKeyForUri(_stringValue(identity['sourceUri'])) != targetKey)) {
+      return;
+    }
+    final int imageCount = (identity['imageCount'] as num?)?.toInt() ?? 0;
+    if (imageCount <= 0) return;
     final List<_StorageEntry> entries = await root.listEntries(
       chapterDirectoryPath,
       recursive: false,
     );
+    final RegExp imagePattern = RegExp(
+      r'^(\d+)\.(?:avif|bmp|gif|jpe?g|png|webp)(?:\.\d+\.part|\.part)?$',
+      caseSensitive: false,
+    );
     for (final _StorageEntry entry in entries) {
-      if (entry.isDirectory || !entry.name.endsWith('.part')) {
+      if (entry.isDirectory || (hasManifest && !entry.name.endsWith('.part'))) {
         continue;
       }
+      final RegExpMatch? match = imagePattern.firstMatch(entry.name);
+      if (match == null) continue;
+      final int index = int.tryParse(match.group(1)!) ?? 0;
+      if (index <= 0 || index > imageCount) continue;
       await root.deletePath(entry.relativePath);
+    }
+    if (!hasManifest) {
+      await root.deletePath(identityPath);
+      if ((await root.listEntries(
+        chapterDirectoryPath,
+        recursive: false,
+      )).isEmpty) {
+        await root.deletePath(chapterDirectoryPath);
+      }
+      await _removeChapterFromIndex(
+        storageKey: storageKey,
+        chapterDirectoryPath: chapterDirectoryPath,
+      );
     }
   }
 
   Future<void> cleanupIncompleteTasks(Iterable<DownloadQueueTask> tasks) async {
     final Set<String> cleanedKeys = <String>{};
     for (final DownloadQueueTask task in tasks) {
-      final String key = '${task.comicTitle}::${task.chapterLabel}';
+      final String key =
+          '${task.comicTitle}::${task.chapterLabel}::${_pathKeyForUri(task.chapterHref)}';
       if (!cleanedKeys.add(key)) {
         continue;
       }
       await cleanupIncompleteChapter(
         comicTitle: task.comicTitle,
         chapterLabel: task.chapterLabel,
+        chapterHref: task.chapterHref,
       );
     }
   }

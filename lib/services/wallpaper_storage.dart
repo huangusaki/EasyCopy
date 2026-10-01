@@ -57,9 +57,6 @@ class WallpaperStorage {
     return _wallpaperDirReady.future;
   }
 
-  /// 已初始化的壁纸目录。
-  Directory? get cachedWallpaperDir => _cachedWallpaperDir;
-
   Future<void> ensureReady() async {
     await _resolveWallpaperDir();
   }

@@ -29,7 +29,6 @@ class LocalLibraryStore {
   static const String _databaseName = 'library_state.db';
   static const String _collectionsTable = 'collections';
   static const String _historyTable = 'browse_history';
-  static const String _metaTable = 'library_meta';
   static const String _blockedTable = 'blocked_content';
 
   final LocalLibraryDirectoryProvider _directoryProvider;
@@ -60,77 +59,6 @@ class LocalLibraryStore {
     } catch (_) {
       // 清理失败不影响后续流程。
     }
-  }
-
-  Future<bool> isSeeded(String scope, String key) async {
-    await ensureInitialized();
-    final String normalizedScope = scope.trim();
-    final String normalizedKey = key.trim();
-    if (normalizedScope.isEmpty || normalizedKey.isEmpty) {
-      return false;
-    }
-    final List<Map<String, Object?>> rows = await _database!.query(
-      _metaTable,
-      columns: const <String>['value'],
-      where: 'scope = ? AND key = ?',
-      whereArgs: <Object>[normalizedScope, normalizedKey],
-      limit: 1,
-    );
-    if (rows.isEmpty) {
-      return false;
-    }
-    return ((rows.first['value'] as String?) ?? '') == '1';
-  }
-
-  Future<void> markSeeded(String scope, String key) async {
-    await ensureInitialized();
-    final String normalizedScope = scope.trim();
-    final String normalizedKey = key.trim();
-    if (normalizedScope.isEmpty || normalizedKey.isEmpty) {
-      return;
-    }
-    await _database!.insert(_metaTable, <String, Object?>{
-      'scope': normalizedScope,
-      'key': normalizedKey,
-      'value': '1',
-    }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
-  }
-
-  Future<void> importCollections(
-    String scope,
-    Iterable<ProfileLibraryItem> items, {
-    int? baseAddedAtMs,
-  }) async {
-    await ensureInitialized();
-    final String normalizedScope = scope.trim();
-    if (normalizedScope.isEmpty) {
-      return;
-    }
-    final int baseMs = baseAddedAtMs ?? _now().millisecondsSinceEpoch;
-    final sqflite.Batch batch = _database!.batch();
-    int index = 0;
-    for (final ProfileLibraryItem item in items) {
-      final String href = item.href.trim();
-      final String comicPathKey = _pathKeyForHref(href);
-      if (comicPathKey.isEmpty) {
-        continue;
-      }
-      final String id = _entryId(normalizedScope, comicPathKey);
-      batch.insert(_collectionsTable, <String, Object?>{
-        'id': id,
-        'scope': normalizedScope,
-        'comic_path_key': comicPathKey,
-        'title': item.title.trim(),
-        'cover_url': item.coverUrl.trim(),
-        'href': href,
-        'subtitle': item.subtitle.trim(),
-        'secondary_text': item.secondaryText.trim(),
-        'updated_at': item.updatedAt.trim(),
-        'added_at_ms': baseMs - index,
-      }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
-      index += 1;
-    }
-    await batch.commit(noResult: true);
   }
 
   Future<void> importHistory(
@@ -279,18 +207,6 @@ class LocalLibraryStore {
       whereArgs: <Object>[type.name, normalizedKey],
     );
     await _reloadBlockedItems(notify: true);
-  }
-
-  Future<List<BlockedContentItem>> readBlocked({
-    BlockedContentType? type,
-  }) async {
-    await ensureInitialized();
-    if (type == null) {
-      return List<BlockedContentItem>.unmodifiable(_blockedItems);
-    }
-    return _blockedItems
-        .where((BlockedContentItem item) => item.type == type)
-        .toList(growable: false);
   }
 
   bool isBlocked(BlockedContentType type, String key) {
@@ -577,7 +493,7 @@ class LocalLibraryStore {
     _database = await databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
-        version: 5,
+        version: 6,
         onCreate: (sqflite.Database db, int version) async {
           await db.execute('''
             CREATE TABLE IF NOT EXISTS $_collectionsTable (
@@ -623,14 +539,6 @@ class LocalLibraryStore {
             ON $_historyTable(scope, visited_at_ms)
           ''');
           await db.execute('''
-            CREATE TABLE IF NOT EXISTS $_metaTable (
-              scope TEXT NOT NULL,
-              key TEXT NOT NULL,
-              value TEXT NOT NULL,
-              PRIMARY KEY(scope, key)
-            )
-          ''');
-          await db.execute('''
             CREATE TABLE IF NOT EXISTS $_blockedTable (
               id TEXT PRIMARY KEY,
               type TEXT NOT NULL,
@@ -647,16 +555,6 @@ class LocalLibraryStore {
           ''');
         },
         onUpgrade: (sqflite.Database db, int oldVersion, int newVersion) async {
-          if (oldVersion < 2) {
-            await db.execute('''
-              CREATE TABLE IF NOT EXISTS $_metaTable (
-                scope TEXT NOT NULL,
-                key TEXT NOT NULL,
-                value TEXT NOT NULL,
-                PRIMARY KEY(scope, key)
-              )
-            ''');
-          }
           if (oldVersion < 3) {
             await db.execute('''
               ALTER TABLE $_collectionsTable
@@ -689,6 +587,9 @@ class LocalLibraryStore {
               CREATE INDEX IF NOT EXISTS idx_blocked_type_added_at
               ON $_blockedTable(type, added_at_ms DESC)
             ''');
+          }
+          if (oldVersion < 6) {
+            await db.execute('DROP TABLE IF EXISTS library_meta');
           }
         },
       ),

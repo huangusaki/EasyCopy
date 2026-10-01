@@ -3,16 +3,24 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:reader/services/comic_download_service/download_contracts.dart';
+import 'package:reader/services/comic_download_service/image_integrity.dart';
+import 'package:reader/services/image_cache.dart';
 import 'package:reader/services/network_client.dart';
 import 'package:reader/services/quic_http_client.dart';
 
 /// Bounded image transfer; the caller owns paths, manifests and library indexes.
 class ChapterImageDownloader {
-  ChapterImageDownloader({http.Client? client, this.concurrency = 3})
-    : assert(concurrency > 0),
-      _client = client ?? AppHttpClientFactory.create();
+  ChapterImageDownloader({
+    http.Client? client,
+    Future<Uint8List?> Function(String url)? readCachedImage,
+    this.concurrency = 3,
+  }) : assert(concurrency > 0),
+       _client = client ?? AppHttpClientFactory.create(),
+       _readCachedImage =
+           readCachedImage ?? AppImageCaches.readReaderOriginalBytes;
 
   final http.Client _client;
+  final Future<Uint8List?> Function(String url) _readCachedImage;
   final int concurrency;
 
   Future<List<String>> download({
@@ -51,29 +59,43 @@ class ChapterImageDownloader {
           final bool restored = files[index].isNotEmpty;
           if (!restored) {
             final Uri uri = Uri.parse(imageUrls[index]);
-            final http.Response response = await NetworkClient.get(
-              _client,
-              uri,
-              headers: headers,
-              timeout: NetworkClient.imageTimeout,
-              maxRetries: 2,
-              label: 'download.image',
-            );
+            if ((uri.scheme != 'http' && uri.scheme != 'https') ||
+                uri.host.isEmpty) {
+              throw const FileSystemException('章节图片地址不可下载，请重新解析章节。');
+            }
+            Uint8List? bytes = await _readCachedImage(imageUrls[index]);
+            String? contentType;
+            if (bytes == null || !await isCompleteImage(bytes)) {
+              checkControl();
+              if (failure != null) return;
+              final http.Response response = await NetworkClient.get(
+                _client,
+                uri,
+                headers: headers,
+                timeout: NetworkClient.imageTimeout,
+                maxRetries: 2,
+                label: 'download.image',
+              );
+              checkControl();
+              if (failure != null) return;
+              if (response.statusCode < 200 || response.statusCode >= 300) {
+                throw HttpException(
+                  'Image download failed: ${response.statusCode}',
+                  uri: uri,
+                );
+              }
+              bytes = response.bodyBytes;
+              contentType = response.headers['content-type'];
+              if (!await isCompleteImage(bytes)) {
+                throw HttpException('图片数据不完整，请重试下载。', uri: uri);
+              }
+            }
             checkControl();
             if (failure != null) return;
-            if (response.statusCode < 200 || response.statusCode >= 300) {
-              throw HttpException(
-                'Image download failed: ${response.statusCode}',
-                uri: uri,
-              );
-            }
-            final String extension = _extension(
-              uri,
-              response.headers['content-type'],
-            );
+            final String extension = _extension(uri, contentType);
             final String fileName =
                 '${(index + 1).toString().padLeft(3, '0')}.$extension';
-            await writeImage(fileName, response.bodyBytes);
+            await writeImage(fileName, bytes);
             checkControl();
             files[index] = fileName;
             completed += 1;

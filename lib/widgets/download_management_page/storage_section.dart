@@ -112,6 +112,14 @@ class _StorageSectionState extends State<_StorageSection> {
                 ),
               ],
             ),
+            if (widget.state.isCustom && widget.onResetStorageDirectory != null)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: canEdit ? widget.onResetStorageDirectory : null,
+                  child: const Text('恢复默认'),
+                ),
+              ),
           ],
           if (widget.migrationProgress != null) ...<Widget>[
             const SizedBox(height: 14),

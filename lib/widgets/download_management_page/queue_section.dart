@@ -3,11 +3,13 @@ part of '../download_management_page.dart';
 class _CurrentTaskSection extends StatelessWidget {
   const _CurrentTaskSection({
     required this.snapshot,
+    required this.storageBusy,
     required this.onPauseQueue,
     required this.onResumeQueue,
   });
 
   final DownloadQueueSnapshot snapshot;
+  final bool storageBusy;
   final VoidCallback onPauseQueue;
   final VoidCallback onResumeQueue;
 
@@ -27,7 +29,9 @@ class _CurrentTaskSection extends StatelessWidget {
     return AppSurfaceCard(
       title: '当前任务',
       action: FilledButton.tonal(
-        onPressed: snapshot.isPaused ? onResumeQueue : onPauseQueue,
+        onPressed: storageBusy
+            ? null
+            : (snapshot.isPaused ? onResumeQueue : onPauseQueue),
         child: Text(snapshot.isPaused ? '继续' : '暂停'),
       ),
       child: Column(

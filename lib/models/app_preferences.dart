@@ -174,13 +174,6 @@ class WallpaperPreferences {
 
   bool get isActive => enabled && hasImage;
 
-  /// 是否已裁剪。
-  bool get hasCrop =>
-      cropLeft > 0.0001 ||
-      cropTop > 0.0001 ||
-      cropWidth < 0.9999 ||
-      cropHeight < 0.9999;
-
   WallpaperPreferences copyWith({
     bool? enabled,
     String? imageFileName,

@@ -13,7 +13,6 @@ import 'package:reader/reader/reader_controller/zoom_state.dart';
 import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/deferred_viewport_coordinator.dart';
 import 'package:reader/services/image_cache.dart';
-import 'package:reader/services/local_library_store.dart';
 import 'package:reader/services/reader_history_recorder.dart';
 import 'package:reader/services/reader_platform_bridge.dart';
 import 'package:reader/services/reader_progress_store.dart';
@@ -51,7 +50,6 @@ class ReaderController extends ChangeNotifier {
     required this.platformBridge,
     required this.apiClient,
     required this.session,
-    required this.localLibraryStore,
     required this.historyRecorder,
     required this.onRequestChapterNavigation,
     required this.onRequestAuth,
@@ -90,7 +88,6 @@ class ReaderController extends ChangeNotifier {
   final ReaderPlatformBridge platformBridge;
   final SiteApiClient apiClient;
   final SiteSession session;
-  final LocalLibraryStore localLibraryStore;
   final ReaderHistoryRecorder historyRecorder;
   final ReaderChapterNavigationCallback onRequestChapterNavigation;
   final Future<void> Function() onRequestAuth;
@@ -138,10 +135,6 @@ class ReaderController extends ChangeNotifier {
 
   int get visibleImageIndex => _visibleImageIndex;
 
-  ReaderPosition? get lastPersistedPosition => _lastPersistedPosition;
-
-  AppliedReaderEnvironment? get appliedEnvironment => _appliedEnvironment;
-
   bool get isSettingsOpen => _isSettingsOpen;
 
   bool get isChapterControlsVisible => _isChapterControlsVisible;
@@ -179,11 +172,7 @@ class ReaderController extends ChangeNotifier {
 
   String get commentsError => _comments.error;
 
-  int get commentsTotal => _comments.total;
-
   bool get isCommentsLoading => _comments.isLoading;
-
-  bool get isCommentsLoadingMore => _comments.isLoadingMore;
 
   bool get isCommentSubmitting => _comments.isSubmitting;
 
@@ -1015,10 +1004,6 @@ class ReaderController extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  void setImageZoomed(String imageKey, bool isZoomed) {
-    _setImageZoomed(imageKey, isZoomed);
-  }
-
   void handlePinchZoomStart() {
     _mutateZoom(_zoom.startPinch);
   }
@@ -1092,10 +1077,6 @@ class ReaderController extends ChangeNotifier {
 
   void _handleCommentScroll() {
     _comments.handleScroll();
-  }
-
-  void _setImageZoomed(String imageKey, bool isZoomed) {
-    _mutateZoom(() => _zoom.setImageZoomed(imageKey, isZoomed));
   }
 
   void _resetZoomState() {

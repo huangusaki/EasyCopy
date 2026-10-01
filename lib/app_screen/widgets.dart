@@ -17,31 +17,6 @@ part 'widgets/detail_filters.dart';
 part 'widgets/pager_widgets.dart';
 part 'widgets/rank_widgets.dart';
 
-class SurfaceBlock extends StatelessWidget {
-  const SurfaceBlock({
-    this.title,
-    required this.child,
-    this.actionLabel,
-    this.onActionTap,
-  });
-
-  final String? title;
-  final Widget child;
-  final String? actionLabel;
-  final VoidCallback? onActionTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppSurfaceCard(
-      title: title,
-      action: actionLabel != null && onActionTap != null
-          ? TextButton(onPressed: onActionTap, child: Text(actionLabel!))
-          : null,
-      child: child,
-    );
-  }
-}
-
 class SectionHeader extends StatelessWidget {
   const SectionHeader({
     required this.title,

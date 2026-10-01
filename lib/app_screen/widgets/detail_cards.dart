@@ -535,6 +535,7 @@ class ChapterGrid extends StatelessWidget {
     required this.chapters,
     required this.onTap,
     this.downloadedChapterPathKeys = const <String>{},
+    this.visitedChapterPathKeys = const <String>{},
     this.lastReadChapterPathKey = '',
     this.itemKeyBuilder,
   });
@@ -542,6 +543,7 @@ class ChapterGrid extends StatelessWidget {
   final List<ChapterData> chapters;
   final ValueChanged<String> onTap;
   final Set<String> downloadedChapterPathKeys;
+  final Set<String> visitedChapterPathKeys;
   final String lastReadChapterPathKey;
   final GlobalKey Function(String chapterPathKey)? itemKeyBuilder;
 
@@ -603,6 +605,9 @@ class ChapterGrid extends StatelessWidget {
             final bool isLastRead =
                 lastReadChapterPathKey.isNotEmpty &&
                 chapterPathKey == lastReadChapterPathKey;
+            final bool isVisited = visitedChapterPathKeys.contains(
+              chapterPathKey,
+            );
             final Widget child = InkWell(
               onTap: () => onTap(chapter.href),
               borderRadius: BorderRadius.circular(14),
@@ -614,6 +619,8 @@ class ChapterGrid extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: isLastRead
                       ? lastReadColor
+                      : isVisited
+                      ? colorScheme.primaryContainer
                       : isDownloaded
                       ? downloadedTileColor
                       : tileColor,
@@ -623,6 +630,10 @@ class ChapterGrid extends StatelessWidget {
                       : isDownloaded
                       ? Border.all(
                           color: downloadedColor.withValues(alpha: 0.72),
+                        )
+                      : isVisited
+                      ? Border.all(
+                          color: colorScheme.primary.withValues(alpha: 0.45),
                         )
                       : Border.all(
                           color: colorScheme.outlineVariant.withValues(
@@ -642,7 +653,11 @@ class ChapterGrid extends StatelessWidget {
                           fontSize: 13,
                           height: 1.1,
                           fontWeight: FontWeight.w800,
-                          color: isLastRead ? onLastReadColor : null,
+                          color: isLastRead
+                              ? onLastReadColor
+                              : isVisited
+                              ? colorScheme.onPrimaryContainer
+                              : colorScheme.onSurface,
                         ),
                       ),
                     ),

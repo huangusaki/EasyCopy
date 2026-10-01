@@ -51,10 +51,6 @@ const String _pageExtractionScriptTemplate = r"""
     }
     return text(root.querySelector(selector));
   };
-  const textList = (nodes) =>
-    Array.from(nodes)
-      .map((node) => text(node))
-      .filter((value) => value.length > 0);
   const imageUrl = (node) => {
     if (!node) {
       return '';
@@ -574,7 +570,6 @@ const String _pageExtractionScriptTemplate = r"""
       type: 'home',
       title: '首页',
       uri: location.href,
-      heroBanners: [],
       sections,
     };
   };
@@ -588,10 +583,6 @@ const String _pageExtractionScriptTemplate = r"""
       uri: location.href,
       filters: collectFilterGroups(),
       items,
-      spotlight: collectComicCards(
-        document,
-        '.dailyRecommendation-box a[href*="/comic/"]',
-      ),
       pager: {
         currentLabel:
           queryText(pager, '.page-all-item.active a') || '',

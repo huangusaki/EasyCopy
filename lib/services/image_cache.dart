@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:typed_data';
 
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:reader/config/app_config.dart';
@@ -55,6 +56,16 @@ class AppImageCaches {
     ),
   );
 
+  /// Uses the original URL key only; this never fetches or selects a thumbnail.
+  static Future<Uint8List?> readReaderOriginalBytes(String url) async {
+    try {
+      final FileInfo? cached = await readerCache.getFileFromCache(url);
+      return cached == null ? null : await cached.file.readAsBytes();
+    } catch (_) {
+      return null;
+    }
+  }
+
   static final Queue<_ReaderPrefetchRequest> _priorityReaderPrefetchQueue =
       Queue<_ReaderPrefetchRequest>();
   static final Queue<_ReaderPrefetchRequest> _normalReaderPrefetchQueue =
@@ -94,7 +105,6 @@ class AppImageCaches {
       final _ReaderPrefetchRequest request = _ReaderPrefetchRequest(
         url: normalizedUrl,
         referer: referer,
-        priority: priority,
       );
       if (priority) {
         _priorityReaderPrefetchQueue.add(request);
@@ -172,13 +182,8 @@ class AppImageCaches {
 }
 
 class _ReaderPrefetchRequest {
-  const _ReaderPrefetchRequest({
-    required this.url,
-    required this.referer,
-    required this.priority,
-  });
+  const _ReaderPrefetchRequest({required this.url, required this.referer});
 
   final String url;
   final String referer;
-  final bool priority;
 }

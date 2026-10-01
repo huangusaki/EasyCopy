@@ -9,18 +9,17 @@ import 'package:reader/services/debug_trace.dart';
 import 'package:reader/services/download_queue_manager/migration_storage.dart';
 import 'package:reader/services/download_queue_manager/retry_policy.dart';
 import 'package:reader/services/download_queue_manager/storage_write_barrier.dart';
-import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
-import 'package:reader/services/migration_delta_journal_store.dart';
 import 'package:reader/services/storage_migration_store.dart';
 
 abstract interface class DownloadMigrationQueue {
+  bool get hasActiveDownloads;
   Future<bool> suspendForStorageSwitch();
   Future<void> resumeAfterStorageSwitch(bool wasRunning);
   void continueDownloads();
 }
 
-/// Owns migration persistence, delta replay and progress independently of UI and
+/// Owns migration persistence and progress independently of UI and
 /// task execution. The queue and external cache edits share one write barrier.
 class DownloadMigrationCoordinator {
   DownloadMigrationCoordinator({
@@ -29,7 +28,6 @@ class DownloadMigrationCoordinator {
     required DownloadMigrationQueue queue,
     required DownloadStorageWriteBarrier writes,
     DownloadStorageMigrationStore? migrationStore,
-    MigrationDeltaJournalStore? deltaJournalStore,
     required Future<void> Function(CacheLibraryRefreshReason) onLibraryChanged,
     required void Function(String) onNotice,
   }) : _preferencesController = preferencesController,
@@ -38,8 +36,6 @@ class DownloadMigrationCoordinator {
        _writes = writes,
        _migrationStore =
            migrationStore ?? DownloadStorageMigrationStore.instance,
-       _deltaJournalStore =
-           deltaJournalStore ?? MigrationDeltaJournalStore.instance,
        _notifyLibraryChanged = onLibraryChanged,
        _onNotice = onNotice;
 
@@ -48,7 +44,6 @@ class DownloadMigrationCoordinator {
   final DownloadMigrationQueue _queue;
   final DownloadStorageWriteBarrier _writes;
   final DownloadStorageMigrationStore _migrationStore;
-  final MigrationDeltaJournalStore _deltaJournalStore;
   final Future<void> Function(CacheLibraryRefreshReason) _notifyLibraryChanged;
   final void Function(String) _onNotice;
   final ValueNotifier<DownloadStorageState> storageStateNotifier =
@@ -73,7 +68,6 @@ class DownloadMigrationCoordinator {
       _activeMigrationTask != null ||
       _pendingMigration != null ||
       migrationProgressNotifier.value != null;
-  Future<void> get settled => _activeMigrationTask ?? Future<void>.value();
 
   void _checkActive() {
     if (_disposed) throw const _MigrationStoppedException();
@@ -94,7 +88,6 @@ class DownloadMigrationCoordinator {
   Future<void> recover() async {
     await _preferencesController.ensureInitialized();
     await _migrationStore.ensureInitialized();
-    await _deltaJournalStore.ensureInitialized();
     if (_disposed || _activeMigrationTask != null) {
       return;
     }
@@ -108,8 +101,13 @@ class DownloadMigrationCoordinator {
     if (!currentPreferences.hasSameStorageLocation(pendingMigration.from) &&
         !currentPreferences.hasSameStorageLocation(pendingMigration.to)) {
       await _migrationStore.clear();
-      await _deltaJournalStore.clear();
       _pendingMigration = null;
+      return;
+    }
+    if (pendingMigration.phase != DownloadStorageMigrationStep.copying &&
+        pendingMigration.copiedPaths == null) {
+      await _migrationStore.clear();
+      _notify('已保留上次迁移的两处文件，请重新选择缓存目录。');
       return;
     }
     _pendingMigration = pendingMigration;
@@ -125,9 +123,10 @@ class DownloadMigrationCoordinator {
     _startMigrationTask(pendingMigration, isRecovery: true);
   }
 
-  Future<DownloadStorageMigrationResult?> applyPreferences(
-    DownloadPreferences nextPreferences,
-  ) async {
+  Future<bool> applyPreferences(
+    DownloadPreferences nextPreferences, {
+    bool migrateExisting = true,
+  }) async {
     if (isActive) {
       throw const FileSystemException('已有缓存目录迁移正在进行中。');
     }
@@ -138,7 +137,7 @@ class DownloadMigrationCoordinator {
       final DownloadPreferences currentPreferences =
           _preferencesController.downloadPreferences;
       if (currentPreferences.hasSameStorageLocation(nextPreferences)) {
-        return null;
+        return false;
       }
       final DownloadStorageState fromState = await _storage.resolveStorageState(
         preferences: currentPreferences,
@@ -153,6 +152,15 @@ class DownloadMigrationCoordinator {
           toState.errorMessage.isEmpty ? '目标缓存目录不可用。' : toState.errorMessage,
         );
       }
+      if (fromState.storageIdentity.isNotEmpty &&
+          fromState.storageIdentity == toState.storageIdentity) {
+        return false;
+      }
+      if (!migrateExisting) {
+        await _switchWithoutMigration(nextPreferences);
+        return true;
+      }
+      await _storage.verifyMigrationSource(currentPreferences);
       final String fromStorageKey = await _storage.storageKeyForPreferences(
         currentPreferences,
       );
@@ -166,12 +174,11 @@ class DownloadMigrationCoordinator {
             to: nextPreferences,
             createdAt: DateTime.now(),
             storageKey: '$fromStorageKey->$toStorageKey',
-            activeStorageKey: fromStorageKey,
             phase: DownloadStorageMigrationStep.copying,
+            resumeQueueAfterMigration: _queue.hasActiveDownloads,
           );
       _checkActive();
       await _migrationStore.write(pendingMigration);
-      await _deltaJournalStore.clear();
       _pendingMigration = pendingMigration;
       _checkActive();
       storageStateNotifier.value = fromState;
@@ -185,7 +192,7 @@ class DownloadMigrationCoordinator {
         immediate: true,
       );
       _startMigrationTask(pendingMigration, isRecovery: false);
-      return DownloadStorageMigrationResult(storageState: fromState);
+      return true;
     } finally {
       _starting = false;
     }
@@ -212,12 +219,11 @@ class DownloadMigrationCoordinator {
     _activeMigrationTask = task;
   }
 
-  /// 丢弃 copying 阶段的失败状态；后续阶段仍需恢复。
+  /// 偏好尚未提交时丢弃失败状态，保留两处文件并允许重新选择目录。
   Future<void> _discardFailedMigration() async {
     _pendingMigration = null;
     try {
       await _migrationStore.clear();
-      await _deltaJournalStore.clear();
     } catch (_) {
       // 清理失败不覆盖原始迁移异常。
     }
@@ -237,24 +243,28 @@ class DownloadMigrationCoordinator {
           .difference(currentMigration.createdAt)
           .inMilliseconds,
     });
+    bool? wasRunning;
+    bool completed = false;
     try {
       _checkActive();
-      if (currentMigration.phase == DownloadStorageMigrationStep.copying) {
-        currentMigration = await _runMigrationCopyPhase(currentMigration);
-      }
-      _checkActive();
-      if (currentMigration.phase == DownloadStorageMigrationStep.switching) {
-        currentMigration = await _runMigrationSwitchPhase(currentMigration);
-      }
-      _checkActive();
-      if (currentMigration.phase == DownloadStorageMigrationStep.cleaning ||
-          currentMigration.cleanupPending) {
-        if (!_disposed) {
-          storageBusyNotifier.value = false;
+      storageBusyNotifier.value = true;
+      wasRunning = await _queue.suspendForStorageSwitch();
+      await _writes.switchStorage(() async {
+        _checkActive();
+        if (currentMigration.phase == DownloadStorageMigrationStep.copying) {
+          currentMigration = await _runMigrationCopyPhase(currentMigration);
         }
-        _queue.continueDownloads();
-        await _runMigrationCleanupPhase(currentMigration);
-      }
+        _checkActive();
+        if (currentMigration.phase == DownloadStorageMigrationStep.switching) {
+          currentMigration = await _runMigrationSwitchPhase(currentMigration);
+        }
+        _checkActive();
+        if (currentMigration.phase == DownloadStorageMigrationStep.cleaning) {
+          await _runMigrationCleanupPhase(currentMigration);
+        }
+      });
+      completed = true;
+      await _notifyLibraryChanged(CacheLibraryRefreshReason.migrationSwitched);
       DebugTrace.log('storage_migration.flow_complete', <String, Object?>{
         'migrationId': pendingMigration.storageKey,
         'elapsedMs': stopwatch.elapsedMilliseconds,
@@ -270,15 +280,35 @@ class DownloadMigrationCoordinator {
         'elapsedMs': stopwatch.elapsedMilliseconds,
         'error': error.toString(),
       });
-      // 后续阶段保留记录，以便恢复切换并清理旧目录。
-      if (failedPhase == DownloadStorageMigrationStep.copying) {
+      final bool committed = _preferencesController.downloadPreferences
+          .hasSameStorageLocation(pendingMigration.to);
+      if (!committed) {
         await _discardFailedMigration();
+      } else {
+        // Keep the journal for restart, but allow switching away from an
+        // unavailable target without trapping the directory picker.
+        _pendingMigration = null;
       }
       if (!_disposed) {
         storageBusyNotifier.value = false;
         _clearMigrationProgress();
       }
-      _notify('缓存目录迁移失败：${formatDownloadError(error)}');
+      _notify(
+        committed
+            ? '缓存目录已切换，原目录已保留；重启后会重试清理。'
+            : '缓存目录迁移失败：${formatDownloadError(error)}',
+      );
+    } finally {
+      if (!_disposed) storageBusyNotifier.value = false;
+      if (wasRunning != null) {
+        await _queue.resumeAfterStorageSwitch(
+          wasRunning || pendingMigration.resumeQueueAfterMigration,
+        );
+      }
+      if (completed) {
+        await _migrationStore.clear();
+        _pendingMigration = null;
+      }
     }
   }
 
@@ -289,19 +319,15 @@ class DownloadMigrationCoordinator {
       'migrationId': pendingMigration.storageKey,
       'phase': pendingMigration.phase.name,
     });
-    await _storage.migrateCacheRoot(
+    final List<String> copiedPaths = await _storage.migrateCacheRoot(
       from: pendingMigration.from,
       to: pendingMigration.to,
       onProgress: _setMigrationProgress,
     );
-    final String fromStorageKey = await _storage.storageKeyForPreferences(
-      pendingMigration.from,
-    );
     final PendingDownloadStorageMigration nextMigration = pendingMigration
         .copyWith(
           phase: DownloadStorageMigrationStep.switching,
-          activeStorageKey: fromStorageKey,
-          cleanupPending: true,
+          copiedPaths: copiedPaths,
         );
     _checkActive();
     await _persistMigration(nextMigration);
@@ -312,100 +338,68 @@ class DownloadMigrationCoordinator {
     return nextMigration;
   }
 
+  Future<void> _switchWithoutMigration(DownloadPreferences preferences) async {
+    storageBusyNotifier.value = true;
+    bool? wasRunning;
+    try {
+      wasRunning = await _queue.suspendForStorageSwitch();
+      await _writes.switchStorage(() async {
+        _checkActive();
+        final DownloadStorageState target = await _storage.resolveStorageState(
+          preferences: preferences,
+          verifyWritable: true,
+        );
+        _requireReady(target);
+        await _preferencesController.updateDownloadPreferences(
+          (_) => preferences,
+        );
+        _checkActive();
+        storageStateNotifier.value = target;
+      });
+      await _notifyLibraryChanged(CacheLibraryRefreshReason.migrationSwitched);
+    } finally {
+      if (!_disposed) storageBusyNotifier.value = false;
+      if (wasRunning != null) await _queue.resumeAfterStorageSwitch(wasRunning);
+    }
+  }
+
+  void _requireReady(DownloadStorageState state) {
+    if (!state.isReady) {
+      throw FileSystemException(
+        state.errorMessage.isEmpty ? '目标缓存目录不可用。' : state.errorMessage,
+      );
+    }
+  }
+
   Future<PendingDownloadStorageMigration> _runMigrationSwitchPhase(
     PendingDownloadStorageMigration pendingMigration,
   ) async {
     _checkActive();
-    storageBusyNotifier.value = true;
-    final bool resumeQueueAfterSwitch = await _queue.suspendForStorageSwitch();
-    try {
-      final PendingDownloadStorageMigration switched = await _writes
-          .switchStorage(() async {
-            _checkActive();
-            final DownloadStorageState fromState = await _storage
-                .resolveStorageState(
-                  preferences: pendingMigration.from,
-                  verifyWritable: false,
-                );
-            final DownloadStorageState toState = await _storage
-                .resolveStorageState(
-                  preferences: pendingMigration.to,
-                  verifyWritable: true,
-                );
-            final List<MigrationDeltaEntry> deltas = await _deltaJournalStore
-                .read(pendingMigration.storageKey);
-            DebugTrace.log(
-              'storage_migration.switch_phase_start',
-              <String, Object?>{
-                'migrationId': pendingMigration.storageKey,
-                'deltaReplayCount': deltas.length,
-                'fromPath': fromState.displayPath,
-                'toPath': toState.displayPath,
-              },
-            );
-            _setMigrationProgressVisible(
-              StorageMigrationProgress(
-                phase: DownloadStorageMigrationPhase.preparing,
-                fromPath: fromState.displayPath,
-                toPath: toState.displayPath,
-                message: '正在切换缓存目录…',
-              ),
-              immediate: true,
-            );
-            final bool alreadyCommitted = _preferencesController
-                .downloadPreferences
-                .hasSameStorageLocation(pendingMigration.to);
-            _checkActive();
-            if (!alreadyCommitted && deltas.isNotEmpty) {
-              await _storage.applyMigrationDeltas(
-                from: pendingMigration.from,
-                to: pendingMigration.to,
-                entries: deltas,
-                onProgress: _setMigrationProgress,
-              );
-            }
-            _checkActive();
-            if (!alreadyCommitted) {
-              await _storage.copyCachedLibraryIndex(
-                from: pendingMigration.from,
-                to: pendingMigration.to,
-              );
-            }
-            _checkActive();
-            await _preferencesController.updateDownloadPreferences(
-              (_) => pendingMigration.to,
-            );
-            _checkActive();
-            final String targetStorageKey = await _storage
-                .storageKeyForPreferences(pendingMigration.to);
-            final PendingDownloadStorageMigration nextMigration =
-                pendingMigration.copyWith(
-                  phase: DownloadStorageMigrationStep.cleaning,
-                  activeStorageKey: targetStorageKey,
-                  cleanupPending: true,
-                );
-            await _persistMigration(nextMigration);
-            if (!_disposed) {
-              storageStateNotifier.value = toState;
-              storageBusyNotifier.value = false;
-            }
-            _checkActive();
-            DebugTrace.log(
-              'storage_migration.switch_phase_complete',
-              <String, Object?>{
-                'migrationId': pendingMigration.storageKey,
-                'deltaReplayCount': deltas.length,
-              },
-            );
-            return nextMigration;
-          });
-      _checkActive();
-      await _notifyLibraryChanged(CacheLibraryRefreshReason.migrationSwitched);
-      return switched;
-    } finally {
-      if (!_disposed) storageBusyNotifier.value = false;
-      await _queue.resumeAfterStorageSwitch(resumeQueueAfterSwitch);
-    }
+    final DownloadStorageState toState = await _storage.resolveStorageState(
+      preferences: pendingMigration.to,
+      verifyWritable: true,
+    );
+    _requireReady(toState);
+    await _storage.verifyMigratedCache(
+      from: pendingMigration.from,
+      to: pendingMigration.to,
+      relativePaths: pendingMigration.copiedPaths!,
+    );
+    _checkActive();
+    await _storage.copyCachedLibraryIndex(
+      from: pendingMigration.from,
+      to: pendingMigration.to,
+    );
+    _checkActive();
+    await _preferencesController.updateDownloadPreferences(
+      (_) => pendingMigration.to,
+    );
+    _checkActive();
+    final PendingDownloadStorageMigration nextMigration = pendingMigration
+        .copyWith(phase: DownloadStorageMigrationStep.cleaning);
+    await _persistMigration(nextMigration);
+    if (!_disposed) storageStateNotifier.value = toState;
+    return nextMigration;
   }
 
   Future<void> _runMigrationCleanupPhase(
@@ -417,13 +411,13 @@ class DownloadMigrationCoordinator {
     });
     _checkActive();
     final String cleanupWarning = await _storage.cleanupStorageDirectory(
-      preferences: pendingMigration.from,
+      from: pendingMigration.from,
+      to: pendingMigration.to,
+      relativePaths: pendingMigration.copiedPaths!,
       onProgress: _setMigrationProgress,
     );
     _checkActive();
-    await _deltaJournalStore.clear(pendingMigration.storageKey);
-    await _migrationStore.clear();
-    _pendingMigration = null;
+
     if (!_disposed) {
       _clearMigrationProgress();
       storageBusyNotifier.value = false;
@@ -535,66 +529,6 @@ class DownloadMigrationCoordinator {
     _lastMigrationProgress = null;
     _lastMigrationAt = null;
     migrationProgressNotifier.value = null;
-  }
-
-  Future<void> _recordMigrationDelta(MigrationDeltaEntry entry) async {
-    final PendingDownloadStorageMigration? pendingMigration = _pendingMigration;
-    if (_disposed ||
-        pendingMigration == null ||
-        pendingMigration.phase == DownloadStorageMigrationStep.cleaning ||
-        entry.relativePath.trim().isEmpty) {
-      return;
-    }
-    await _deltaJournalStore.append(pendingMigration.storageKey, entry);
-    DebugTrace.log('storage_migration.delta_recorded', <String, Object?>{
-      'migrationId': pendingMigration.storageKey,
-      'phase': pendingMigration.phase.name,
-      'kind': entry.kind.name,
-      'relativePath': entry.relativePath,
-    });
-  }
-
-  Future<void> recordTaskUpsert(DownloadQueueTask task) {
-    return _recordMigrationDelta(
-      MigrationDeltaEntry(
-        kind: MigrationDeltaKind.upsertChapter,
-        relativePath: _storage.chapterDirectoryPath(
-          task.comicTitle,
-          task.chapterLabel,
-        ),
-        updatedAt: DateTime.now(),
-      ),
-    );
-  }
-
-  Future<void> recordTaskCleanup(Iterable<DownloadQueueTask> tasks) async {
-    final Set<String> seenPaths = <String>{};
-    for (final DownloadQueueTask task in tasks) {
-      final String relativePath = _storage.chapterDirectoryPath(
-        task.comicTitle,
-        task.chapterLabel,
-      );
-      if (relativePath.isEmpty || !seenPaths.add(relativePath)) {
-        continue;
-      }
-      await _recordMigrationDelta(
-        MigrationDeltaEntry(
-          kind: MigrationDeltaKind.deleteChapter,
-          relativePath: relativePath,
-          updatedAt: DateTime.now(),
-        ),
-      );
-    }
-  }
-
-  Future<void> recordComicDeletion(String comicTitle) {
-    return _recordMigrationDelta(
-      MigrationDeltaEntry(
-        kind: MigrationDeltaKind.deleteComic,
-        relativePath: _storage.comicDirectoryPath(comicTitle),
-        updatedAt: DateTime.now(),
-      ),
-    );
   }
 }
 

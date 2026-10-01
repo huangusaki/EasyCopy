@@ -8,9 +8,17 @@ import 'package:reader/services/app_preferences_controller.dart';
 
 typedef DownloadPreferencesProvider = Future<DownloadPreferences> Function();
 typedef DownloadBaseDirectoryProvider = Future<Directory> Function();
-typedef DownloadBaseDirectoriesProvider = Future<List<Directory>?> Function();
-typedef StorageDirsProvider =
-    Future<List<Directory>?> Function(StorageDirectory? type);
+
+class DownloadSourceUnavailableException implements Exception {
+  const DownloadSourceUnavailableException([
+    this.message = '原缓存目录无法访问，请重新授权或选择仅切换目录。',
+  ]);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
 
 @immutable
 class DownloadStorageState {
@@ -23,6 +31,8 @@ class DownloadStorageState {
     required this.isWritable,
     required this.mayBeRemovedOnUninstall,
     this.documentTreeUri = '',
+    this.storageIdentity = '',
+    this.comparablePath = '',
     this.errorMessage = '',
     this.isLoading = false,
   });
@@ -36,6 +46,8 @@ class DownloadStorageState {
       isWritable = false,
       mayBeRemovedOnUninstall = false,
       documentTreeUri = '',
+      storageIdentity = '',
+      comparablePath = '',
       errorMessage = '',
       isLoading = true;
 
@@ -47,6 +59,8 @@ class DownloadStorageState {
   final bool isWritable;
   final bool mayBeRemovedOnUninstall;
   final String documentTreeUri;
+  final String storageIdentity;
+  final String comparablePath;
   final String errorMessage;
   final bool isLoading;
 
@@ -64,26 +78,14 @@ class DownloadStorageService {
     AppPreferencesController? preferencesController,
     DownloadPreferencesProvider? preferencesProvider,
     DownloadBaseDirectoryProvider? defaultBaseDirectoryProvider,
-    DownloadBaseDirectoriesProvider? customBaseDirectoriesProvider,
-    StorageDirsProvider? storageDirsProvider,
-    DownloadBaseDirectoriesProvider? cacheDirsProvider,
     AndroidDocumentTreeBridge? documentTreeBridge,
   }) : _preferencesController =
            preferencesController ?? AppPreferencesController.instance,
        _preferencesProvider = preferencesProvider,
        _defaultBaseDirectoryProvider =
            defaultBaseDirectoryProvider ?? _defaultBaseDirectory,
-       _customBaseDirectoriesProvider = customBaseDirectoriesProvider,
-       _storageDirsProvider = storageDirsProvider ?? _defaultStorageDirs,
-       _cacheDirsProvider = cacheDirsProvider ?? _defaultCacheDirs,
        _documentTreeBridge =
-           documentTreeBridge ?? AndroidDocumentTreeBridge.instance,
-       _supportsCustomDirs =
-           Platform.isAndroid ||
-           Platform.isWindows ||
-           customBaseDirectoriesProvider != null ||
-           storageDirsProvider != null ||
-           cacheDirsProvider != null;
+           documentTreeBridge ?? AndroidDocumentTreeBridge.instance;
 
   static final DownloadStorageService instance = DownloadStorageService();
   static const String downloadsDirectoryName = 'EasyCopyDownloads';
@@ -91,13 +93,9 @@ class DownloadStorageService {
   final AppPreferencesController _preferencesController;
   final DownloadPreferencesProvider? _preferencesProvider;
   final DownloadBaseDirectoryProvider _defaultBaseDirectoryProvider;
-  final DownloadBaseDirectoriesProvider? _customBaseDirectoriesProvider;
-  final StorageDirsProvider _storageDirsProvider;
-  final DownloadBaseDirectoriesProvider _cacheDirsProvider;
   final AndroidDocumentTreeBridge _documentTreeBridge;
-  final bool _supportsCustomDirs;
 
-  bool get supportsCustomDirs => _supportsCustomDirs;
+  bool get supportsCustomDirs => Platform.isAndroid || Platform.isWindows;
 
   Future<DownloadStorageState> resolveState({
     DownloadPreferences? preferences,
@@ -144,6 +142,9 @@ class DownloadStorageService {
       if (verifyWritable) {
         await _verifyWritable(rootDirectory);
       }
+      final String canonicalPath = normalizeStoragePath(
+        await rootDirectory.resolveSymbolicLinks(),
+      );
       return DownloadStorageState(
         preferences: resolvedPreferences,
         basePath: baseDirectory.path,
@@ -151,6 +152,8 @@ class DownloadStorageService {
         isCustom: isCustom,
         isDocumentTree: false,
         isWritable: true,
+        storageIdentity: 'file:$canonicalPath',
+        comparablePath: canonicalPath,
         mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(
           isCustom: isCustom,
           basePath: baseDirectory.path,
@@ -187,57 +190,6 @@ class DownloadStorageService {
     }
   }
 
-  Future<List<DownloadStorageState>> loadCustomDirectoryCandidates() async {
-    if (!supportsCustomDirs) {
-      return const <DownloadStorageState>[];
-    }
-
-    final List<Directory> baseDirectories = await _loadCustomBaseDirectories();
-    if (baseDirectories.isEmpty) {
-      return const <DownloadStorageState>[];
-    }
-
-    final DownloadStorageState defaultState = await resolveState(
-      preferences: const DownloadPreferences(),
-      verifyWritable: false,
-    );
-    final String normalizedDefaultBasePath = _normalizedPath(
-      defaultState.basePath,
-    );
-    final Set<String> seenPaths = <String>{};
-    final List<DownloadStorageState> candidates = <DownloadStorageState>[];
-
-    for (final Directory directory in baseDirectories) {
-      final String basePath = directory.path.trim();
-      if (basePath.isEmpty) {
-        continue;
-      }
-      final String normalizedBasePath = _normalizedPath(basePath);
-      if (!seenPaths.add(normalizedBasePath) ||
-          normalizedBasePath == normalizedDefaultBasePath) {
-        continue;
-      }
-
-      final DownloadStorageState candidate = await resolveState(
-        preferences: DownloadPreferences(
-          mode: DownloadStorageMode.customDirectory,
-          customBasePath: basePath,
-          usePickedDirectoryAsRoot: true,
-        ),
-        verifyWritable: true,
-      );
-      if (candidate.isReady) {
-        candidates.add(candidate);
-      }
-    }
-
-    candidates.sort(
-      (DownloadStorageState left, DownloadStorageState right) =>
-          left.basePath.compareTo(right.basePath),
-    );
-    return candidates;
-  }
-
   Future<PickedDocumentTreeDirectory?> pickDocumentTreeDirectory() {
     if (!_documentTreeBridge.isSupported) {
       return Future<PickedDocumentTreeDirectory?>.value(null);
@@ -245,27 +197,18 @@ class DownloadStorageService {
     return _documentTreeBridge.pickDirectory();
   }
 
-  String summarizePath(String path) {
-    final String normalized = path.trim();
-    if (normalized.isEmpty) {
-      return '未设置';
+  String storageKeyForState(DownloadStorageState state) {
+    if (state.storageIdentity.isNotEmpty) {
+      return state.storageIdentity;
     }
-    if (normalized.length <= 42) {
-      return normalized;
-    }
-    final int separatorIndex = normalized.lastIndexOf(Platform.pathSeparator);
-    if (separatorIndex <= 0 || separatorIndex == normalized.length - 1) {
-      return '...${normalized.substring(normalized.length - 39)}';
-    }
-    final String tail = normalized.substring(separatorIndex);
-    final int headLength = 39 - tail.length;
-    if (headLength <= 4) {
-      return '...$tail';
-    }
-    return '${normalized.substring(0, headLength)}...$tail';
+    // Keep inaccessible locations distinct until their permission is restored.
+    final String legacy = legacyStorageKeyForState(state);
+    return state.isDocumentTree && !state.preferences.usePickedDirectoryAsRoot
+        ? '$legacy::$downloadsDirectoryName'
+        : legacy;
   }
 
-  String storageKeyForState(DownloadStorageState state) {
+  String legacyStorageKeyForState(DownloadStorageState state) {
     if (state.isDocumentTree) {
       final String treeUri = state.documentTreeUri.trim();
       if (treeUri.isNotEmpty) {
@@ -334,6 +277,8 @@ class DownloadStorageService {
         isWritable: resolution.isWritable,
         mayBeRemovedOnUninstall: false,
         documentTreeUri: treeUri,
+        storageIdentity: resolution.storageIdentity,
+        comparablePath: resolution.comparablePath,
         errorMessage: resolution.errorMessage,
       );
     } catch (error) {
@@ -349,21 +294,6 @@ class DownloadStorageService {
         errorMessage: error.toString(),
       );
     }
-  }
-
-  Future<List<Directory>> _loadCustomBaseDirectories() async {
-    final DownloadBaseDirectoriesProvider? customProvider =
-        _customBaseDirectoriesProvider;
-    if (customProvider != null) {
-      return (await customProvider()) ?? const <Directory>[];
-    }
-    if (!Platform.isAndroid && !_supportsInjectedAndroidPickers) {
-      return const <Directory>[];
-    }
-    return _defaultCustomBaseDirectories(
-      storageDirsProvider: _storageDirsProvider,
-      cacheDirsProvider: _cacheDirsProvider,
-    );
   }
 
   bool _mayBeRemovedOnUninstall({
@@ -410,49 +340,6 @@ class DownloadStorageService {
           await getApplicationDocumentsDirectory();
     }
     return await getApplicationDocumentsDirectory();
-  }
-
-  bool get _supportsInjectedAndroidPickers =>
-      _storageDirsProvider != _defaultStorageDirs ||
-      _cacheDirsProvider != _defaultCacheDirs;
-
-  static Future<List<Directory>> _defaultCustomBaseDirectories({
-    required StorageDirsProvider storageDirsProvider,
-    required DownloadBaseDirectoriesProvider cacheDirsProvider,
-  }) async {
-    final Set<String> seenPaths = <String>{};
-    final List<Directory> directories = <Directory>[];
-
-    void addAll(List<Directory>? values) {
-      for (final Directory directory in values ?? const <Directory>[]) {
-        final String path = directory.path.trim();
-        if (path.isEmpty || !seenPaths.add(path)) {
-          continue;
-        }
-        directories.add(directory);
-      }
-    }
-
-    addAll(await storageDirsProvider(null));
-    addAll(await cacheDirsProvider());
-    for (final StorageDirectory type in const <StorageDirectory>[
-      StorageDirectory.downloads,
-      StorageDirectory.documents,
-      StorageDirectory.pictures,
-      StorageDirectory.movies,
-      StorageDirectory.dcim,
-    ]) {
-      addAll(await storageDirsProvider(type));
-    }
-    return directories;
-  }
-
-  static Future<List<Directory>?> _defaultStorageDirs(StorageDirectory? type) {
-    return getExternalStorageDirectories(type: type);
-  }
-
-  static Future<List<Directory>?> _defaultCacheDirs() {
-    return getExternalCacheDirectories();
   }
 
   String _normalizedPath(String value) => normalizeStoragePath(value);

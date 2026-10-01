@@ -45,20 +45,8 @@ class AppSearchActions {
   final TextEditingController textController = TextEditingController();
   List<String> entries = const <String>[];
 
-  void attach() {
-    textController.addListener(handleTextChanged);
-  }
-
   void dispose() {
-    textController.removeListener(handleTextChanged);
     textController.dispose();
-  }
-
-  void handleTextChanged() {
-    if (!_isMounted()) {
-      return;
-    }
-    _updateUi();
   }
 
   void replaceHistory(List<String> value) {
