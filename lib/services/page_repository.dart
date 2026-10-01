@@ -90,13 +90,10 @@ class PageRepository {
   final Map<PageQueryKey, Future<void>> _inFlightRevalidations =
       <PageQueryKey, Future<void>>{};
   int _authenticatedGeneration = 0;
-  final Map<String, int> _scopeGenerations = <String, int>{};
-
-  static const String _readerCacheFingerprintVersion = 'reader-v2';
 
   Future<CachedPageHit?> readCached(PageQueryKey key) async {
     await _blockedFilter.store.ensureInitialized();
-    final (int, int) generation = _generationFor(key.authScope);
+    final int generation = _generationFor(key.authScope);
     final CachedPageHit? inMemory = _memoryCache.remove(key);
     if (inMemory != null &&
         _isSupportedCache(inMemory.envelope) &&
@@ -193,23 +190,16 @@ class PageRepository {
     await _cacheStore.removeAuthenticatedEntries();
   }
 
-  Future<void> removeAuthScope(String authScope) async {
-    _scopeGenerations[authScope] = (_scopeGenerations[authScope] ?? 0) + 1;
-    _invalidateWhere((PageQueryKey key) => key.authScope == authScope);
-    await _cacheStore.removeAuthScope(authScope);
-  }
-
   Future<void> writeCachedPage(
     SitePage page, {
     required String authScope,
   }) async {
-    final (int, int) generation = _generationFor(authScope);
+    final int generation = _generationFor(authScope);
     final Uri pageUri = AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
     final PageQueryKey key = PageQueryKey.forUri(pageUri, authScope: authScope);
     final CachedPageEnvelope envelope = PageCacheStore.buildEnvelope(
       routeKey: key.routeKey,
       page: page,
-      fingerprint: _fingerprintForPage(page),
       authScope: authScope,
     );
     await _cacheStore.writeEnvelope(envelope);
@@ -218,14 +208,8 @@ class PageRepository {
     }
   }
 
-  void clearMemory() {
-    _memoryCache.clear();
-  }
-
-  (int, int) _generationFor(String authScope) => (
-    authScope == 'guest' ? 0 : _authenticatedGeneration,
-    _scopeGenerations[authScope] ?? 0,
-  );
+  int _generationFor(String authScope) =>
+      authScope == 'guest' ? 0 : _authenticatedGeneration;
 
   void _invalidateWhere(bool Function(PageQueryKey key) matches) {
     _memoryCache.removeWhere((key, _) => matches(key));
@@ -236,7 +220,7 @@ class PageRepository {
   Future<SitePage> _loadFreshInternal(
     Uri uri, {
     required PageQueryKey requestedKey,
-    required (int, int) generation,
+    required int generation,
     NavigationRequestContext? requestContext,
   }) async {
     await _blockedFilter.store.ensureInitialized();
@@ -256,7 +240,6 @@ class PageRepository {
     final CachedPageEnvelope envelope = PageCacheStore.buildEnvelope(
       routeKey: finalKey.routeKey,
       page: page,
-      fingerprint: _fingerprintForPage(page),
       authScope: finalKey.authScope,
     );
     await _cacheStore.writeEnvelope(envelope);
@@ -284,7 +267,7 @@ class PageRepository {
     Uri uri, {
     required PageQueryKey key,
     required CachedPageEnvelope envelope,
-    required (int, int) generation,
+    required int generation,
     NavigationRequestContext? requestContext,
   }) async {
     if (_canSkipNetworkRevalidate(uri, envelope: envelope)) {
@@ -358,95 +341,8 @@ class PageRepository {
     return requestedAuthScope;
   }
 
-  String _fingerprintForPage(SitePage page) {
-    switch (page) {
-      case HomePageData homePage:
-        final List<ComicCardData> cards = homePage.sections
-            .expand((ComicSectionData section) => section.items)
-            .toList(growable: false);
-        return <String>[
-          Uri.parse(homePage.uri).path,
-          Uri.parse(homePage.uri).query,
-          '',
-          cards.isEmpty ? '' : '${cards.first.title}::${cards.first.href}',
-          cards.isEmpty ? '' : '${cards.last.title}::${cards.last.href}',
-          '${cards.length}',
-        ].join('::');
-      case DiscoverPageData discoverPage:
-        final List<String> activeFilters = discoverPage.filters
-            .expand((FilterGroupData group) => group.options)
-            .where((LinkAction option) => option.active)
-            .map((LinkAction option) => option.label)
-            .followedBy(
-              discoverPage.pager.currentLabel.isEmpty
-                  ? const Iterable<String>.empty()
-                  : <String>[discoverPage.pager.currentLabel],
-            )
-            .toList(growable: false);
-        return <String>[
-          Uri.parse(discoverPage.uri).path,
-          Uri.parse(discoverPage.uri).query,
-          activeFilters.join('|'),
-          discoverPage.items.isEmpty
-              ? ''
-              : '${discoverPage.items.first.title}::${discoverPage.items.first.href}',
-          discoverPage.items.isEmpty
-              ? ''
-              : '${discoverPage.items.last.title}::${discoverPage.items.last.href}',
-          '${discoverPage.items.length}',
-        ].join('::');
-      case RankPageData rankPage:
-        final List<LinkAction> activeTabs = <LinkAction>[
-          ...rankPage.categories.where((LinkAction item) => item.active),
-          ...rankPage.periods.where((LinkAction item) => item.active),
-        ];
-        return <String>[
-          Uri.parse(rankPage.uri).path,
-          activeTabs.map((LinkAction item) => item.label).join('|'),
-          rankPage.items.isEmpty
-              ? ''
-              : '${rankPage.items.first.title}::${rankPage.items.first.href}',
-          rankPage.items.isEmpty
-              ? ''
-              : '${rankPage.items.last.title}::${rankPage.items.last.href}',
-          '${rankPage.items.length}',
-        ].join('::');
-      case DetailPageData detailPage:
-        final List<ChapterData> chapters = detailPage.chapterGroups.isNotEmpty
-            ? detailPage.chapterGroups
-                  .expand((ChapterGroupData group) => group.chapters)
-                  .toList(growable: false)
-            : detailPage.chapters;
-        return <String>[
-          Uri.parse(detailPage.uri).path,
-          detailPage.updatedAt,
-          detailPage.status,
-          '${chapters.length}',
-          chapters.isEmpty ? '' : chapters.first.href,
-          chapters.isEmpty ? '' : chapters.last.href,
-        ].join('::');
-      case ReaderPageData readerPage:
-        return <String>[
-          _readerCacheFingerprintVersion,
-          Uri.parse(readerPage.uri).path,
-          readerPage.title,
-          readerPage.progressLabel,
-          readerPage.contentKey,
-        ].join('::');
-      case ProfilePageData profilePage:
-        return <String>[
-          profilePage.user?.userId ?? '',
-          '${profilePage.collections.length}',
-          '${profilePage.history.length}',
-          profilePage.continueReading?.chapterHref ?? '',
-        ].join('::');
-      case UnknownPageData unknownPage:
-        return <String>[unknownPage.uri, unknownPage.message].join('::');
-    }
-  }
-
   bool _isSupportedCache(CachedPageEnvelope envelope) {
     return envelope.pageType != SitePageType.reader ||
-        envelope.fingerprint.startsWith('$_readerCacheFingerprintVersion::');
+        envelope.readerCacheVersion == PageCacheStore.readerCacheVersion;
   }
 }

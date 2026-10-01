@@ -174,8 +174,10 @@ class AppScreenServices {
       session: session,
       downloadService: downloadService,
       pageResolver: ReaderPageDownloadResolver(
-        loadFromStorageCache: (Uri uri) =>
-            downloadService.loadCachedReaderPage(uri.toString()),
+        loadFromStorageCache: (Uri uri) => downloadService.loadCachedReaderPage(
+          uri.toString(),
+          forDownload: true,
+        ),
         loadFromPageCache: (Uri uri) async {
           final CachedPageHit? hit = await pageRepository.readCached(
             PageQueryKey.forUri(uri, authScope: 'guest'),

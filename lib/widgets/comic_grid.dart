@@ -199,13 +199,15 @@ class ComicSliverGrid extends StatelessWidget {
     required this.items,
     required this.onTap,
     this.onLongPress,
+    this.animateItems = true,
     this.emptyMessage = '暂时没有可展示的内容。',
     super.key,
   });
 
   final List<ComicCardData> items;
   final ValueChanged<String> onTap;
-  final ValueChanged<String>? onLongPress;
+  final ValueChanged<ComicCardData>? onLongPress;
+  final bool animateItems;
   final String emptyMessage;
 
   static const double _crossAxisSpacing = 12;
@@ -261,17 +263,22 @@ class ComicSliverGrid extends StatelessWidget {
           delegate: SliverChildBuilderDelegate(
             (BuildContext context, int index) {
               final ComicCardData item = items[index];
+              final Widget tile = ComicCardTile(
+                item: item,
+                onTap: onTap,
+                onLongPress: onLongPress == null
+                    ? null
+                    : (_) => onLongPress!(item),
+              );
               return RepaintBoundary(
-                child: StaggerIn(
-                  key: ValueKey<String>(item.href),
-                  index: index % (crossAxisCount * 2),
-                  enabled: stagger,
-                  child: ComicCardTile(
-                    item: item,
-                    onTap: onTap,
-                    onLongPress: onLongPress,
-                  ),
-                ),
+                child: animateItems
+                    ? StaggerIn(
+                        key: ValueKey<String>(item.href),
+                        index: index % (crossAxisCount * 2),
+                        enabled: stagger,
+                        child: tile,
+                      )
+                    : tile,
               );
             },
             childCount: items.length,

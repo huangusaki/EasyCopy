@@ -1,7 +1,6 @@
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/download_storage_service.dart';
-import 'package:reader/services/migration_delta_journal_store.dart';
 
 /// Storage operations needed by migration, independent of queue execution.
 abstract interface class DownloadMigrationStorage {
@@ -13,27 +12,27 @@ abstract interface class DownloadMigrationStorage {
     DownloadPreferences preferences, {
     bool verifyWritable = false,
   });
-  Future<DownloadStorageMigrationResult> migrateCacheRoot({
+  Future<void> verifyMigrationSource(DownloadPreferences preferences);
+  Future<List<String>> migrateCacheRoot({
     required DownloadPreferences from,
     required DownloadPreferences to,
     MigrationProgressCallback? onProgress,
   });
-  Future<void> applyMigrationDeltas({
+  Future<void> verifyMigratedCache({
     required DownloadPreferences from,
     required DownloadPreferences to,
-    required Iterable<MigrationDeltaEntry> entries,
-    MigrationProgressCallback? onProgress,
+    required List<String> relativePaths,
   });
   Future<void> copyCachedLibraryIndex({
     required DownloadPreferences from,
     required DownloadPreferences to,
   });
   Future<String> cleanupStorageDirectory({
-    required DownloadPreferences preferences,
+    required DownloadPreferences from,
+    required DownloadPreferences to,
+    required List<String> relativePaths,
     MigrationProgressCallback? onProgress,
   });
-  String chapterDirectoryPath(String comicTitle, String chapterLabel);
-  String comicDirectoryPath(String comicTitle);
 }
 
 class ComicDownloadMigrationStorage implements DownloadMigrationStorage {
@@ -57,22 +56,23 @@ class ComicDownloadMigrationStorage implements DownloadMigrationStorage {
     verifyWritable: verifyWritable,
   );
   @override
-  Future<DownloadStorageMigrationResult> migrateCacheRoot({
+  Future<void> verifyMigrationSource(DownloadPreferences preferences) =>
+      service.verifyMigrationSource(preferences);
+  @override
+  Future<List<String>> migrateCacheRoot({
     required DownloadPreferences from,
     required DownloadPreferences to,
     MigrationProgressCallback? onProgress,
   }) => service.migrateCacheRoot(from: from, to: to, onProgress: onProgress);
   @override
-  Future<void> applyMigrationDeltas({
+  Future<void> verifyMigratedCache({
     required DownloadPreferences from,
     required DownloadPreferences to,
-    required Iterable<MigrationDeltaEntry> entries,
-    MigrationProgressCallback? onProgress,
-  }) => service.applyMigrationDeltas(
+    required List<String> relativePaths,
+  }) => service.verifyMigratedCache(
     from: from,
     to: to,
-    entries: entries,
-    onProgress: onProgress,
+    relativePaths: relativePaths,
   );
   @override
   Future<void> copyCachedLibraryIndex({
@@ -81,16 +81,14 @@ class ComicDownloadMigrationStorage implements DownloadMigrationStorage {
   }) => service.copyCachedLibraryIndex(from: from, to: to);
   @override
   Future<String> cleanupStorageDirectory({
-    required DownloadPreferences preferences,
+    required DownloadPreferences from,
+    required DownloadPreferences to,
+    required List<String> relativePaths,
     MigrationProgressCallback? onProgress,
   }) => service.cleanupStorageDirectory(
-    preferences: preferences,
+    from: from,
+    to: to,
+    relativePaths: relativePaths,
     onProgress: onProgress,
   );
-  @override
-  String chapterDirectoryPath(String comicTitle, String chapterLabel) =>
-      service.chapterDirectoryPath(comicTitle, chapterLabel);
-  @override
-  String comicDirectoryPath(String comicTitle) =>
-      service.comicDirectoryPath(comicTitle);
 }

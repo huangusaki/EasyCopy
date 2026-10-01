@@ -15,7 +15,16 @@ class ChapterPathResolver {
   String pathKey(String href) => UriKeys.pathKey(href);
 
   String lastReadKey(DetailPageData page) {
-    return _readerProgressStore.latestChapterPathKeyForCatalog(page.uri) ?? '';
+    return pathKey(
+      _readerProgressStore.latestChapterPathKeyForCatalog(page.uri) ?? '',
+    );
+  }
+
+  Set<String> visitedKeys(DetailPageData page) {
+    return _readerProgressStore
+        .visitedChapterPathKeysForCatalog(page.uri)
+        .map(pathKey)
+        .toSet();
   }
 }
 

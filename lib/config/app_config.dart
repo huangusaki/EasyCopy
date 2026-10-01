@@ -10,10 +10,7 @@ class AppConfig {
   AppConfig._();
 
   static const String appName = 'EasyCopy';
-  static const String appDescription =
-      'Hide the original desktop page and render a mobile-first reading UI.';
   static const String profilePath = '/person/home';
-  static const String profileRouteKey = '__profile__';
   static const ProfileCollectionSort defaultProfileCollectionSort =
       ProfileCollectionSort.latestUpdate;
 
@@ -25,11 +22,6 @@ class AppConfig {
   static const bool debugProbeImages = bool.fromEnvironment(
     'EASY_COPY_DEBUG_PROBE_IMAGES',
     defaultValue: false,
-  );
-
-  static const String debugPinHost = String.fromEnvironment(
-    'EASY_COPY_DEBUG_PIN_HOST',
-    defaultValue: '',
   );
 
   static HostManager get hostManager => HostManager.instance;
@@ -147,13 +139,6 @@ class AppConfig {
       const AppDestination(label: '排行', icon: Icons.bar_chart, path: '/rank'),
       const AppDestination(label: '我的', icon: Icons.person, path: profilePath),
     ];
-  }
-
-  static bool isPrimaryDestination(Uri uri) {
-    return buildDestinations().any((AppDestination destination) {
-      return destination.uri.path == uri.path &&
-          destination.uri.query == uri.query;
-    });
   }
 
   static bool isAllowedNavigationUri(Uri? uri) {

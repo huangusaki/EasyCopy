@@ -106,7 +106,6 @@ class ReaderScreenState extends State<ReaderScreen> {
       platformBridge: widget.services.platformBridge,
       apiClient: widget.services.apiClient,
       session: widget.services.session,
-      localLibraryStore: widget.services.localLibraryStore,
       historyRecorder: ReaderHistoryRecorder(
         resolveCoverUrl: widget.onResolveHistoryCover,
         localLibraryStore: widget.services.localLibraryStore,

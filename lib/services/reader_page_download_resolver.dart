@@ -20,6 +20,12 @@ class ReaderPageDownloadResolver {
   final ReaderPageLoader _loadFromWebViewFallback;
 
   Future<ReaderPageData> resolve(Uri chapterUri) async {
+    final ReaderPageData? pageCachedPage = await _loadFromPageCache(chapterUri);
+    if (_hasRemoteImageList(pageCachedPage)) {
+      return pageCachedPage!;
+    }
+
+    // The storage loader validates local images or returns saved remote sources.
     final ReaderPageData? storageCachedPage = await _loadFromStorageCache(
       chapterUri,
     );
@@ -27,16 +33,11 @@ class ReaderPageDownloadResolver {
       return storageCachedPage!;
     }
 
-    final ReaderPageData? pageCachedPage = await _loadFromPageCache(chapterUri);
-    if (_hasUsableImageList(pageCachedPage)) {
-      return pageCachedPage!;
-    }
-
     try {
       final ReaderPageData lightweightPage = await _loadFromLightweightSource(
         chapterUri,
       );
-      if (_hasUsableImageList(lightweightPage)) {
+      if (_hasRemoteImageList(lightweightPage)) {
         return lightweightPage;
       }
     } catch (_) {
@@ -44,7 +45,7 @@ class ReaderPageDownloadResolver {
     }
 
     final ReaderPageData page = await _loadFromWebViewFallback(chapterUri);
-    if (!_hasUsableImageList(page)) {
+    if (!_hasRemoteImageList(page)) {
       throw StateError('章节解析失败');
     }
     return page;
@@ -52,5 +53,15 @@ class ReaderPageDownloadResolver {
 
   bool _hasUsableImageList(ReaderPageData? page) {
     return page != null && page.imageUrls.isNotEmpty;
+  }
+
+  bool _hasRemoteImageList(ReaderPageData? page) {
+    return _hasUsableImageList(page) &&
+        page!.imageUrls.every((String url) {
+          final Uri? uri = Uri.tryParse(url);
+          return uri != null &&
+              (uri.scheme == 'http' || uri.scheme == 'https') &&
+              uri.host.isNotEmpty;
+        });
   }
 }

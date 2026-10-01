@@ -37,28 +37,6 @@ extension _DownloadPathUtils on ComicDownloadService {
         .join('/');
   }
 
-  Future<void> _markOwnedComicDirectory(
-    _ResolvedStorageRoot root,
-    String comicDirectoryPath, {
-    required bool existedBefore,
-  }) async {
-    if (comicDirectoryPath.trim().isEmpty || existedBefore) {
-      return;
-    }
-    final String markerPath = _joinRelativePath(<String>[
-      comicDirectoryPath,
-      _comicOwnershipMarkerName,
-    ]);
-    try {
-      if (await root.exists(markerPath)) {
-        return;
-      }
-      await root.writeString(markerPath, 'easy_copy_owned');
-    } catch (_) {
-      return;
-    }
-  }
-
   String _parentRelativePath(String value) {
     final String normalized = value.trim().replaceAll('\\', '/');
     final int separatorIndex = normalized.lastIndexOf('/');

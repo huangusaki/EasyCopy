@@ -59,7 +59,7 @@ class CachedPageEnvelope {
     required this.routeKey,
     required this.pageType,
     required this.payload,
-    required this.fingerprint,
+    this.readerCacheVersion,
     required this.fetchedAt,
     required this.softTtlSeconds,
     required this.hardTtlSeconds,
@@ -83,7 +83,7 @@ class CachedPageEnvelope {
               .map(
                 (Object? key, Object? value) => MapEntry(key.toString(), value),
               ),
-      fingerprint: (json['fingerprint'] as String?) ?? '',
+      readerCacheVersion: (json['readerCacheVersion'] as num?)?.toInt(),
       fetchedAt:
           DateTime.tryParse((json['fetchedAt'] as String?) ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
@@ -102,7 +102,7 @@ class CachedPageEnvelope {
   final String routeKey;
   final SitePageType pageType;
   final Map<String, Object?> payload;
-  final String fingerprint;
+  final int? readerCacheVersion;
   final DateTime fetchedAt;
   final DateTime validatedAt;
   final DateTime lastAccessedAt;
@@ -125,7 +125,6 @@ class CachedPageEnvelope {
     DateTime? fetchedAt,
     DateTime? validatedAt,
     DateTime? lastAccessedAt,
-    String? fingerprint,
     Map<String, Object?>? payload,
     String? authScope,
   }) {
@@ -133,7 +132,7 @@ class CachedPageEnvelope {
       routeKey: routeKey,
       pageType: pageType,
       payload: payload ?? this.payload,
-      fingerprint: fingerprint ?? this.fingerprint,
+      readerCacheVersion: readerCacheVersion,
       fetchedAt: fetchedAt ?? this.fetchedAt,
       validatedAt: validatedAt ?? this.validatedAt,
       lastAccessedAt: lastAccessedAt ?? this.lastAccessedAt,
@@ -148,7 +147,7 @@ class CachedPageEnvelope {
       'routeKey': routeKey,
       'pageType': pageType.name,
       'payload': payload,
-      'fingerprint': fingerprint,
+      if (readerCacheVersion != null) 'readerCacheVersion': readerCacheVersion,
       'fetchedAt': fetchedAt.toIso8601String(),
       'validatedAt': validatedAt.toIso8601String(),
       'lastAccessedAt': lastAccessedAt.toIso8601String(),
@@ -184,6 +183,7 @@ class PageCacheStore {
 
   static const int maxEntries = 120;
   static const int maxBytes = 10 * 1024 * 1024;
+  static const int readerCacheVersion = 1;
 
   final AtomicJsonFile<List<CachedPageEnvelope>> _file;
   final SerialExecutor _operations = SerialExecutor();
@@ -262,30 +262,12 @@ class PageCacheStore {
     });
   }
 
-  Future<void> removeAuthScope(String authScope) {
-    return _operations.run(() async {
-      await ensureInitialized();
-      _entries.removeWhere((CachedPageEnvelope entry) {
-        return entry.authScope == authScope;
-      });
-      await _persist();
-    });
-  }
-
   Future<void> removeAuthenticatedEntries() {
     return _operations.run(() async {
       await ensureInitialized();
       _entries.removeWhere((CachedPageEnvelope entry) {
         return entry.authScope != 'guest';
       });
-      await _persist();
-    });
-  }
-
-  Future<void> clear() {
-    return _operations.run(() async {
-      await ensureInitialized();
-      _entries = <CachedPageEnvelope>[];
       await _persist();
     });
   }
@@ -330,7 +312,6 @@ class PageCacheStore {
   static CachedPageEnvelope buildEnvelope({
     required String routeKey,
     required SitePage page,
-    required String fingerprint,
     required String authScope,
     DateTime? now,
   }) {
@@ -340,7 +321,9 @@ class PageCacheStore {
       routeKey: routeKey,
       pageType: page.type,
       payload: _cachePayloadForPage(page),
-      fingerprint: fingerprint,
+      readerCacheVersion: page.type == SitePageType.reader
+          ? readerCacheVersion
+          : null,
       fetchedAt: timestamp,
       validatedAt: timestamp,
       lastAccessedAt: timestamp,

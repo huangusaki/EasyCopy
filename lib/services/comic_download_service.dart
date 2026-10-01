@@ -13,10 +13,10 @@ import 'package:reader/services/cached_chapter_locator_store.dart';
 import 'package:reader/services/cached_library_index_store.dart';
 import 'package:reader/services/comic_download_service/chapter_image_downloader.dart';
 import 'package:reader/services/comic_download_service/download_contracts.dart';
+import 'package:reader/services/comic_download_service/image_integrity.dart';
 import 'package:reader/services/debug_trace.dart';
 import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
-import 'package:reader/services/migration_delta_journal_store.dart';
 import 'package:reader/services/tree_image_provider.dart';
 import 'package:reader/services/uri_keys.dart';
 
@@ -73,10 +73,6 @@ class ComicDownloadService {
     );
   }
 
-  Future<List<DownloadStorageState>> loadCustomDirectoryCandidates() {
-    return _storageService.loadCustomDirectoryCandidates();
-  }
-
   Future<String> storageKeyForPreferences(
     DownloadPreferences preferences, {
     bool verifyWritable = false,
@@ -92,13 +88,40 @@ class ComicDownloadService {
     required DownloadPreferences from,
     required DownloadPreferences to,
   }) async {
-    final String fromStorageKey = await storageKeyForPreferences(from);
-    final String toStorageKey = await storageKeyForPreferences(to);
+    final DownloadStorageState sourceState = await resolveStorageState(
+      preferences: from,
+      verifyWritable: false,
+    );
+    final DownloadStorageState targetState = await resolveStorageState(
+      preferences: to,
+      verifyWritable: false,
+    );
+    final String fromStorageKey = _storageService.storageKeyForState(
+      sourceState,
+    );
+    final String toStorageKey = _storageService.storageKeyForState(targetState);
     if (fromStorageKey == toStorageKey) {
       return;
     }
-    await _cachedLibraryIndexStore.copy(fromStorageKey, toStorageKey);
-    await _cachedChapterLocatorStore.copy(fromStorageKey, toStorageKey);
+    final _ResolvedStorageRoot targetRoot = await _resolveStorageRootFromState(
+      targetState,
+    );
+    final List<Map<String, Object?>> manifests = await _loadLibraryManifests(
+      targetRoot,
+      stats: _LibraryScanStats(),
+    );
+    final List<CachedComicLibraryEntry> comics = _buildLibraryFromManifests(
+      manifests,
+      previousEntries: <CachedComicLibraryEntry>[
+        ...await _readCachedLibraryMetadata(sourceState),
+        ...await _readCachedLibraryMetadata(targetState),
+      ],
+    );
+    await _writeCachedLibraryIndex(toStorageKey, comics);
+    await _replaceCachedChapterLocators(
+      storageKey: toStorageKey,
+      comics: comics,
+    );
   }
 
   String comicDirectoryPath(String comicTitle) {
@@ -112,7 +135,7 @@ class ComicDownloadService {
     ]);
   }
 
-  Future<ChapterDownloadResult> downloadChapter(
+  Future<void> downloadChapter(
     ReaderPageData page, {
     String cookieHeader = '',
     String? comicUri,
@@ -136,7 +159,6 @@ class ComicDownloadService {
       storageState,
     );
     final String comicDirectoryPath = _sanitizePathSegment(page.comicTitle);
-    final bool comicDirectoryExisted = await root.exists(comicDirectoryPath);
     final String resolvedComicUri =
         (comicUri ?? page.catalogHref).trim().isNotEmpty
         ? (comicUri ?? page.catalogHref).trim()
@@ -156,14 +178,20 @@ class ComicDownloadService {
       chapterDirectoryPath,
       'manifest.json',
     ]);
+    await _checkChapterDirectoryIdentity(
+      root,
+      chapterDirectoryPath,
+      chapterHref: resolvedChapterHref,
+      sourceUri: page.uri,
+    );
 
-    final ChapterDownloadResult? completedResult = await _loadCompletedChapter(
+    final bool isCompleted = await _isChapterCompleted(
       root: root,
       manifestRelativePath: manifestRelativePath,
       chapterDirectoryPath: chapterDirectoryPath,
       expectedImageCount: page.imageUrls.length,
     );
-    if (completedResult != null) {
+    if (isCompleted) {
       await _upsertCachedChapterIndex(
         storageKey: storageKey,
         comicTitle: page.comicTitle,
@@ -187,12 +215,33 @@ class ComicDownloadService {
           ),
         );
       }
-      return completedResult;
+      return;
+    }
+
+    if (page.imageUrls.any((String url) {
+      final Uri? uri = Uri.tryParse(url);
+      return uri == null ||
+          (uri.scheme != 'http' && uri.scheme != 'https') ||
+          uri.host.isEmpty;
+    })) {
+      throw const FileSystemException('本地章节缓存已变化，请重试下载。');
     }
 
     final Map<int, String> existingFiles = await _loadExistingImageFiles(
       root,
       chapterDirectoryPath,
+    );
+    final String downloadIdentityPath = _joinRelativePath(<String>[
+      chapterDirectoryPath,
+      _downloadIdentityFileName,
+    ]);
+    await root.writeString(
+      downloadIdentityPath,
+      jsonEncode(<String, Object?>{
+        'chapterHref': resolvedChapterHref,
+        'sourceUri': page.uri,
+        'imageCount': page.imageUrls.length,
+      }),
     );
     final List<String> orderedSavedFiles = await _imageDownloader.download(
       imageUrls: page.imageUrls,
@@ -229,13 +278,10 @@ class ComicDownloadService {
         'downloadedAt': DateTime.now().toIso8601String(),
         'imageCount': orderedSavedFiles.length,
         'files': orderedSavedFiles,
+        'sourceImageUrls': page.imageUrls,
       }),
     );
-    await _markOwnedComicDirectory(
-      root,
-      comicDirectoryPath,
-      existedBefore: comicDirectoryExisted,
-    );
+    await root.deletePath(downloadIdentityPath);
     await _upsertCachedChapterIndex(
       storageKey: storageKey,
       comicTitle: page.comicTitle,
@@ -250,11 +296,45 @@ class ComicDownloadService {
         downloadedAt: DateTime.now(),
       ),
     );
+  }
 
-    return ChapterDownloadResult(
-      directory: Directory(chapterDirectoryPath),
-      fileCount: orderedSavedFiles.length,
-      manifestFile: File(manifestRelativePath),
-    );
+  Future<void> _checkChapterDirectoryIdentity(
+    _ResolvedStorageRoot root,
+    String directoryPath, {
+    required String chapterHref,
+    required String sourceUri,
+  }) async {
+    if (!await root.exists(directoryPath)) return;
+    for (final String name in <String>[
+      'manifest.json',
+      _downloadIdentityFileName,
+    ]) {
+      final String path = _joinRelativePath(<String>[directoryPath, name]);
+      if (!await root.exists(path)) continue;
+      Object? metadata;
+      try {
+        metadata = jsonDecode(await root.readString(path));
+      } on FormatException {
+        throw FileSystemException('同名目录中的章节记录无法识别，已停止下载。', directoryPath);
+      }
+      final Set<String> expectedKeys = <String>{
+        _pathKeyForUri(chapterHref),
+        _pathKeyForUri(sourceUri),
+      }..remove('');
+      final Set<String> storedKeys = metadata is Map
+          ? <String>{
+              _pathKeyForUri(_stringValue(metadata['chapterHref'])),
+              _pathKeyForUri(_stringValue(metadata['sourceUri'])),
+            }
+          : <String>{};
+      storedKeys.remove('');
+      if (storedKeys.isEmpty || !storedKeys.every(expectedKeys.contains)) {
+        throw FileSystemException('同名目录已有其他章节或无法识别的文件，已停止下载。', directoryPath);
+      }
+      return;
+    }
+    if ((await root.listEntries(directoryPath, recursive: false)).isNotEmpty) {
+      throw FileSystemException('同名目录已有无法识别的文件，已停止下载。', directoryPath);
+    }
   }
 }

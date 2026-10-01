@@ -104,22 +104,6 @@ class HostSettingsStore {
     });
   }
 
-  Future<bool> isActiveHost(String host) async {
-    await ensureInitialized();
-    final String normalizedHost = _normalizeHost(host);
-    if (normalizedHost.isEmpty) {
-      return false;
-    }
-    final List<Map<String, Object?>> rows = await _database!.query(
-      _tableName,
-      columns: const <String>['host'],
-      where: 'host = ? AND is_deleted = 0',
-      whereArgs: <Object>[normalizedHost],
-      limit: 1,
-    );
-    return rows.isNotEmpty;
-  }
-
   Future<void> close() async {
     try {
       await _writeQueue;

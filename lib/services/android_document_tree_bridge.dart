@@ -27,12 +27,16 @@ class DocumentTreeDirectoryResolution {
     required this.basePath,
     required this.rootPath,
     required this.isWritable,
+    this.storageIdentity = '',
+    this.comparablePath = '',
     this.errorMessage = '',
   });
 
   final String basePath;
   final String rootPath;
   final bool isWritable;
+  final String storageIdentity;
+  final String comparablePath;
   final String errorMessage;
 
   factory DocumentTreeDirectoryResolution.fromMap(Map<Object?, Object?> map) {
@@ -40,6 +44,8 @@ class DocumentTreeDirectoryResolution {
       basePath: (map['basePath'] as String?)?.trim() ?? '',
       rootPath: (map['rootPath'] as String?)?.trim() ?? '',
       isWritable: (map['isWritable'] as bool?) ?? false,
+      storageIdentity: (map['storageIdentity'] as String?) ?? '',
+      comparablePath: (map['comparablePath'] as String?) ?? '',
       errorMessage: (map['errorMessage'] as String?)?.trim() ?? '',
     );
   }
@@ -50,29 +56,21 @@ class DocumentTreeEntry {
   const DocumentTreeEntry({
     required this.relativePath,
     required this.name,
-    required this.uri,
     required this.isDirectory,
     this.size = 0,
-    this.lastModifiedMillis = 0,
   });
 
   final String relativePath;
   final String name;
-  final String uri;
   final bool isDirectory;
   final int size;
-  final int lastModifiedMillis;
-
-  bool get isFile => !isDirectory;
 
   factory DocumentTreeEntry.fromMap(Map<Object?, Object?> map) {
     return DocumentTreeEntry(
       relativePath: (map['relativePath'] as String?)?.trim() ?? '',
       name: (map['name'] as String?)?.trim() ?? '',
-      uri: (map['uri'] as String?)?.trim() ?? '',
       isDirectory: (map['isDirectory'] as bool?) ?? false,
       size: ((map['size'] as num?) ?? 0).round(),
-      lastModifiedMillis: ((map['lastModifiedMillis'] as num?) ?? 0).round(),
     );
   }
 }
@@ -190,6 +188,8 @@ class AndroidDocumentTreeBridge {
   Future<void> importDirectoryFromPath({
     required String treeUri,
     required String sourcePath,
+    required List<String> relativePaths,
+    bool verifyOnly = false,
     String relativePath = '',
     DocumentTreeProgressCallback? onProgress,
   }) async {
@@ -204,6 +204,8 @@ class AndroidDocumentTreeBridge {
           .invokeMethod<void>('importDirectoryFromPath', <String, Object?>{
             'treeUri': treeUri,
             'sourcePath': sourcePath,
+            'relativePaths': relativePaths,
+            'verifyOnly': verifyOnly,
             'relativePath': relativePath,
             if (operationId != null) 'operationId': operationId,
           });
@@ -217,6 +219,8 @@ class AndroidDocumentTreeBridge {
   Future<void> exportDirectoryToPath({
     required String treeUri,
     required String destinationPath,
+    required List<String> relativePaths,
+    bool verifyOnly = false,
     String relativePath = '',
     DocumentTreeProgressCallback? onProgress,
   }) async {
@@ -231,6 +235,8 @@ class AndroidDocumentTreeBridge {
           .invokeMethod<void>('exportDirectoryToPath', <String, Object?>{
             'treeUri': treeUri,
             'destinationPath': destinationPath,
+            'relativePaths': relativePaths,
+            'verifyOnly': verifyOnly,
             'relativePath': relativePath,
             if (operationId != null) 'operationId': operationId,
           });
@@ -244,6 +250,8 @@ class AndroidDocumentTreeBridge {
   Future<void> copyDirectoryToTree({
     required String sourceTreeUri,
     required String targetTreeUri,
+    required List<String> relativePaths,
+    bool verifyOnly = false,
     String sourceRelativePath = '',
     String targetRelativePath = '',
     DocumentTreeProgressCallback? onProgress,
@@ -259,6 +267,8 @@ class AndroidDocumentTreeBridge {
           .invokeMethod<void>('copyDirectoryToTree', <String, Object?>{
             'sourceTreeUri': sourceTreeUri,
             'targetTreeUri': targetTreeUri,
+            'relativePaths': relativePaths,
+            'verifyOnly': verifyOnly,
             'sourceRelativePath': sourceRelativePath,
             'targetRelativePath': targetRelativePath,
             if (operationId != null) 'operationId': operationId,

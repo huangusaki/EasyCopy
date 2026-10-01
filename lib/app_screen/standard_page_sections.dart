@@ -187,15 +187,6 @@ extension _AppScreenPageSections on _AppScreenState {
     }
   }
 
-  void _previewComicByHref(List<ComicCardData> items, String href) {
-    for (final ComicCardData item in items) {
-      if (item.href == href) {
-        _showComicQuickPreview(item);
-        return;
-      }
-    }
-  }
-
   List<Widget> _buildHomeSections(HomePageData page) {
     final List<Widget> sections = <Widget>[];
 
@@ -218,8 +209,7 @@ extension _AppScreenPageSections on _AppScreenState {
           ComicSliverGrid(
             items: section.items,
             onTap: _navigateToHref,
-            onLongPress: (String href) =>
-                _previewComicByHref(section.items, href),
+            onLongPress: _showComicQuickPreview,
           ),
         ),
       );
@@ -264,7 +254,7 @@ extension _AppScreenPageSections on _AppScreenState {
             builder: (BuildContext context, bool expanded, Widget? _) {
               final List<LinkAction> visibleThemeOptions = _routes
                   .visibleDiscoverThemeOptions(themeOptions);
-              return SurfaceBlock(
+              return AppSurfaceCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
@@ -349,57 +339,13 @@ extension _AppScreenPageSections on _AppScreenState {
         ),
       );
     } else {
-      final ({bool hasSubtitle, bool hasSecondary}) meta = comicMetaCoverage(
-        page.items,
-      );
       sections.add(
         _hPaddedSliver(
-          SliverLayoutBuilder(
-            builder: (BuildContext context, constraints) {
-              const double crossAxisSpacing = 12;
-              final double availableWidth = constraints.crossAxisExtent;
-              final int crossAxisCount = responsiveComicCrossAxisCount(
-                context,
-                availableWidth,
-                spacing: crossAxisSpacing,
-              );
-              final double spacingWidth =
-                  crossAxisSpacing * (crossAxisCount - 1);
-              final double itemWidth =
-                  (availableWidth - spacingWidth) / crossAxisCount;
-              final double itemHeight = comicCardHeightFor(
-                itemWidth: itemWidth,
-                hasSubtitle: meta.hasSubtitle,
-                hasSecondary: meta.hasSecondary,
-                isWideLayout: usesWideLayout(context),
-                textScaler: MediaQuery.textScalerOf(context),
-              );
-              final double aspectRatio = itemHeight <= 0
-                  ? 0.50
-                  : (itemWidth / itemHeight);
-              return SliverGrid(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: crossAxisCount,
-                  crossAxisSpacing: crossAxisSpacing,
-                  mainAxisSpacing: 10,
-                  childAspectRatio: aspectRatio,
-                ),
-                delegate: SliverChildBuilderDelegate(
-                  (BuildContext context, int index) {
-                    final ComicCardData item = page.items[index];
-                    return RepaintBoundary(
-                      child: ComicCardTile(
-                        item: item,
-                        onTap: _navigateToHref,
-                        onLongPress: (_) => _showComicQuickPreview(item),
-                      ),
-                    );
-                  },
-                  childCount: page.items.length,
-                  addAutomaticKeepAlives: false,
-                ),
-              );
-            },
+          ComicSliverGrid(
+            items: page.items,
+            onTap: _navigateToHref,
+            onLongPress: _showComicQuickPreview,
+            animateItems: false,
           ),
         ),
       );
@@ -438,7 +384,7 @@ extension _AppScreenPageSections on _AppScreenState {
     if (page.categories.isNotEmpty || page.periods.isNotEmpty) {
       sections.add(
         _hPaddedBox(
-          SurfaceBlock(
+          AppSurfaceCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
@@ -519,6 +465,7 @@ extension _AppScreenPageSections on _AppScreenState {
 
   List<Widget> _buildDetailSections(DetailPageData page) {
     final Set<String> downloadedChapterKeys = _downloadedChapterKeys(page);
+    final Set<String> visitedChapterKeys = _chapterKeys.visitedKeys(page);
     final String lastReadChapterPathKey = _chapterKeys.lastReadKey(page);
     final List<DetailChapterTabData> chapterTabs = _detailChapters.tabs(page);
     final DetailChapterTabData? activeChapterTab = _detailChapters.activeTab(
@@ -553,7 +500,7 @@ extension _AppScreenPageSections on _AppScreenState {
 
     sections.add(
       _hPaddedBox(
-        SurfaceBlock(
+        AppSurfaceCard(
           child: chapterTabs.isEmpty
               ? const Text('章节还在整理中，向下刷新可重试。')
               : Column(
@@ -583,6 +530,7 @@ extension _AppScreenPageSections on _AppScreenState {
                           onTap: (String href) =>
                               _openDetailChapter(page, href),
                           downloadedChapterPathKeys: downloadedChapterKeys,
+                          visitedChapterPathKeys: visitedChapterKeys,
                           lastReadChapterPathKey: lastReadChapterPathKey,
                           itemKeyBuilder: _detailChapters.itemKeyFor,
                         ),

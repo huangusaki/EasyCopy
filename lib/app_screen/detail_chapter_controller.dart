@@ -31,7 +31,6 @@ class DetailChapterController {
   String _routeKey = '';
   String _handledAutoScrollKey = '';
 
-  String get selectedTabKey => _selectedTabKey;
   bool get sortAscending => _sortAscending;
 
   void noteViewportInteraction() {

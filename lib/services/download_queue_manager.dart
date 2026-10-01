@@ -6,7 +6,6 @@ import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
-import 'package:reader/services/migration_delta_journal_store.dart';
 import 'package:reader/services/storage_migration_store.dart';
 import 'package:reader/services/uri_keys.dart';
 
@@ -31,7 +30,6 @@ class DownloadQueueManager implements DownloadMigrationQueue {
     DownloadRetryPolicy retryPolicy = const DownloadRetryPolicy(),
     DownloadStorageWriteBarrier? storageWrites,
     DownloadStorageMigrationStore? migrationStore,
-    MigrationDeltaJournalStore? deltaJournalStore,
     LibraryChangedCallback? onLibraryChanged,
     DownloadQueueNoticeCallback? onNotice,
   }) : _downloadService = downloadService,
@@ -48,7 +46,6 @@ class DownloadQueueManager implements DownloadMigrationQueue {
       queue: this,
       writes: _writes,
       migrationStore: migrationStore,
-      deltaJournalStore: deltaJournalStore,
       onLibraryChanged: _notifyLibraryChanged,
       onNotice: _notify,
     );
@@ -84,17 +81,15 @@ class DownloadQueueManager implements DownloadMigrationQueue {
 
   DownloadQueueSnapshot get snapshot => snapshotNotifier.value;
 
+  @override
+  bool get hasActiveDownloads => snapshot.isNotEmpty && !snapshot.isPaused;
+
   DownloadStorageState get storageState => storageStateNotifier.value;
 
   bool get supportsCustomStorageSelection =>
       _downloadService.supportsCustomStorageSelection;
 
   bool get shouldBypassCachedReaderLookup => _migration.isActive;
-
-  Future<void> restoreState() async {
-    await refreshStorageState();
-    await restoreQueue();
-  }
 
   Future<void> restoreQueue() async {
     final DownloadQueueSnapshot restored = await _queueStore.read();
@@ -247,7 +242,6 @@ class DownloadQueueManager implements DownloadMigrationQueue {
           comicKey: task.comicKey,
           fallbackTitle: task.comicTitle,
         );
-        await _migration.recordComicDeletion(task.comicTitle);
       },
     );
   }
@@ -282,7 +276,6 @@ class DownloadQueueManager implements DownloadMigrationQueue {
       cleanup: () async {
         await _downloadService.cleanupIncompleteTasks(removed);
         await _downloadService.deleteCachedComic(entry);
-        await _migration.recordComicDeletion(entry.comicTitle);
       },
     );
   }
@@ -390,12 +383,13 @@ class DownloadQueueManager implements DownloadMigrationQueue {
   String? storageEditBlockReason() =>
       _migration.isActive ? '正在切换缓存目录，请稍后再试' : null;
 
-  Future<List<DownloadStorageState>> loadStorageCandidates() =>
-      _downloadService.loadCustomDirectoryCandidates();
-
-  Future<DownloadStorageMigrationResult?> applyStoragePreferences(
-    DownloadPreferences preferences,
-  ) => _migration.applyPreferences(preferences);
+  Future<bool> applyStoragePreferences(
+    DownloadPreferences preferences, {
+    bool migrateExisting = true,
+  }) => _migration.applyPreferences(
+    preferences,
+    migrateExisting: migrateExisting,
+  );
 
   @override
   Future<bool> suspendForStorageSwitch() async {
@@ -618,7 +612,6 @@ class DownloadQueueManager implements DownloadMigrationQueue {
             break;
           }
           await _removeTaskFromQueue(task);
-          await _writes.write(() => _migration.recordTaskUpsert(task));
           await _notifyLibraryChanged(CacheLibraryRefreshReason.queueChanged);
           if (snapshot.isEmpty) _notify('后台缓存已完成');
         case DownloadTaskOutcome.paused:
@@ -717,7 +710,6 @@ class DownloadQueueManager implements DownloadMigrationQueue {
   ) async {
     if (_disposed) return;
     await _downloadService.cleanupIncompleteTasks(tasks);
-    await _migration.recordTaskCleanup(tasks);
   }
 
   Future<void> _deleteCachedComicByKeyOrTitle({
@@ -740,7 +732,10 @@ class DownloadQueueManager implements DownloadMigrationQueue {
       await _downloadService.deleteCachedComic(match);
       return;
     }
-    await _downloadService.deleteComicCacheByTitle(fallbackTitle);
+    await _downloadService.deleteComicCache(
+      comicTitle: fallbackTitle,
+      comicHref: comicKey,
+    );
   }
 
   String _comicKey(String value) => UriKeys.pathKey(value);

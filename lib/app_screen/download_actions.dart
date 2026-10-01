@@ -1,6 +1,8 @@
 part of '../app_screen.dart';
 
 extension _AppScreenDownloadActions on _AppScreenState {
+  void _handleCachedComicsChanged() => _setStateIfMounted();
+
   Future<void> _prepareDownloadBootstrap() {
     return Future.wait(<Future<void>>[
       _refreshDownloadStorageState(),
@@ -70,12 +72,9 @@ extension _AppScreenDownloadActions on _AppScreenState {
           .downloadService
           .loadCachedLibrary(forceRescan: currentForceRescan);
       if (!mounted) {
-        _library.cachedComics = comics;
-      } else {
-        _setStateIfMounted(() {
-          _library.cachedComics = comics;
-        });
+        return;
       }
+      _library.cachedComicsNotifier.value = comics;
       DebugTrace.log('cached_library.refresh_complete', <String, Object?>{
         'bootId': _shell.bootId,
         'reason': currentReason.name,
@@ -155,6 +154,9 @@ extension _AppScreenDownloadActions on _AppScreenState {
     DetailPageData page,
     CachedComicDetailSnapshot snapshot,
   ) {
+    if (!mounted) {
+      return;
+    }
     final String targetComicKey = _comicQueueKey(page.uri);
     final int index = _library.cachedComics.indexWhere((
       CachedComicLibraryEntry entry,
@@ -176,17 +178,7 @@ extension _AppScreenDownloadActions on _AppScreenState {
       coverUrl: page.coverUrl.isEmpty ? current.coverUrl : page.coverUrl,
       detailSnapshot: snapshot,
     );
-    if (mounted) {
-      _setStateIfMounted(() {
-        _library.cachedComics = <CachedComicLibraryEntry>[
-          ..._library.cachedComics.take(index),
-          next,
-          ..._library.cachedComics.skip(index + 1),
-        ];
-      });
-      return;
-    }
-    _library.cachedComics = <CachedComicLibraryEntry>[
+    _library.cachedComicsNotifier.value = <CachedComicLibraryEntry>[
       ..._library.cachedComics.take(index),
       next,
       ..._library.cachedComics.skip(index + 1),
@@ -228,14 +220,12 @@ extension _AppScreenDownloadActions on _AppScreenState {
     List<ChapterData> chapters,
   ) async {
     final DownloadQueueSnapshot snapshot = _downloadQueueSnapshot;
-    final Set<String> downloadedKeys = _downloadedChapterKeys(page);
     final Set<String> queuedChapterKeys = snapshot.tasks
         .map((DownloadQueueTask task) => task.chapterKey)
         .toSet();
     final Uri detailUri = Uri.parse(page.uri);
 
     int addedCount = 0;
-    int skippedCachedCount = 0;
     int skippedQueuedCount = 0;
     final List<DownloadQueueTask> newTasks = <DownloadQueueTask>[];
 
@@ -245,10 +235,6 @@ extension _AppScreenDownloadActions on _AppScreenState {
         currentUri: detailUri,
       );
       final String chapterKey = _chapterKeys.pathKey(chapterUri.toString());
-      if (downloadedKeys.contains(chapterKey)) {
-        skippedCachedCount += 1;
-        continue;
-      }
       if (queuedChapterKeys.contains(chapterKey)) {
         skippedQueuedCount += 1;
         continue;
@@ -262,7 +248,6 @@ extension _AppScreenDownloadActions on _AppScreenState {
     final DownloadChapterEnqueueResult enqueueResult =
         DownloadChapterEnqueueResult(
           addedCount: addedCount,
-          skippedCachedCount: skippedCachedCount,
           skippedQueuedCount: skippedQueuedCount,
         );
 
@@ -425,34 +410,40 @@ extension _AppScreenDownloadActions on _AppScreenState {
         !_canEditDownloadStorage()) {
       return;
     }
-    if (PlatformCapabilities.isWindows) {
-      final DownloadStorageState currentState =
-          _downloadStorageStateNotifier.value;
-      final String? selectedPath = await getDirectoryPath(
-        initialDirectory: currentState.displayPath.trim().isEmpty
-            ? null
-            : currentState.displayPath,
-        confirmButtonText: '选择',
-        canCreateDirectories: true,
-      );
-      final String normalizedPath = (selectedPath ?? '').trim();
-      if (normalizedPath.isEmpty) {
+    try {
+      if (PlatformCapabilities.isWindows) {
+        final DownloadStorageState currentState =
+            _downloadStorageStateNotifier.value;
+        final String? selectedPath = await getDirectoryPath(
+          initialDirectory: currentState.displayPath.trim().isEmpty
+              ? null
+              : currentState.displayPath,
+          confirmButtonText: '选择',
+          canCreateDirectories: true,
+        );
+        final String normalizedPath = (selectedPath ?? '').trim();
+        if (!mounted || normalizedPath.isEmpty) {
+          return;
+        }
+        final DownloadPreferences nextPreferences = DownloadPreferences(
+          mode: DownloadStorageMode.customDirectory,
+          customBasePath: normalizedPath,
+          customTreeUri: '',
+          customDisplayPath: normalizedPath,
+          usePickedDirectoryAsRoot: true,
+        );
+        await _applyStoragePrefs(
+          nextPreferences,
+          successMessage: '已开始迁移到新的存储位置',
+        );
         return;
       }
-      final DownloadPreferences nextPreferences = DownloadPreferences(
-        mode: DownloadStorageMode.customDirectory,
-        customBasePath: normalizedPath,
-        customTreeUri: '',
-        customDisplayPath: normalizedPath,
-        usePickedDirectoryAsRoot: true,
-      );
-      await _applyStoragePrefs(nextPreferences, successMessage: '已开始迁移到新的存储位置');
-      return;
-    }
-    final PickedDocumentTreeDirectory? pickedDirectory = await _services
-        .downloadStorageService
-        .pickDocumentTreeDirectory();
-    if (pickedDirectory != null) {
+      final PickedDocumentTreeDirectory? pickedDirectory = await _services
+          .downloadStorageService
+          .pickDocumentTreeDirectory();
+      if (!mounted || pickedDirectory == null) {
+        return;
+      }
       final DownloadPreferences nextPreferences = DownloadPreferences(
         mode: DownloadStorageMode.customDirectory,
         customBasePath: '',
@@ -461,6 +452,10 @@ extension _AppScreenDownloadActions on _AppScreenState {
         usePickedDirectoryAsRoot: true,
       );
       await _applyStoragePrefs(nextPreferences, successMessage: '已开始迁移到新的存储位置');
+    } catch (_) {
+      if (mounted) {
+        _showDownloadNotice('目录选择失败，请重试');
+      }
     }
   }
 
@@ -479,15 +474,42 @@ extension _AppScreenDownloadActions on _AppScreenState {
     required String successMessage,
   }) async {
     try {
-      final DownloadStorageMigrationResult? result = await _downloadQueueManager
-          .applyStoragePreferences(nextPreferences);
-      if (result == null) {
+      bool migrateExisting = true;
+      bool started;
+      try {
+        started = await _downloadQueueManager.applyStoragePreferences(
+          nextPreferences,
+        );
+      } on DownloadSourceUnavailableException {
+        if (!mounted ||
+            !await _confirmDialog(
+              title: '切换缓存位置',
+              content: '旧目录无法读取。仅切换位置，原文件保留，继续吗？',
+              confirmLabel: '仅切换位置',
+            )) {
+          return;
+        }
+        migrateExisting = false;
+        started = await _downloadQueueManager.applyStoragePreferences(
+          nextPreferences,
+          migrateExisting: false,
+        );
+      }
+      if (!mounted || !started) {
         return;
       }
-      _showDownloadNotice('$successMessage，完成后自动切换');
+      _showDownloadNotice(
+        migrateExisting ? '$successMessage，完成后自动切换' : '已切换缓存位置，原文件保留',
+      );
     } catch (error) {
-      await _refreshDownloadStorageState();
-      _showDownloadNotice(formatDownloadError(error));
+      if (mounted) {
+        _showDownloadNotice(formatDownloadError(error));
+        try {
+          await _refreshDownloadStorageState();
+        } catch (_) {
+          // 已提示切换失败；刷新目录状态不能再次抛出未处理异常。
+        }
+      }
     }
   }
 

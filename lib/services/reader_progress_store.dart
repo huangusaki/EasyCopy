@@ -32,19 +32,6 @@ class ReaderPosition {
     );
   }
 
-  factory ReaderPosition.fromJson(Map<String, Object?> json) {
-    final String rawMode = (json['mode'] as String?)?.trim() ?? '';
-    if (rawMode == 'paged' || json.containsKey('pageIndex')) {
-      return ReaderPosition.paged(
-        pageIndex: ((json['pageIndex'] as num?) ?? 0).round().clamp(0, 999999),
-        pageOffset: ((json['pageOffset'] as num?) ?? 0).toDouble(),
-      );
-    }
-    return ReaderPosition.scroll(
-      offset: ((json['offset'] as num?) ?? 0).toDouble(),
-    );
-  }
-
   final ReaderProgressMode mode;
   final double offset;
   final int pageIndex;
@@ -53,32 +40,6 @@ class ReaderPosition {
   bool get isScroll => mode == ReaderProgressMode.scroll;
 
   bool get isPaged => mode == ReaderProgressMode.paged;
-
-  ReaderPosition copyWith({
-    ReaderProgressMode? mode,
-    double? offset,
-    int? pageIndex,
-    double? pageOffset,
-  }) {
-    return ReaderPosition(
-      mode: mode ?? this.mode,
-      offset: offset ?? this.offset,
-      pageIndex: pageIndex ?? this.pageIndex,
-      pageOffset: pageOffset ?? this.pageOffset,
-    );
-  }
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      'mode': switch (mode) {
-        ReaderProgressMode.scroll => 'scroll',
-        ReaderProgressMode.paged => 'paged',
-      },
-      'offset': offset,
-      'pageIndex': pageIndex,
-      'pageOffset': pageOffset,
-    };
-  }
 }
 
 @immutable
@@ -155,6 +116,7 @@ class ReaderProgressStore {
   static final ReaderProgressStore instance = ReaderProgressStore();
 
   static const String _tableName = 'reader_progress';
+  static const String _visitedTableName = 'reader_visited_chapters';
   static const String _databaseName = 'reader_state.db';
   static const String _updatedAtIndexName = 'idx_reader_progress_updated_at';
   static const Set<String> _expectedColumnNames = <String>{
@@ -187,6 +149,8 @@ class ReaderProgressStore {
   Future<void> _writeQueue = Future<void>.value();
   sqflite.Database? _database;
   List<ReaderProgressEntry> _entries = <ReaderProgressEntry>[];
+  final Map<String, Set<String>> _visitedChapters = <String, Set<String>>{};
+  final ValueNotifier<int> chapterRevision = ValueNotifier<int>(0);
 
   Future<void> ensureInitialized() {
     return _initialization ??= _initialize();
@@ -224,6 +188,12 @@ class ReaderProgressStore {
       return null;
     }
     return entry.chapterPathKey;
+  }
+
+  Set<String> visitedChapterPathKeysForCatalog(String catalogHref) {
+    return Set<String>.unmodifiable(
+      _visitedChapters[_pathKey(catalogHref)] ?? const <String>{},
+    );
   }
 
   Future<void> markChapterOpened({
@@ -301,18 +271,6 @@ class ReaderProgressStore {
     });
   }
 
-  Future<void> writeOffset({
-    required String catalogHref,
-    required String chapterHref,
-    required double offset,
-  }) {
-    return writePosition(
-      ReaderPosition.scroll(offset: offset),
-      catalogHref: catalogHref,
-      chapterHref: chapterHref,
-    );
-  }
-
   Future<void> remove(String catalogHref) async {
     await ensureInitialized();
     final String comicPathKey = _pathKey(catalogHref);
@@ -320,14 +278,20 @@ class ReaderProgressStore {
       return;
     }
     await _runWrite(() async {
+      await _database!.transaction((sqflite.Transaction transaction) async {
+        for (final String table in <String>[_tableName, _visitedTableName]) {
+          await transaction.delete(
+            table,
+            where: 'comic_path_key = ?',
+            whereArgs: <Object>[comicPathKey],
+          );
+        }
+      });
       _entries.removeWhere(
         (ReaderProgressEntry entry) => entry.comicPathKey == comicPathKey,
       );
-      await _database!.delete(
-        _tableName,
-        where: 'comic_path_key = ?',
-        whereArgs: <Object>[comicPathKey],
-      );
+      _visitedChapters.remove(comicPathKey);
+      chapterRevision.value += 1;
     });
   }
 
@@ -341,6 +305,7 @@ class ReaderProgressStore {
     _database = null;
     _initialization = null;
     _entries = <ReaderProgressEntry>[];
+    _visitedChapters.clear();
     if (database == null) {
       return;
     }
@@ -370,12 +335,17 @@ class ReaderProgressStore {
     _database = await databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
-        version: 2,
+        version: 3,
         onCreate: (sqflite.Database db, int version) async {
           await _ensureDatabaseSchema(db);
         },
         onUpgrade: (sqflite.Database db, int oldVersion, int newVersion) async {
-          await _recreateDatabaseSchema(db);
+          await _ensureDatabaseSchema(db);
+          await db.execute('''
+            INSERT OR IGNORE INTO $_visitedTableName (comic_path_key, chapter_path_key)
+            SELECT comic_path_key, chapter_path_key FROM $_tableName
+            WHERE comic_path_key != '' AND chapter_path_key != ''
+          ''');
         },
         onOpen: (sqflite.Database db) async {
           await _ensureDatabaseSchema(db);
@@ -389,6 +359,15 @@ class ReaderProgressStore {
     );
     _entries = rows.map(ReaderProgressEntry.fromRow).toList(growable: true);
     _sortEntries();
+    final List<Map<String, Object?>> visitedRows = await _database!.query(
+      _visitedTableName,
+    );
+    _visitedChapters.clear();
+    for (final Map<String, Object?> row in visitedRows) {
+      _visitedChapters
+          .putIfAbsent(row['comic_path_key']! as String, () => <String>{})
+          .add(row['chapter_path_key']! as String);
+    }
   }
 
   Future<String> _databasePath() async {
@@ -448,13 +427,33 @@ class ReaderProgressStore {
     );
   }
 
-  Future<void> _persistEntry(ReaderProgressEntry entry) {
+  Future<void> _persistEntry(ReaderProgressEntry entry) async {
+    final bool chapterChanged =
+        _entryForComicPathKey(entry.comicPathKey)?.chapterPathKey !=
+        entry.chapterPathKey;
+    final bool firstVisit =
+        !(_visitedChapters[entry.comicPathKey]?.contains(
+              entry.chapterPathKey,
+            ) ??
+            false);
+    await _database!.transaction((sqflite.Transaction transaction) async {
+      await transaction.insert(
+        _tableName,
+        entry.toRow(),
+        conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
+      );
+      if (firstVisit) {
+        await transaction.insert(_visitedTableName, <String, Object>{
+          'comic_path_key': entry.comicPathKey,
+          'chapter_path_key': entry.chapterPathKey,
+        }, conflictAlgorithm: sqflite.ConflictAlgorithm.ignore);
+      }
+    });
     _replaceEntry(entry);
-    return _database!.insert(
-      _tableName,
-      entry.toRow(),
-      conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
-    );
+    _visitedChapters
+        .putIfAbsent(entry.comicPathKey, () => <String>{})
+        .add(entry.chapterPathKey);
+    if (firstVisit || chapterChanged) chapterRevision.value += 1;
   }
 
   Future<T> _runWrite<T>(Future<T> Function() action) async {
@@ -476,6 +475,13 @@ class ReaderProgressStore {
   }
 
   Future<void> _ensureDatabaseSchema(sqflite.Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $_visitedTableName (
+        comic_path_key TEXT NOT NULL,
+        chapter_path_key TEXT NOT NULL,
+        PRIMARY KEY (comic_path_key, chapter_path_key)
+      )
+    ''');
     final Set<String> existingColumns = await _tableColumns(db);
     if (existingColumns.isNotEmpty &&
         !setEquals(existingColumns, _expectedColumnNames)) {

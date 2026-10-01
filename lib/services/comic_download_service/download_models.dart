@@ -1,6 +1,6 @@
 part of '../comic_download_service.dart';
 
-const String _comicOwnershipMarkerName = '.easycopy_comic';
+const String _downloadIdentityFileName = '.download.json';
 
 typedef MigrationProgressCallback =
     FutureOr<void> Function(StorageMigrationProgress progress);
@@ -12,30 +12,6 @@ enum CacheLibraryRefreshReason {
   migrationSwitched,
   storageRescan,
   manual,
-}
-
-class ChapterDownloadResult {
-  const ChapterDownloadResult({
-    required this.directory,
-    required this.fileCount,
-    required this.manifestFile,
-  });
-
-  final Directory directory;
-  final int fileCount;
-  final File manifestFile;
-}
-
-class DownloadStorageMigrationResult {
-  const DownloadStorageMigrationResult({
-    required this.storageState,
-    this.cleanupWarning = '',
-    this.cleanupFuture,
-  });
-
-  final DownloadStorageState storageState;
-  final String cleanupWarning;
-  final Future<String>? cleanupFuture;
 }
 
 enum DownloadStorageMigrationPhase { preparing, migrating, cleaning }

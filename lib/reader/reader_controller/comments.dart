@@ -49,9 +49,7 @@ class ReaderCommentsController {
   List<ChapterComment> get items => _items;
   String get chapterId => _chapterId;
   String get error => _error;
-  int get total => _total;
   bool get isLoading => _isLoading;
-  bool get isLoadingMore => _isLoadingMore;
   bool get isSubmitting => _isSubmitting;
 
   bool shouldShowTailPage(ReaderPageData page) {

@@ -65,13 +65,13 @@ class DownloadManagementEntryCard extends StatelessWidget {
   }
 }
 
-class DownloadManagementPage extends StatefulWidget {
+class DownloadManagementPage extends StatelessWidget {
   const DownloadManagementPage({
     required this.queueListenable,
     required this.storageStateListenable,
     required this.storageBusyListenable,
     required this.migrationProgressListenable,
-    required this.cachedComics,
+    required this.cachedComicsListenable,
     required this.onOpenCachedComic,
     required this.onDeleteCachedComic,
     required this.supportsCustomDirs,
@@ -92,7 +92,7 @@ class DownloadManagementPage extends StatefulWidget {
   final ValueListenable<DownloadStorageState> storageStateListenable;
   final ValueListenable<bool> storageBusyListenable;
   final ValueListenable<StorageMigrationProgress?> migrationProgressListenable;
-  final List<CachedComicLibraryEntry> cachedComics;
+  final ValueListenable<List<CachedComicLibraryEntry>> cachedComicsListenable;
   final ValueChanged<CachedComicLibraryEntry> onOpenCachedComic;
   final ValueChanged<CachedComicLibraryEntry> onDeleteCachedComic;
   final bool supportsCustomDirs;
@@ -108,147 +108,75 @@ class DownloadManagementPage extends StatefulWidget {
   final AsyncValueGetter<String>? onRescanStorageDirectory;
 
   @override
-  State<DownloadManagementPage> createState() => _DownloadManagementPageState();
-}
-
-class _DownloadManagementPageState extends State<DownloadManagementPage> {
-  @override
-  void initState() {
-    super.initState();
-    ChineseConverter.instance.addListener(_handleConversionModeChanged);
-  }
-
-  void _handleConversionModeChanged() {
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
-  @override
-  void dispose() {
-    ChineseConverter.instance.removeListener(_handleConversionModeChanged);
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: opaquePageBackground(context),
       appBar: AppBar(title: const Text('下载管理')),
       body: SafeArea(
-        child: ValueListenableBuilder<DownloadQueueSnapshot>(
-          valueListenable: widget.queueListenable,
-          builder:
-              (
-                BuildContext context,
-                DownloadQueueSnapshot snapshot,
-                Widget? _,
-              ) {
-                return ValueListenableBuilder<DownloadStorageState>(
-                  valueListenable: widget.storageStateListenable,
-                  builder:
-                      (
-                        BuildContext context,
-                        DownloadStorageState storageState,
-                        Widget? _,
-                      ) {
-                        return ValueListenableBuilder<bool>(
-                          valueListenable: widget.storageBusyListenable,
-                          builder:
-                              (
-                                BuildContext context,
-                                bool storageBusy,
-                                Widget? _,
-                              ) {
-                                return ValueListenableBuilder<
-                                  StorageMigrationProgress?
-                                >(
-                                  valueListenable:
-                                      widget.migrationProgressListenable,
-                                  builder:
-                                      (
-                                        BuildContext context,
-                                        StorageMigrationProgress?
-                                        migrationProgress,
-                                        Widget? _,
-                                      ) {
-                                        final Map<
-                                          String,
-                                          CachedComicLibraryEntry
-                                        >
-                                        cachedComicMap = _cachedComicMap(
-                                          widget.cachedComics,
-                                        );
-                                        Widget content = ListView(
-                                          padding: const EdgeInsets.fromLTRB(
-                                            16,
-                                            16,
-                                            16,
-                                            28,
-                                          ),
-                                          children: <Widget>[
-                                            _CurrentTaskSection(
-                                              snapshot: snapshot,
-                                              onPauseQueue: widget.onPauseQueue,
-                                              onResumeQueue:
-                                                  widget.onResumeQueue,
-                                            ),
-                                            const SizedBox(height: 16),
-                                            _QueueSection(
-                                              snapshot: snapshot,
-                                              cachedComicMap: cachedComicMap,
-                                              onClearQueue: widget.onClearQueue,
-                                              onStopComicTasks:
-                                                  widget.onStopComicTasks,
-                                              onRemoveComic:
-                                                  widget.onRemoveComic,
-                                              onRemoveTask: widget.onRemoveTask,
-                                              onRetryTask: widget.onRetryTask,
-                                            ),
-                                            const SizedBox(height: 16),
-                                            _CachedLibrarySection(
-                                              comics: widget.cachedComics,
-                                              onOpenCachedComic:
-                                                  widget.onOpenCachedComic,
-                                              onDeleteCachedComic:
-                                                  widget.onDeleteCachedComic,
-                                            ),
-                                            const SizedBox(height: 16),
-                                            _StorageSection(
-                                              state: storageState,
-                                              busy: storageBusy,
-                                              migrationProgress:
-                                                  migrationProgress,
-                                              supportsCustomDirs:
-                                                  widget.supportsCustomDirs,
-                                              onPickStorageDirectory:
-                                                  widget.onPickStorageDirectory,
-                                              onResetStorageDirectory: widget
-                                                  .onResetStorageDirectory,
-                                              onRescanStorageDirectory: widget
-                                                  .onRescanStorageDirectory,
-                                            ),
-                                          ],
-                                        );
-                                        if (usesWideLayout(context)) {
-                                          content = Align(
-                                            alignment: Alignment.topCenter,
-                                            child: ConstrainedBox(
-                                              constraints: const BoxConstraints(
-                                                maxWidth: 920,
-                                              ),
-                                              child: content,
-                                            ),
-                                          );
-                                        }
-                                        return content;
-                                      },
-                                );
-                              },
-                        );
-                      },
-                );
-              },
+        child: ListenableBuilder(
+          listenable: Listenable.merge(<Listenable>[
+            queueListenable,
+            storageStateListenable,
+            storageBusyListenable,
+            migrationProgressListenable,
+            cachedComicsListenable,
+            ChineseConverter.instance,
+          ]),
+          builder: (BuildContext context, Widget? _) {
+            final DownloadQueueSnapshot snapshot = queueListenable.value;
+            final List<CachedComicLibraryEntry> cachedComics =
+                cachedComicsListenable.value;
+            Widget content = ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+              children: <Widget>[
+                _CurrentTaskSection(
+                  snapshot: snapshot,
+                  storageBusy: storageBusyListenable.value,
+                  onPauseQueue: onPauseQueue,
+                  onResumeQueue: onResumeQueue,
+                ),
+                const SizedBox(height: 16),
+                _QueueSection(
+                  snapshot: snapshot,
+                  cachedComicMap: _cachedComicMap(cachedComics),
+                  onClearQueue: onClearQueue,
+                  onStopComicTasks: onStopComicTasks,
+                  onRemoveComic: onRemoveComic,
+                  onRemoveTask: onRemoveTask,
+                  onRetryTask: onRetryTask,
+                ),
+                const SizedBox(height: 16),
+                _CachedLibrarySection(
+                  comics: cachedComics,
+                  onOpenCachedComic: (CachedComicLibraryEntry item) {
+                    Navigator.of(context).pop();
+                    onOpenCachedComic(item);
+                  },
+                  onDeleteCachedComic: onDeleteCachedComic,
+                ),
+                const SizedBox(height: 16),
+                _StorageSection(
+                  state: storageStateListenable.value,
+                  busy: storageBusyListenable.value,
+                  migrationProgress: migrationProgressListenable.value,
+                  supportsCustomDirs: supportsCustomDirs,
+                  onPickStorageDirectory: onPickStorageDirectory,
+                  onResetStorageDirectory: onResetStorageDirectory,
+                  onRescanStorageDirectory: onRescanStorageDirectory,
+                ),
+              ],
+            );
+            if (usesWideLayout(context)) {
+              content = Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 920),
+                  child: content,
+                ),
+              );
+            }
+            return content;
+          },
         ),
       ),
     );

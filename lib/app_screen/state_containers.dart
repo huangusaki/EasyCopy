@@ -11,7 +11,6 @@ import 'package:webview_flutter/webview_flutter.dart';
 class AppScreenUiState {
   final WebViewCookieManager? cookieManager =
       PlatformCapabilities.usesMobileWebView ? WebViewCookieManager() : null;
-  final TextEditingController searchController = TextEditingController();
   final FocusNode desktopSearchFocusNode = FocusNode(
     debugLabel: 'desktop-global-search',
   );
@@ -36,7 +35,6 @@ class AppScreenUiState {
       GlobalKey<ReaderScreenState>();
 
   void dispose() {
-    searchController.dispose();
     desktopSearchFocusNode.dispose();
     mobileSearchFocusNode.dispose();
     readerShortcutFocusNode.dispose();
@@ -66,11 +64,20 @@ class AppWebViewState {
 }
 
 class AppLibraryState {
-  List<CachedComicLibraryEntry> cachedComics =
-      const <CachedComicLibraryEntry>[];
+  final ValueNotifier<List<CachedComicLibraryEntry>> cachedComicsNotifier =
+      ValueNotifier<List<CachedComicLibraryEntry>>(
+        const <CachedComicLibraryEntry>[],
+      );
+
+  List<CachedComicLibraryEntry> get cachedComics => cachedComicsNotifier.value;
+
   Future<void>? refreshTask;
   CacheLibraryRefreshReason? pendingRefresh;
   bool queuedForceRescan = false;
+
+  void dispose() {
+    cachedComicsNotifier.dispose();
+  }
 }
 
 class AppShellState {

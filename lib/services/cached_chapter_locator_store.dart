@@ -112,14 +112,6 @@ class CachedChapterLocatorStore {
     return '${storageKey.trim()}::${directoryPath.trim()}';
   }
 
-  static String pathKeyForHref(String href) {
-    final Uri? uri = Uri.tryParse(href.trim());
-    if (uri == null) {
-      return '';
-    }
-    return uri.path.trim();
-  }
-
   Future<CachedChapterLocator?> findByPathKey({
     required String storageKey,
     required String targetPathKey,
@@ -220,27 +212,6 @@ class CachedChapterLocatorStore {
       );
     }
     await batch.commit(noResult: true);
-  }
-
-  Future<void> copy(String fromStorageKey, String toStorageKey) async {
-    await ensureInitialized();
-    final String normalizedFromStorageKey = fromStorageKey.trim();
-    final String normalizedToStorageKey = toStorageKey.trim();
-    if (normalizedFromStorageKey.isEmpty ||
-        normalizedToStorageKey.isEmpty ||
-        normalizedFromStorageKey == normalizedToStorageKey) {
-      return;
-    }
-    final List<CachedChapterLocator> entries = await entriesForStorage(
-      normalizedFromStorageKey,
-    );
-    await replaceStorage(
-      normalizedToStorageKey,
-      entries.map(
-        (CachedChapterLocator entry) =>
-            entry.copyWith(storageKey: normalizedToStorageKey),
-      ),
-    );
   }
 
   Future<void> removeDirectoryPath({

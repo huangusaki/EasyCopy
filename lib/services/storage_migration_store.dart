@@ -14,9 +14,9 @@ class PendingDownloadStorageMigration {
     required this.to,
     required this.createdAt,
     required this.storageKey,
-    required this.activeStorageKey,
     this.phase = DownloadStorageMigrationStep.copying,
-    this.cleanupPending = false,
+    this.copiedPaths,
+    this.resumeQueueAfterMigration = false,
   });
 
   factory PendingDownloadStorageMigration.fromJson(Map<String, Object?> json) {
@@ -37,12 +37,12 @@ class PendingDownloadStorageMigration {
           DateTime.tryParse((json['createdAt'] as String?) ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
       storageKey: (json['storageKey'] as String?)?.trim() ?? '',
-      activeStorageKey: (json['activeStorageKey'] as String?)?.trim() ?? '',
       phase: DownloadStorageMigrationStep.values.firstWhere(
         (DownloadStorageMigrationStep entry) => entry.name == json['phase'],
         orElse: () => DownloadStorageMigrationStep.copying,
       ),
-      cleanupPending: (json['cleanupPending'] as bool?) ?? false,
+      copiedPaths: (json['copiedPaths'] as List?)?.cast<String>(),
+      resumeQueueAfterMigration: json['resumeQueueAfterMigration'] == true,
     );
   }
 
@@ -50,27 +50,28 @@ class PendingDownloadStorageMigration {
   final DownloadPreferences to;
   final DateTime createdAt;
   final String storageKey;
-  final String activeStorageKey;
   final DownloadStorageMigrationStep phase;
-  final bool cleanupPending;
+  final List<String>? copiedPaths;
+  final bool resumeQueueAfterMigration;
 
   PendingDownloadStorageMigration copyWith({
     DownloadPreferences? from,
     DownloadPreferences? to,
     DateTime? createdAt,
     String? storageKey,
-    String? activeStorageKey,
     DownloadStorageMigrationStep? phase,
-    bool? cleanupPending,
+    List<String>? copiedPaths,
+    bool? resumeQueueAfterMigration,
   }) {
     return PendingDownloadStorageMigration(
       from: from ?? this.from,
       to: to ?? this.to,
       createdAt: createdAt ?? this.createdAt,
       storageKey: storageKey ?? this.storageKey,
-      activeStorageKey: activeStorageKey ?? this.activeStorageKey,
       phase: phase ?? this.phase,
-      cleanupPending: cleanupPending ?? this.cleanupPending,
+      copiedPaths: copiedPaths ?? this.copiedPaths,
+      resumeQueueAfterMigration:
+          resumeQueueAfterMigration ?? this.resumeQueueAfterMigration,
     );
   }
 
@@ -80,9 +81,9 @@ class PendingDownloadStorageMigration {
       'to': to.toJson(),
       'createdAt': createdAt.toIso8601String(),
       'storageKey': storageKey,
-      'activeStorageKey': activeStorageKey,
       'phase': phase.name,
-      'cleanupPending': cleanupPending,
+      'copiedPaths': copiedPaths,
+      'resumeQueueAfterMigration': resumeQueueAfterMigration,
     };
   }
 }

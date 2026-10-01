@@ -148,7 +148,7 @@ extension _AppScreenProfileSections on _AppScreenState {
             storageStateListenable: _downloadStorageStateNotifier,
             storageBusyListenable: _downloadStorageBusyNotifier,
             migrationProgressListenable: _storageMigrationProgress,
-            cachedComics: _library.cachedComics,
+            cachedComicsListenable: _library.cachedComicsNotifier,
             onOpenCachedComic: (CachedComicLibraryEntry item) {
               _openCachedComicFromProfile(_cachedComicCardKey(item));
             },

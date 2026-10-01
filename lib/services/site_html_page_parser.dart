@@ -171,12 +171,7 @@ class SiteHtmlPageParser {
             .whereType<ComicSectionData>()
             .toList(growable: false);
 
-    return HomePageData(
-      title: '首页',
-      uri: uri.toString(),
-      heroBanners: const <HeroBannerData>[],
-      sections: sections,
-    );
+    return HomePageData(title: '首页', uri: uri.toString(), sections: sections);
   }
 
   DiscoverPageData _buildDiscoverPage(Uri uri, dom.Document document) {
@@ -212,11 +207,6 @@ class SiteHtmlPageParser {
           _querySelector(pager, '.next a') ??
               _querySelector(pager, '.next-all a'),
         ),
-      ),
-      spotlight: _collectComicCards(
-        document,
-        uri,
-        '.dailyRecommendation-box a[href*="/comic/"]',
       ),
     );
   }

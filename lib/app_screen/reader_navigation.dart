@@ -1,6 +1,10 @@
 part of '../app_screen.dart';
 
 extension _AppScreenReaderNavigation on _AppScreenState {
+  void _handleReaderChaptersChanged() {
+    if (_page is DetailPageData) _setStateIfMounted();
+  }
+
   bool _shouldBypassUnknownCache(Uri uri, SitePage page) {
     if (page is! UnknownPageData) {
       return false;
@@ -435,14 +439,13 @@ extension _AppScreenReaderNavigation on _AppScreenState {
       );
       return true;
     }
-    // 先弹出阅读器，再把目录页压到原栈顶，保证目录返回原来源页。
+    // 直接进入阅读时，用目录替换阅读页，保留下面的来源页。
     _scrollState.pauseTrackingForRoute();
-    _tabSessionStore.pop(_nav.selectedIndex);
     await _loadUri(
       catalogUri,
       skipPersistVisiblePageState: true,
       sourceTabIndex: _nav.selectedIndex,
-      historyMode: NavigationIntent.push,
+      historyMode: NavigationIntent.preserve,
     );
     return true;
   }

@@ -32,13 +32,6 @@ class CachedLibraryIndexStore {
   Future<void> write(String storageKey, List<Map<String, Object?>> entries) =>
       _fileForKey(storageKey).write(_LibraryIndex(storageKey, entries));
 
-  Future<void> copy(String fromStorageKey, String toStorageKey) async {
-    final List<Map<String, Object?>>? entries = await read(fromStorageKey);
-    if (entries != null) {
-      await write(toStorageKey, entries);
-    }
-  }
-
   Future<void> clear(String storageKey) => _fileForKey(storageKey).clear();
 
   AtomicJsonFile<_LibraryIndex> _fileForKey(String storageKey) {
