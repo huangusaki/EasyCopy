@@ -53,16 +53,21 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
   }
 
   Future<void> _restoreSavedCredentials() async {
-    final SavedLoginCredentials? credentials = await _credentialsStore.read();
-    if (!mounted) {
-      return;
+    SavedLoginCredentials? credentials;
+    String? errorMessage;
+    try {
+      credentials = await _credentialsStore.read();
+    } catch (_) {
+      errorMessage = '无法读取已保存的账号，请手动输入。';
     }
+    if (!mounted) return;
     setState(() {
       if (credentials != null) {
         _usernameController.text = credentials.username;
         _passwordController.text = credentials.password;
         _rememberPassword = true;
       }
+      _errorMessage = errorMessage;
       _isLoadingSavedCredentials = false;
     });
   }

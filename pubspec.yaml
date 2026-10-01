@@ -35,7 +35,8 @@ dependencies:
   crypto: ^3.0.6
   flutter_cache_manager: ^3.4.1
   flutter_displaymode: ^0.7.0
-  flutter_secure_storage: ^9.2.4
+  # Keep v10's migration path for existing v9 Android credentials.
+  flutter_secure_storage: 10.3.4
   html: ^0.15.6
   http: ^1.2.2
   image_picker: ^1.1.2

@@ -63,7 +63,13 @@ class SiteSession {
   Map<String, String> _cookies = <String, String>{};
 
   Future<void> ensureInitialized() {
-    return _initialization ??= _initialize();
+    return _initialization ??= _initialize().catchError((
+      Object error,
+      StackTrace stackTrace,
+    ) {
+      _initialization = null;
+      Error.throwWithStackTrace(error, stackTrace);
+    });
   }
 
   String? get token => _token;

@@ -75,6 +75,8 @@ class AppLibraryState {
 
 class AppShellState {
   final String bootId = DateTime.now().microsecondsSinceEpoch.toString();
+  bool bootstrapReady = false;
+  Future<void>? bootstrapTask;
   Future<void>? backgroundHostRefreshTask;
   DownloadPreferences? lastDownloadPrefs;
   bool isUpdatingHostSettings = false;

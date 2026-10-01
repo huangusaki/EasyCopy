@@ -91,7 +91,7 @@ extension _AppScreenPageSections on _AppScreenState {
               ),
               const SizedBox(height: 14),
               const Text(
-                '源站访问出现了问题，尝试使用魔法吧',
+                '页面暂时无法加载',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 10),

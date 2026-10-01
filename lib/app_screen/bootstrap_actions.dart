@@ -71,18 +71,38 @@ extension _AppScreenBootstrapActions on _AppScreenState {
     }
   }
 
-  Future<void> _bootstrap() async {
+  Future<void> _bootstrap({Uri? targetUri}) {
+    return _shell.bootstrapTask ??= _runBootstrap(
+      targetUri: targetUri,
+    ).whenComplete(() => _shell.bootstrapTask = null);
+  }
+
+  Future<void> _runBootstrap({Uri? targetUri}) async {
     final Stopwatch stopwatch = Stopwatch()..start();
-    await Future.wait(<Future<void>>[
-      _services.hostManager.ensureInitialized(),
-      _services.session.ensureInitialized(),
-      _preferencesController.ensureInitialized(),
-      _services.readerProgressStore.ensureInitialized(),
-      _services.localLibraryStore.ensureInitialized(),
-      _services.blockedContentStore.ensureInitialized(),
-      _services.searchHistoryStore.ensureInitialized(),
-      PageCacheStore.instance.ensureInitialized(),
-    ]);
+    try {
+      await Future.wait(<Future<void>>[
+        _services.hostManager.ensureInitialized(),
+        _services.session.ensureInitialized(),
+        _preferencesController.ensureInitialized(),
+        _services.readerProgressStore.ensureInitialized(),
+        _services.localLibraryStore.ensureInitialized(),
+        _services.blockedContentStore.ensureInitialized(),
+        _services.searchHistoryStore.ensureInitialized(),
+        PageCacheStore.instance.ensureInitialized(),
+      ]);
+    } catch (error) {
+      if (!mounted) return;
+      final NavigationRequestContext request = _prepareRouteEntry(
+        _currentUri,
+        targetTabIndex: _nav.selectedIndex,
+        intent: NavigationIntent.preserve,
+        preserveVisiblePage: false,
+        sourceKind: NavigationRequestSourceKind.navigation,
+      );
+      await _handlePageLoadFailure(error, requestContext: request);
+      return;
+    }
+    _shell.bootstrapReady = true;
     _searchActions.replaceHistory(_services.searchHistoryStore.items);
     DebugTrace.log('bootstrap.initialized', <String, Object?>{
       'bootId': _shell.bootId,
@@ -101,7 +121,8 @@ extension _AppScreenBootstrapActions on _AppScreenState {
     final int initialTabIndex = _preferencesController.lastPrimaryTabIndex
         .clamp(0, appDestinations.length - 1)
         .toInt();
-    final Uri homeUri = debugUri ?? appDestinations[initialTabIndex].uri;
+    final Uri homeUri =
+        targetUri ?? debugUri ?? appDestinations[initialTabIndex].uri;
     if (!mounted) {
       return;
     }

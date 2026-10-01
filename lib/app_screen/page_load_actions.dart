@@ -379,6 +379,10 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     CachedChapterNavigationContext cachedChapterContext =
         const CachedChapterNavigationContext(),
   }) async {
+    if (!_shell.bootstrapReady) {
+      await _bootstrap(targetUri: uri);
+      return;
+    }
     final int sessionGeneration = _sessionController.generation;
     if (!_sessionController.accepts(sessionGeneration)) return;
     if (!skipPersistVisiblePageState) {
@@ -689,6 +693,10 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     bool preserveVisiblePage = false,
     NavigationIntent historyMode = NavigationIntent.push,
   }) async {
+    if (!_shell.bootstrapReady) {
+      await _bootstrap(targetUri: targetUri ?? AppConfig.profileUri);
+      return;
+    }
     final int sessionGeneration = _sessionController.generation;
     if (!_sessionController.accepts(sessionGeneration)) return;
     _scrollState.persistVisiblePageState();

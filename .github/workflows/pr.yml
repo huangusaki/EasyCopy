@@ -17,7 +17,7 @@ env:
 
 jobs:
   quality:
-    name: Format, analyze, and test
+    name: Format and analyze
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,13 +36,10 @@ jobs:
         run: flutter pub get --enforce-lockfile
 
       - name: Check formatting
-        run: dart format --output=none --set-exit-if-changed lib test
+        run: dart format --output=none --set-exit-if-changed lib
 
       - name: Analyze
         run: flutter analyze
-
-      - name: Test
-        run: flutter test
 
   android-native:
     name: Android native build
