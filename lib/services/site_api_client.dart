@@ -8,6 +8,7 @@ import 'package:reader/models/page_models.dart';
 import 'package:reader/services/desktop_search_api_bridge.dart';
 import 'package:reader/services/network_client.dart';
 import 'package:reader/services/quic_http_client.dart';
+import 'package:reader/services/search_endpoint_resolver.dart';
 import 'package:reader/services/site_json_utils.dart';
 import 'package:reader/services/site_session.dart';
 import 'package:reader/utils/platform_capabilities.dart';
@@ -21,6 +22,10 @@ class SiteApiException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class _SearchEndpointInvalid implements Exception {
+  const _SearchEndpointInvalid();
 }
 
 class SiteLoginResult {
@@ -58,8 +63,11 @@ class SiteApiClient {
     http.Client? client,
     SiteSession? session,
     SearchResponseLoader? searchResponseLoader,
+    SearchEndpointResolver? searchEndpointResolver,
   }) : _client = client ?? AppHttpClientFactory.create(),
        _session = session ?? SiteSession.instance,
+       _searchEndpointResolver =
+           searchEndpointResolver ?? SearchEndpointResolver.instance,
        _searchResponseLoader =
            searchResponseLoader ??
            (PlatformCapabilities.supportsDesktopWebView
@@ -72,6 +80,7 @@ class SiteApiClient {
   final http.Client _client;
   final SiteSession _session;
   final SearchResponseLoader? _searchResponseLoader;
+  final SearchEndpointResolver _searchEndpointResolver;
   static const int _searchPageSize = 12;
   static const int _profilePageSize = 20;
 
@@ -369,12 +378,11 @@ class SiteApiClient {
       );
     }
 
-    final Map<String, Object?> payload = await _getSearchJson(
+    final Map<String, Object?> results = await _getSearchJson(
       query: normalizedQuery,
       page: normalizedPage,
       qType: normalizedQueryType,
     );
-    final Map<String, Object?> results = asStringKeyMap(payload['results']);
     final List<Map<String, Object?>> list = _extractList(results);
     final int total =
         (results['total'] as num?)?.toInt() ??
@@ -545,56 +553,118 @@ class SiteApiClient {
     required String qType,
   }) async {
     await _session.ensureInitialized();
-    final int offset = (page - 1) * _searchPageSize;
-    Object? lastError;
-    for (final String path in const <String>[
-      '/api/kb/web/searchci/comics',
-      '/api/kb/web/searchch/comics',
-    ]) {
-      try {
-        final Uri uri = AppConfig.resolvePath(path).replace(
-          queryParameters: <String, String>{
-            'offset': '$offset',
-            'platform': '2',
-            'limit': '$_searchPageSize',
-            'q': query,
-            'q_type': qType,
-          },
-        );
-        final Map<String, String> headers = <String, String>{
-          'Accept': 'application/json',
-          'User-Agent': AppConfig.desktopUserAgent,
-          'platform': '2',
-          if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
-        };
-        final DesktopSearchResponse response = await _loadSearchResponse(
-          uri,
-          headers: headers,
-        );
-        final Object? decoded = jsonDecode(response.body);
-        if (decoded is! Map) {
-          throw SiteApiException('搜索接口返回格式异常。');
-        }
-        final Map<String, Object?> payload = decoded.map(
-          (Object? key, Object? value) => MapEntry(key.toString(), value),
-        );
-        final int code =
-            (payload['code'] as num?)?.toInt() ?? response.statusCode;
-        if (code != 200) {
-          throw SiteApiException(
-            (payload['message'] as String?) ?? '搜索失败：$code',
+    final Uri baseUri = AppConfig.baseUri;
+    try {
+      final String? suffix = await _searchEndpointResolver.suffixFor(
+        baseUri.host,
+      );
+      Future<Map<String, Object?>> search(String candidate) =>
+          _requestSearchJson(
+            baseUri: baseUri,
+            suffix: candidate,
+            query: query,
+            offset: (page - 1) * _searchPageSize,
+            limit: _searchPageSize,
+            qType: qType,
           );
+
+      Map<String, Object?>? original;
+      if (suffix != null) {
+        try {
+          original = await search(suffix);
+          if ((original['list'] as List).isNotEmpty) {
+            await _searchEndpointResolver.confirm(baseUri.host, suffix);
+            return original;
+          }
+        } on _SearchEndpointInvalid {
+          // Retired routes may return 404, invalid JSON, or successful empties.
         }
-        return payload;
-      } catch (error) {
-        lastError = error;
       }
+
+      final String resolved = await _searchEndpointResolver.refresh(
+        host: baseUri.host,
+        previousSuffix: suffix,
+        loadPage: () async {
+          final DesktopSearchResponse response = await _loadSearchResponse(
+            baseUri.replace(
+              path: '/search',
+              queryParameters: <String, String>{'q': query, 'q_type': qType},
+            ),
+            headers: <String, String>{
+              ..._searchHeaders('text/html'),
+              'Cache-Control': 'no-cache',
+            },
+          );
+          if (response.statusCode != 200) {
+            throw const SearchEndpointUnavailable();
+          }
+          return response.body;
+        },
+      );
+      // Do not repeat a failed request when the site still publishes that route.
+      if (resolved == suffix && original == null) {
+        throw const SearchEndpointUnavailable();
+      }
+      final Map<String, Object?> results = resolved == suffix
+          ? original!
+          : await search(resolved);
+      await _searchEndpointResolver.confirm(baseUri.host, resolved);
+      return results;
+    } on SearchEndpointUnavailable {
+      throw SiteApiException('搜索暂时不可用，请稍后重试。');
+    } on SiteApiException {
+      rethrow;
+    } catch (_) {
+      throw SiteApiException('搜索失败，请稍后重试。');
+    }
+  }
+
+  Future<Map<String, Object?>> _requestSearchJson({
+    required Uri baseUri,
+    required String suffix,
+    required String query,
+    required int offset,
+    required int limit,
+    required String qType,
+  }) async {
+    final Uri uri = baseUri.replace(
+      path: '/api/kb/web/searchc$suffix/comics',
+      queryParameters: <String, String>{
+        'offset': '$offset',
+        'platform': '2',
+        'limit': '$limit',
+        'q': query,
+        'q_type': qType,
+      },
+    );
+    final DesktopSearchResponse response = await _loadSearchResponse(
+      uri,
+      headers: _searchHeaders('application/json'),
+    );
+    void checkStatus(int code) {
+      if (code == 401 || code == 403 || code == 429 || code >= 500) {
+        throw SiteApiException('搜索请求失败（$code），请稍后重试。');
+      }
+      if (code != 200) throw const _SearchEndpointInvalid();
     }
 
-    if (lastError is SiteApiException) {
-      throw lastError;
+    checkStatus(response.statusCode);
+    Object? decoded;
+    try {
+      decoded = jsonDecode(response.body);
+    } on FormatException {
+      throw const _SearchEndpointInvalid();
     }
-    throw SiteApiException('搜索失败，请稍后重试。');
+    if (decoded is! Map) throw const _SearchEndpointInvalid();
+    final Map<String, Object?> payload = asStringKeyMap(decoded);
+    final Object? code = payload['code'];
+    if (code != null && code is! num) throw const _SearchEndpointInvalid();
+    checkStatus((code as num?)?.toInt() ?? response.statusCode);
+    final Map<String, Object?> results = asStringKeyMap(payload['results']);
+    if (results['list'] is! List) {
+      throw const _SearchEndpointInvalid();
+    }
+    return results;
   }
 
   Future<DesktopSearchResponse> _loadSearchResponse(
@@ -616,6 +686,13 @@ class SiteApiClient {
       statusCode: response.statusCode,
     );
   }
+
+  Map<String, String> _searchHeaders(String accept) => <String, String>{
+    'Accept': accept,
+    'User-Agent': AppConfig.desktopUserAgent,
+    'platform': '2',
+    if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
+  };
 
   Future<SiteLoginResult> _loginWithPath(
     String path, {

@@ -15,26 +15,6 @@ extension _AppScreenDiscoverChrome on _AppScreenState {
     return isPrimaryDiscoverUri(_currentUri);
   }
 
-  Widget _buildDiscoverSearchChrome(BuildContext context) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    return Row(
-      children: <Widget>[
-        if (_routes.shouldShowBackButton) ...<Widget>[
-          IconButton.filledTonal(
-            onPressed: _handleBackNavigation,
-            style: IconButton.styleFrom(
-              backgroundColor: colors.surface,
-              foregroundColor: colors.onSurface,
-            ),
-            icon: const Icon(Icons.arrow_back_rounded),
-          ),
-          const SizedBox(width: 10),
-        ],
-        Expanded(child: _buildSearchField(context)),
-      ],
-    );
-  }
-
   Widget _buildSearchField(BuildContext context) {
     return MobileSearchField(
       controller: _searchActions.textController,

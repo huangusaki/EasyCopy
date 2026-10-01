@@ -378,7 +378,7 @@ extension _AppScreenStandardMode on _AppScreenState {
 
     if (_shouldShowDiscoverSearchChrome) {
       return <Widget>[
-        _hPaddedBox(_buildDiscoverSearchChrome(context)),
+        _hPaddedBox(_buildSearchField(context)),
         _hPaddedBox(const SizedBox(height: 18)),
       ];
     }
