@@ -8,6 +8,7 @@ import 'package:reader/services/wallpaper_storage.dart';
 import 'package:reader/theme/app_theme.dart';
 import 'package:reader/utils/platform_capabilities.dart';
 import 'package:reader/widgets/cropped_wallpaper_image.dart';
+import 'package:reader/widgets/responsive_layout.dart';
 
 class AppRoot extends StatelessWidget {
   const AppRoot({super.key, this.home, this.preferencesController});
@@ -57,7 +58,10 @@ class AppRoot extends StatelessWidget {
             }
             body = MediaQuery(
               data: mediaQuery.copyWith(
-                textScaler: mediaQuery.textScaler.clamp(maxScaleFactor: 1.3),
+                textScaler: mediaQuery.textScaler.clamp(
+                  minScaleFactor: usesAndroidTabletLayout(context) ? 1.12 : 0,
+                  maxScaleFactor: 1.3,
+                ),
               ),
               child: body,
             );

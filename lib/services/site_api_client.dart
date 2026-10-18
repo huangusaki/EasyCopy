@@ -6,6 +6,7 @@ import 'package:reader/config/app_config.dart';
 import 'package:reader/models/chapter_comment.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/desktop_search_api_bridge.dart';
+import 'package:reader/services/login_credentials_store.dart';
 import 'package:reader/services/network_client.dart';
 import 'package:reader/services/quic_http_client.dart';
 import 'package:reader/services/search_endpoint_resolver.dart';
@@ -14,6 +15,7 @@ import 'package:reader/services/site_session.dart';
 import 'package:reader/utils/platform_capabilities.dart';
 
 part 'site_api_client/parsing.dart';
+part 'site_api_client/session_recovery.dart';
 
 class SiteApiException implements Exception {
   SiteApiException(this.message);
@@ -62,10 +64,12 @@ class SiteApiClient {
   SiteApiClient({
     http.Client? client,
     SiteSession? session,
+    LoginCredentialsStore? credentialsStore,
     SearchResponseLoader? searchResponseLoader,
     SearchEndpointResolver? searchEndpointResolver,
   }) : _client = client ?? AppHttpClientFactory.create(),
        _session = session ?? SiteSession.instance,
+       _credentialsStore = credentialsStore ?? LoginCredentialsStore.instance,
        _searchEndpointResolver =
            searchEndpointResolver ?? SearchEndpointResolver.instance,
        _searchResponseLoader =
@@ -79,6 +83,8 @@ class SiteApiClient {
 
   final http.Client _client;
   final SiteSession _session;
+  final LoginCredentialsStore _credentialsStore;
+  ({int generation, String token, Future<bool> result})? _sessionRecovery;
   final SearchResponseLoader? _searchResponseLoader;
   final SearchEndpointResolver _searchEndpointResolver;
   static const int _searchPageSize = 12;
@@ -118,6 +124,7 @@ class SiteApiClient {
 
   Future<ProfilePageData> loadProfile({Uri? uri}) async {
     await _session.ensureInitialized();
+    final int generation = _session.generation;
     final Uri targetUri = AppConfig.rewriteToCurrentHost(
       uri ?? AppConfig.profileUri,
     );
@@ -153,12 +160,21 @@ class SiteApiClient {
             page: activeSubview == ProfileSubview.history ? activePage : 1,
           );
 
-    final Map<String, Object?> userPayload = await userFuture;
-    final _PagedProfileSection collectionsPayload = await collectionsFuture;
-    final _PagedProfileSection historyPayload = await historyFuture;
+    final List<Object> results = await Future.wait<Object>(<Future<Object>>[
+      userFuture,
+      collectionsFuture,
+      historyFuture,
+    ]);
+    _checkSessionGeneration(generation);
+    final Map<String, Object?> userPayload = results[0] as Map<String, Object?>;
+    final _PagedProfileSection collectionsPayload =
+        results[1] as _PagedProfileSection;
+    final _PagedProfileSection historyPayload =
+        results[2] as _PagedProfileSection;
 
     final ProfileUserData user = _parseUser(userPayload);
-    await _session.bindUserId(user.userId);
+    await _session.bindUserId(user.userId, expectedGeneration: generation);
+    _checkSessionGeneration(generation);
     final List<ProfileLibraryItem> collections = _parseCollections(
       collectionsPayload.items,
       sort: collectionSort,
@@ -184,6 +200,7 @@ class SiteApiClient {
 
   Future<ProfileUserData> loadUserInfo() async {
     await _session.ensureInitialized();
+    final int generation = _session.generation;
     if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
       throw SiteApiException('请先登录后再操作。');
     }
@@ -191,7 +208,9 @@ class SiteApiClient {
       '/api/v2/web/user/info',
     );
     final ProfileUserData user = _parseUser(payload);
-    await _session.bindUserId(user.userId);
+    _checkSessionGeneration(generation);
+    await _session.bindUserId(user.userId, expectedGeneration: generation);
+    _checkSessionGeneration(generation);
     return user;
   }
 
@@ -209,26 +228,25 @@ class SiteApiClient {
       throw SiteApiException('漫画收藏信息缺失，请刷新详情页后重试。');
     }
 
-    final http.Response response = await NetworkClient.post(
-      _client,
-      AppConfig.resolvePath('/api/v2/web/collect'),
-      headers: <String, String>{
-        'Authorization': 'Token ${_session.token}',
-        'Accept': 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': AppConfig.desktopUserAgent,
-        'platform': '2',
-        if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
-      },
-      body: <String, String>{
-        'comic_id': normalizedComicId,
-        'is_collect': isCollected ? '1' : '0',
-      },
-      label: 'api.collect',
+    final http.Response response = await _withSessionRecovery(
+      () => NetworkClient.post(
+        _client,
+        AppConfig.resolvePath('/api/v2/web/collect'),
+        headers: <String, String>{
+          'Authorization': 'Token ${_session.token}',
+          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': AppConfig.desktopUserAgent,
+          'platform': '2',
+          if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
+        },
+        body: <String, String>{
+          'comic_id': normalizedComicId,
+          'is_collect': isCollected ? '1' : '0',
+        },
+        label: 'api.collect',
+      ),
     );
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      throw SiteApiException('登录已失效，请重新登录。');
-    }
 
     final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
     if (decoded is! Map) {
@@ -306,11 +324,6 @@ class SiteApiClient {
 
     final (:payload, :statusCode) = await _postChapterCommentJson(
       '/api/v3/member/roast',
-      headers: _buildRequestHeaders(
-        includeAuth: true,
-        contentType: 'application/x-www-form-urlencoded',
-        includeSiteContext: true,
-      ),
       body: <String, String>{
         'chapter_id': normalizedChapterId,
         'roast': normalizedContent,
@@ -404,22 +417,21 @@ class SiteApiClient {
               ...queryParameters,
             },
           );
-    final http.Response response = await NetworkClient.get(
-      _client,
-      uri,
-      headers: <String, String>{
-        'Authorization': 'Token ${_session.token}',
-        'Accept': 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': AppConfig.desktopUserAgent,
-        'platform': '2',
-        if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
-      },
-      label: 'api.json',
+    final http.Response response = await _withSessionRecovery(
+      () => NetworkClient.get(
+        _client,
+        uri,
+        headers: <String, String>{
+          'Authorization': 'Token ${_session.token}',
+          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': AppConfig.desktopUserAgent,
+          'platform': '2',
+          if (_session.cookieHeader.isNotEmpty) 'Cookie': _session.cookieHeader,
+        },
+        label: 'api.json',
+      ),
     );
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      throw SiteApiException('登录已失效，请重新登录。');
-    }
     final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
     if (decoded is! Map) {
       throw SiteApiException('接口返回格式异常。');
@@ -445,12 +457,14 @@ class SiteApiClient {
     for (final String host in _chapterCommentApiHosts()) {
       final Uri uri = Uri.https(host, path, queryParameters);
       try {
-        final http.Response response = await NetworkClient.get(
-          _client,
-          uri,
-          headers: _buildRequestHeaders(includeSiteContext: true),
-          maxRetries: 0,
-          label: 'api.comments',
+        final http.Response response = await _withSessionRecovery(
+          () => NetworkClient.get(
+            _client,
+            uri,
+            headers: _buildRequestHeaders(includeSiteContext: true),
+            maxRetries: 0,
+            label: 'api.comments',
+          ),
         );
         final Map<String, Object?>? payload = _tryDecodeJsonMap(response);
         if (payload == null) {
@@ -458,6 +472,10 @@ class SiteApiClient {
           continue;
         }
         return (payload: payload, statusCode: response.statusCode);
+      } on _SessionExpiredException {
+        rethrow;
+      } on _SessionChangedException {
+        rethrow;
       } catch (error) {
         lastError = error;
       }
@@ -472,7 +490,6 @@ class SiteApiClient {
   Future<({Map<String, Object?> payload, int statusCode})>
   _postChapterCommentJson(
     String path, {
-    required Map<String, String> headers,
     required Object body,
     required String malformedMessage,
   }) async {
@@ -481,16 +498,19 @@ class SiteApiClient {
     for (final String host in _chapterCommentApiHosts()) {
       final Uri uri = Uri.https(host, path);
       try {
-        final http.Response response = await NetworkClient.post(
-          _client,
-          uri,
-          headers: headers,
-          body: body,
-          label: 'api.comment.submit',
+        final http.Response response = await _withSessionRecovery(
+          () => NetworkClient.post(
+            _client,
+            uri,
+            headers: _buildRequestHeaders(
+              includeAuth: true,
+              contentType: 'application/x-www-form-urlencoded',
+              includeSiteContext: true,
+            ),
+            body: body,
+            label: 'api.comment.submit',
+          ),
         );
-        if (response.statusCode == 401 || response.statusCode == 403) {
-          throw SiteApiException('登录已失效，请重新登录。');
-        }
         final Map<String, Object?>? payload = _tryDecodeJsonMap(response);
         if (payload == null) {
           lastError = SiteApiException(malformedMessage);
@@ -725,7 +745,6 @@ class SiteApiClient {
     ProfileCollectionSort collectionSort =
         AppConfig.defaultProfileCollectionSort,
   }) async {
-    Object? lastError;
     for (final String path in paths) {
       try {
         return await _getPagedList(
@@ -734,12 +753,13 @@ class SiteApiClient {
           page: page,
           collectionSort: collectionSort,
         );
-      } catch (error) {
-        lastError = error;
+      } on _SessionExpiredException {
+        rethrow;
+      } on _SessionChangedException {
+        rethrow;
+      } catch (_) {
+        // Optional profile sections may be unavailable on a site version.
       }
-    }
-    if (lastError is SiteApiException && lastError.message.contains('登录已失效')) {
-      throw lastError;
     }
     return _emptyPagedSection(
       view: view,

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:reader/widgets/desktop/desktop_dock.dart';
 import 'package:reader/widgets/mobile_floating_nav_bar.dart';
+import 'package:reader/widgets/responsive_layout.dart';
 
 /// 不读取 Scaffold.extendBody 注入的 padding，按真实遮挡计算一次避让。
 class StandardBottomInset extends StatelessWidget {
@@ -31,7 +32,10 @@ class StandardBottomInset extends StatelessWidget {
       valueListenable: navigationVisible,
       builder: (BuildContext context, bool visible, Widget? child) {
         final double inset = visible && !keyboardVisible
-            ? MobileFloatingNavBar.bottomOverlayExtent(systemBottom)
+            ? MobileFloatingNavBar.bottomOverlayExtent(
+                systemBottom,
+                isTablet: usesAndroidTabletLayout(context),
+              )
             : systemBottom;
         return AnimatedContainer(
           duration: const Duration(milliseconds: 300),

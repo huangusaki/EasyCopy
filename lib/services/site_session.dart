@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:reader/services/key_value_store.dart';
+import 'package:reader/services/persistence/serial_executor.dart';
 
 typedef SessionNowProvider = DateTime Function();
 
@@ -56,8 +57,10 @@ class SiteSession {
 
   final KeyValueStore _store;
   final SessionNowProvider _now;
+  final SerialExecutor _writes = SerialExecutor();
 
   Future<void>? _initialization;
+  int _generation = 0;
   String? _token;
   String? _userId;
   Map<String, String> _cookies = <String, String>{};
@@ -75,6 +78,8 @@ class SiteSession {
   String? get token => _token;
 
   String? get userId => _userId;
+
+  int get generation => _generation;
 
   bool get isAuthenticated => (_token ?? '').isNotEmpty;
 
@@ -97,6 +102,7 @@ class SiteSession {
 
   Future<void> saveToken(String token, {Map<String, String>? cookies}) async {
     await ensureInitialized();
+    _generation += 1;
     _userId = null;
     _cookies = <String, String>{};
     _token = token;
@@ -107,8 +113,26 @@ class SiteSession {
     await _persist();
   }
 
-  Future<void> bindUserId(String? userId) async {
+  /// Preserve account identity and reject renewal after an explicit session change.
+  Future<bool> renewToken(
+    String token, {
+    required Map<String, String> cookies,
+    required int expectedGeneration,
+    required String expiredToken,
+  }) async {
     await ensureInitialized();
+    if (_generation != expectedGeneration || _token != expiredToken) {
+      return false;
+    }
+    _token = token;
+    _cookies = <String, String>{...cookies, 'token': token};
+    await _persist();
+    return _generation == expectedGeneration;
+  }
+
+  Future<void> bindUserId(String? userId, {int? expectedGeneration}) async {
+    await ensureInitialized();
+    if (expectedGeneration != null && _generation != expectedGeneration) return;
     _userId = (userId ?? '').trim().isEmpty ? null : userId?.trim();
     await _persist();
   }
@@ -122,16 +146,18 @@ class SiteSession {
     _cookies = <String, String>{..._cookies, ...parsedCookies};
     final String? nextToken = parsedCookies['token'];
     if ((nextToken ?? '').isNotEmpty) {
+      if (_token != nextToken) _generation += 1;
       _token = nextToken;
     }
     await _persist();
   }
 
   Future<void> clear() async {
+    _generation += 1;
     _token = null;
     _userId = null;
     _cookies = <String, String>{};
-    await _store.delete(_sessionKey);
+    await _writes.run(() => _store.delete(_sessionKey));
   }
 
   Future<void> _initialize() async {
@@ -164,7 +190,8 @@ class SiteSession {
       updatedAt: _now(),
       userId: _userId,
     );
-    await _store.write(_sessionKey, jsonEncode(snapshot.toJson()));
+    final String encoded = jsonEncode(snapshot.toJson());
+    await _writes.run(() => _store.write(_sessionKey, encoded));
   }
 
   static Map<String, String> parseCookieHeader(String cookieHeader) {

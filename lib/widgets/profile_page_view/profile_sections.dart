@@ -267,7 +267,7 @@ class _LibraryCard extends StatelessWidget {
           Expanded(child: CoverImage(imageUrl: item.coverUrl)),
           const SizedBox(height: 8),
           SizedBox(
-            height: _titleHeight,
+            height: MediaQuery.textScalerOf(context).scale(_titleHeight),
             child: Text(
               ChineseConverter.instance.convert(item.title),
               maxLines: 2,

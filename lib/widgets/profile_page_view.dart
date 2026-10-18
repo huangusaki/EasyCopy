@@ -13,6 +13,7 @@ import 'package:reader/services/wallpaper_storage.dart';
 import 'package:reader/widgets/comic_grid.dart';
 import 'package:reader/widgets/cover_image.dart';
 import 'package:reader/widgets/cropped_wallpaper_image.dart';
+import 'package:reader/widgets/responsive_layout.dart';
 import 'package:reader/widgets/settings_page_scaffold.dart';
 import 'package:reader/widgets/settings_ui.dart';
 
@@ -153,6 +154,9 @@ class ProfilePageView extends StatelessWidget {
     final ValueChanged<String>? localHistoryDelete = page.isLoggedIn
         ? null
         : onDeleteHistory;
+    final TextScaler textScaler = MediaQuery.textScalerOf(context);
+    final double libraryPreviewHeight = textScaler.scale(_libraryPreviewHeight);
+    final double libraryPreviewWidth = textScaler.scale(_libraryPreviewWidth);
 
     if (activeSubview == ProfileSubview.cached) {
       return _buildComicCollectionSection(
@@ -215,7 +219,7 @@ class ProfilePageView extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               SizedBox(
-                height: _libraryPreviewHeight,
+                height: libraryPreviewHeight,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: collectionCards.length,
@@ -223,7 +227,7 @@ class ProfilePageView extends StatelessWidget {
                   itemBuilder: (BuildContext context, int index) {
                     final ComicCardData item = collectionCards[index];
                     return SizedBox(
-                      width: _libraryPreviewWidth,
+                      width: libraryPreviewWidth,
                       child: _LibraryCard(
                         item: item,
                         onTap: () => onOpenComic(item.href),
@@ -251,7 +255,7 @@ class ProfilePageView extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               SizedBox(
-                height: _libraryPreviewHeight,
+                height: libraryPreviewHeight,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: cachedComicCards.length,
@@ -259,7 +263,7 @@ class ProfilePageView extends StatelessWidget {
                   itemBuilder: (BuildContext context, int index) {
                     final ComicCardData item = cachedComicCards[index];
                     return SizedBox(
-                      width: _libraryPreviewWidth,
+                      width: libraryPreviewWidth,
                       child: _LibraryCard(
                         item: item,
                         onTap: () =>
@@ -302,7 +306,7 @@ class ProfilePageView extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               SizedBox(
-                height: _libraryPreviewHeight,
+                height: libraryPreviewHeight,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: historyCards.length,
@@ -310,7 +314,7 @@ class ProfilePageView extends StatelessWidget {
                   itemBuilder: (BuildContext context, int index) {
                     final ComicCardData item = historyCards[index];
                     return SizedBox(
-                      width: _libraryPreviewWidth,
+                      width: libraryPreviewWidth,
                       child: _LibraryCard(
                         item: item,
                         onTap: () => onOpenComic(item.href),
@@ -363,7 +367,15 @@ class ProfilePageView extends StatelessWidget {
       ),
     );
 
-    final Widget content = Column(children: sections);
+    final Widget content = Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: usesAndroidTabletLayout(context) ? 840 : double.infinity,
+        ),
+        child: Column(children: sections),
+      ),
+    );
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         if (constraints.hasBoundedHeight) {

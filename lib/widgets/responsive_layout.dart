@@ -4,6 +4,11 @@ import 'package:reader/models/app_preferences.dart';
 const double kWideLayoutBreakpoint = 900;
 const double kWideReaderControlsMaxWidth = 720;
 
+bool usesAndroidTabletLayout(BuildContext context) {
+  return Theme.of(context).platform == TargetPlatform.android &&
+      MediaQuery.sizeOf(context).shortestSide >= 600;
+}
+
 double wideContentMaxWidth(double viewportWidth) {
   return (viewportWidth * 0.86).clamp(kWideLayoutBreakpoint, 1760.0);
 }
