@@ -10,6 +10,7 @@ enum CacheLibraryRefreshReason {
   preferencesChanged,
   queueChanged,
   migrationSwitched,
+  migrationFailed,
   storageRescan,
   manual,
 }

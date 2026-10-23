@@ -3,11 +3,13 @@ part of '../download_management_page.dart';
 class _CachedLibrarySection extends StatefulWidget {
   const _CachedLibrarySection({
     required this.comics,
+    required this.isLoading,
     required this.onOpenCachedComic,
     required this.onDeleteCachedComic,
   });
 
   final List<CachedComicLibraryEntry> comics;
+  final bool isLoading;
   final ValueChanged<CachedComicLibraryEntry> onOpenCachedComic;
   final ValueChanged<CachedComicLibraryEntry> onDeleteCachedComic;
 
@@ -21,6 +23,12 @@ class _CachedLibrarySectionState extends State<_CachedLibrarySection> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.isLoading && widget.comics.isEmpty) {
+      return const AppSurfaceCard(
+        title: '已缓存',
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
     final List<CachedComicLibraryEntry> comics = widget.comics;
     if (comics.isEmpty) {
       return const AppSurfaceCard(title: '已缓存', child: Text('还没有已缓存漫画。'));

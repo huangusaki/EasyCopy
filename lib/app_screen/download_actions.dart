@@ -36,17 +36,24 @@ extension _AppScreenDownloadActions on _AppScreenState {
     CacheLibraryRefreshReason reason = CacheLibraryRefreshReason.manual,
     bool forceRescan = false,
   }) {
+    if (!mounted) {
+      return Future<void>.value();
+    }
     final Future<void>? activeTask = _library.refreshTask;
     if (activeTask != null) {
       _library.pendingRefresh = reason;
       _library.queuedForceRescan = _library.queuedForceRescan || forceRescan;
       return activeTask;
     }
+    _library.cachedComicsLoadingNotifier.value = true;
     late final Future<void> task;
     task = _runCachedLibraryRefreshLoop(reason, forceRescan: forceRescan)
         .whenComplete(() {
           if (identical(_library.refreshTask, task)) {
             _library.refreshTask = null;
+            if (mounted) {
+              _library.cachedComicsLoadingNotifier.value = false;
+            }
           }
         });
     _library.refreshTask = task;

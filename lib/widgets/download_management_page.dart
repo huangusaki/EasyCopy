@@ -17,12 +17,14 @@ class DownloadManagementEntryCard extends StatelessWidget {
     required this.statusLabel,
     required this.queueLabel,
     required this.onTap,
+    required this.isLoading,
     this.noteLabel,
     super.key,
   });
 
   final String statusLabel;
   final String queueLabel;
+  final bool isLoading;
   final String? noteLabel;
   final VoidCallback onTap;
 
@@ -31,14 +33,20 @@ class DownloadManagementEntryCard extends StatelessWidget {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     return AppSurfaceCard(
       title: '下载管理',
-      action: Text(
-        '状态 $statusLabel · 队列 $queueLabel',
-        style: TextStyle(
-          color: colorScheme.onSurface.withValues(alpha: 0.58),
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
+      action: isLoading
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Text(
+              '状态 $statusLabel · 队列 $queueLabel',
+              style: TextStyle(
+                color: colorScheme.onSurface.withValues(alpha: 0.58),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -68,10 +76,12 @@ class DownloadManagementEntryCard extends StatelessWidget {
 class DownloadManagementPage extends StatelessWidget {
   const DownloadManagementPage({
     required this.queueListenable,
+    required this.queueLoadingListenable,
     required this.storageStateListenable,
     required this.storageBusyListenable,
     required this.migrationProgressListenable,
     required this.cachedComicsListenable,
+    required this.cachedComicsLoadingListenable,
     required this.onOpenCachedComic,
     required this.onDeleteCachedComic,
     required this.supportsCustomDirs,
@@ -89,10 +99,12 @@ class DownloadManagementPage extends StatelessWidget {
   });
 
   final ValueListenable<DownloadQueueSnapshot> queueListenable;
+  final ValueListenable<bool> queueLoadingListenable;
   final ValueListenable<DownloadStorageState> storageStateListenable;
   final ValueListenable<bool> storageBusyListenable;
   final ValueListenable<StorageMigrationProgress?> migrationProgressListenable;
   final ValueListenable<List<CachedComicLibraryEntry>> cachedComicsListenable;
+  final ValueListenable<bool> cachedComicsLoadingListenable;
   final ValueChanged<CachedComicLibraryEntry> onOpenCachedComic;
   final ValueChanged<CachedComicLibraryEntry> onDeleteCachedComic;
   final bool supportsCustomDirs;
@@ -116,10 +128,12 @@ class DownloadManagementPage extends StatelessWidget {
         child: ListenableBuilder(
           listenable: Listenable.merge(<Listenable>[
             queueListenable,
+            queueLoadingListenable,
             storageStateListenable,
             storageBusyListenable,
             migrationProgressListenable,
             cachedComicsListenable,
+            cachedComicsLoadingListenable,
             ChineseConverter.instance,
           ]),
           builder: (BuildContext context, Widget? _) {
@@ -131,6 +145,7 @@ class DownloadManagementPage extends StatelessWidget {
               children: <Widget>[
                 _CurrentTaskSection(
                   snapshot: snapshot,
+                  isLoading: queueLoadingListenable.value,
                   storageBusy: storageBusyListenable.value,
                   onPauseQueue: onPauseQueue,
                   onResumeQueue: onResumeQueue,
@@ -138,6 +153,7 @@ class DownloadManagementPage extends StatelessWidget {
                 const SizedBox(height: 16),
                 _QueueSection(
                   snapshot: snapshot,
+                  isLoading: queueLoadingListenable.value,
                   cachedComicMap: _cachedComicMap(cachedComics),
                   onClearQueue: onClearQueue,
                   onStopComicTasks: onStopComicTasks,
@@ -148,6 +164,7 @@ class DownloadManagementPage extends StatelessWidget {
                 const SizedBox(height: 16),
                 _CachedLibrarySection(
                   comics: cachedComics,
+                  isLoading: cachedComicsLoadingListenable.value,
                   onOpenCachedComic: (CachedComicLibraryEntry item) {
                     Navigator.of(context).pop();
                     onOpenCachedComic(item);

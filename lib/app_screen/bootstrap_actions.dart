@@ -141,11 +141,18 @@ extension _AppScreenBootstrapActions on _AppScreenState {
   }
 
   Future<void> _runDeferredBootstrapTasks() async {
-    await Future.wait(<Future<void>>[
-      _refreshHostsAfterBootstrap(),
-      _prepareDownloadBootstrap(),
-    ]);
-    await _downloadQueueManager.recoverStorageMigration();
+    try {
+      await Future.wait(<Future<void>>[
+        _refreshHostsAfterBootstrap(),
+        _prepareDownloadBootstrap(),
+      ]);
+      await _downloadQueueManager.recoverStorageMigration();
+    } catch (_) {
+      if (mounted) {
+        _library.cachedComicsLoadingNotifier.value = false;
+      }
+      rethrow;
+    }
     if (!_downloadQueueManager.shouldBypassCachedReaderLookup) {
       await _refreshCachedComics(reason: CacheLibraryRefreshReason.bootstrap);
     } else {

@@ -298,6 +298,9 @@ class DownloadMigrationCoordinator {
             ? '缓存目录已切换，原目录已保留；重启后会重试清理。'
             : '缓存目录迁移失败：${formatDownloadError(error)}',
       );
+      if (!_disposed) {
+        await _notifyLibraryChanged(CacheLibraryRefreshReason.migrationFailed);
+      }
     } finally {
       if (!_disposed) storageBusyNotifier.value = false;
       if (wasRunning != null) {

@@ -60,7 +60,8 @@ class ProfilePageView extends StatelessWidget {
     this.onDeleteCachedComic,
     this.onDeleteHistory,
     this.onRemoveBlocked,
-    this.isCollectionLoading = false,
+    this.isLoading = false,
+    this.isCachedComicsLoading = false,
     this.versionLabel = '--',
     this.isCheckingForUpdates = false,
     this.onCheckForUpdates,
@@ -104,7 +105,8 @@ class ProfilePageView extends StatelessWidget {
   final ValueChanged<String>? onDeleteCachedComic;
   final ValueChanged<String>? onDeleteHistory;
   final ValueChanged<BlockedContentItem>? onRemoveBlocked;
-  final bool isCollectionLoading;
+  final bool isLoading;
+  final bool isCachedComicsLoading;
   final String versionLabel;
   final bool isCheckingForUpdates;
   final VoidCallback? onCheckForUpdates;
@@ -164,6 +166,8 @@ class ProfilePageView extends StatelessWidget {
         emptyMessage: '还没有缓存的漫画。',
         onTap: onOpenCachedComic ?? onOpenComic,
         onLongPress: onDeleteCachedComic,
+        isLoading:
+            isLoading || (isCachedComicsLoading && cachedComicCards.isEmpty),
       );
     }
 
@@ -177,7 +181,7 @@ class ProfilePageView extends StatelessWidget {
           items: collectionCards,
           emptyMessage: '还没有收藏的漫画。',
           onTap: onOpenComic,
-          isLoading: isCollectionLoading,
+          isLoading: isLoading,
           pager: page.collectionsPager,
           onOpenPage: onOpenCollectionsPage,
         );
@@ -187,6 +191,7 @@ class ProfilePageView extends StatelessWidget {
           emptyMessage: '还没有浏览历史。',
           onTap: onOpenComic,
           onLongPress: localHistoryDelete,
+          isLoading: isLoading,
           pager: page.historyPager,
           onOpenPage: onOpenHistoryPageNumber,
         );
@@ -387,6 +392,9 @@ class ProfilePageView extends StatelessWidget {
   }
 
   Widget _buildBlockedSection(BuildContext context) {
+    if (isLoading) {
+      return const AppSurfaceCard(child: _ProfileListLoader());
+    }
     final List<BlockedContentItem> comics = page.blockedItems
         .where(
           (BlockedContentItem item) => item.type == BlockedContentType.comic,
@@ -496,7 +504,7 @@ class ProfilePageView extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               if (isLoading)
-                const _CollectionLoader()
+                const _ProfileListLoader()
               else
                 ComicGrid(
                   items: items,
@@ -590,8 +598,8 @@ class ProfilePageView extends StatelessWidget {
   }
 }
 
-class _CollectionLoader extends StatelessWidget {
-  const _CollectionLoader();
+class _ProfileListLoader extends StatelessWidget {
+  const _ProfileListLoader();
 
   @override
   Widget build(BuildContext context) {

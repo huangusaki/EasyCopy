@@ -3,18 +3,26 @@ part of '../download_management_page.dart';
 class _CurrentTaskSection extends StatelessWidget {
   const _CurrentTaskSection({
     required this.snapshot,
+    required this.isLoading,
     required this.storageBusy,
     required this.onPauseQueue,
     required this.onResumeQueue,
   });
 
   final DownloadQueueSnapshot snapshot;
+  final bool isLoading;
   final bool storageBusy;
   final VoidCallback onPauseQueue;
   final VoidCallback onResumeQueue;
 
   @override
   Widget build(BuildContext context) {
+    if (isLoading) {
+      return const AppSurfaceCard(
+        title: '当前任务',
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
     final DownloadQueueTask? activeTask = snapshot.activeTask;
     if (activeTask == null) {
       return const AppSurfaceCard(title: '当前任务', child: Text('队列空闲。'));
@@ -78,6 +86,7 @@ class _CurrentTaskSection extends StatelessWidget {
 class _QueueSection extends StatelessWidget {
   const _QueueSection({
     required this.snapshot,
+    required this.isLoading,
     required this.cachedComicMap,
     required this.onClearQueue,
     required this.onStopComicTasks,
@@ -87,6 +96,7 @@ class _QueueSection extends StatelessWidget {
   });
 
   final DownloadQueueSnapshot snapshot;
+  final bool isLoading;
   final Map<String, CachedComicLibraryEntry> cachedComicMap;
   final VoidCallback onClearQueue;
   final ValueChanged<DownloadQueueTask> onStopComicTasks;
@@ -96,6 +106,12 @@ class _QueueSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (isLoading) {
+      return const AppSurfaceCard(
+        title: '缓存队列',
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
     if (snapshot.isEmpty) {
       return const AppSurfaceCard(title: '缓存队列', child: Text('当前没有待处理章节。'));
     }

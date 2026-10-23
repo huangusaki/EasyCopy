@@ -27,10 +27,8 @@ extension _AppScreenProfileSections on _AppScreenState {
               _openProfileSubview(ProfileSubview.history, page: page),
           onOpenBlockedPageNumber: (int page) =>
               _openProfileSubview(ProfileSubview.blocked, page: page),
-          isCollectionLoading:
-              _isLoading &&
-              AppConfig.profileSubviewForUri(_currentUri) ==
-                  ProfileSubview.collections,
+          isLoading: _isLoading,
+          isCachedComicsLoading: _library.cachedComicsLoadingNotifier.value,
           currentHost: _services.hostManager.currentHost,
           knownHosts: _services.hostManager.knownHosts,
           candidateHosts: _services.hostManager.candidateHosts,
@@ -85,57 +83,58 @@ extension _AppScreenProfileSections on _AppScreenState {
   }
 
   Widget _buildDownloadManagementEntry() {
-    return ValueListenableBuilder<DownloadQueueSnapshot>(
-      valueListenable: _downloadQueueSnapshotNotifier,
-      builder:
-          (
-            BuildContext context,
-            DownloadQueueSnapshot queueSnapshot,
-            Widget? _,
-          ) {
-            return ValueListenableBuilder<DownloadStorageState>(
-              valueListenable: _downloadStorageStateNotifier,
-              builder:
-                  (
-                    BuildContext context,
-                    DownloadStorageState storageStateValue,
-                    Widget? _,
-                  ) {
-                    final String statusLabel = queueSnapshot.isEmpty
-                        ? '空闲'
-                        : queueSnapshot.isPaused
-                        ? '已暂停'
-                        : '缓存中';
-                    final String queueLabel = queueSnapshot.isEmpty
-                        ? '0 话'
-                        : '${queueSnapshot.remainingCount} 话';
-                    return ValueListenableBuilder<StorageMigrationProgress?>(
-                      valueListenable: _storageMigrationProgress,
-                      builder:
-                          (
-                            BuildContext context,
-                            StorageMigrationProgress? migrationProgress,
-                            Widget? _,
-                          ) {
-                            return DownloadManagementEntryCard(
-                              statusLabel: migrationProgress != null
-                                  ? '迁移中'
-                                  : statusLabel,
-                              queueLabel: queueLabel,
-                              noteLabel:
-                                  migrationProgress?.message ??
-                                  (storageStateValue.errorMessage.isNotEmpty
-                                      ? '目录异常：${storageStateValue.errorMessage}'
-                                      : storageStateValue.isLoading
-                                      ? '正在读取缓存目录…'
-                                      : null),
-                              onTap: _openDownloadManagementPage,
-                            );
-                          },
-                    );
-                  },
-            );
-          },
+    return ListenableBuilder(
+      listenable: Listenable.merge(<Listenable>[
+        _downloadQueueSnapshotNotifier,
+        _downloadQueueManager.isRestoringNotifier,
+      ]),
+      builder: (BuildContext context, Widget? _) {
+        final DownloadQueueSnapshot queueSnapshot = _downloadQueueSnapshot;
+        return ValueListenableBuilder<DownloadStorageState>(
+          valueListenable: _downloadStorageStateNotifier,
+          builder:
+              (
+                BuildContext context,
+                DownloadStorageState storageStateValue,
+                Widget? _,
+              ) {
+                final String statusLabel = queueSnapshot.isEmpty
+                    ? '空闲'
+                    : queueSnapshot.isPaused
+                    ? '已暂停'
+                    : '缓存中';
+                final String queueLabel = queueSnapshot.isEmpty
+                    ? '0 话'
+                    : '${queueSnapshot.remainingCount} 话';
+                return ValueListenableBuilder<StorageMigrationProgress?>(
+                  valueListenable: _storageMigrationProgress,
+                  builder:
+                      (
+                        BuildContext context,
+                        StorageMigrationProgress? migrationProgress,
+                        Widget? _,
+                      ) {
+                        return DownloadManagementEntryCard(
+                          isLoading:
+                              _downloadQueueManager.isRestoringNotifier.value,
+                          statusLabel: migrationProgress != null
+                              ? '迁移中'
+                              : statusLabel,
+                          queueLabel: queueLabel,
+                          noteLabel:
+                              migrationProgress?.message ??
+                              (storageStateValue.errorMessage.isNotEmpty
+                                  ? '目录异常：${storageStateValue.errorMessage}'
+                                  : storageStateValue.isLoading
+                                  ? '正在读取缓存目录…'
+                                  : null),
+                          onTap: _openDownloadManagementPage,
+                        );
+                      },
+                );
+              },
+        );
+      },
     );
   }
 
@@ -145,10 +144,12 @@ extension _AppScreenProfileSections on _AppScreenState {
         builder: (BuildContext context) {
           return DownloadManagementPage(
             queueListenable: _downloadQueueSnapshotNotifier,
+            queueLoadingListenable: _downloadQueueManager.isRestoringNotifier,
             storageStateListenable: _downloadStorageStateNotifier,
             storageBusyListenable: _downloadStorageBusyNotifier,
             migrationProgressListenable: _storageMigrationProgress,
             cachedComicsListenable: _library.cachedComicsNotifier,
+            cachedComicsLoadingListenable: _library.cachedComicsLoadingNotifier,
             onOpenCachedComic: (CachedComicLibraryEntry item) {
               _openCachedComicFromProfile(_cachedComicCardKey(item));
             },

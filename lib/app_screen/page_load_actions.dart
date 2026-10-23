@@ -860,6 +860,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     if (!localProfilePage.isLoggedIn) {
       return true;
     }
+    _markTabEntryLoading(requestContext, preservePage: true);
     // 登录态但无服务端缓存：本地页仅为占位（user==null、仅本地收藏），
     // 账号信息与服务端书架只能靠服务端拉取。返回 false 让调用方立即前台拉取，
     // 不走 1200ms 延迟通道——后者会在用户快速切 Tab 时被 _canCommitRequest 静默丢弃，

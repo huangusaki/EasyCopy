@@ -68,6 +68,9 @@ class AppLibraryState {
       ValueNotifier<List<CachedComicLibraryEntry>>(
         const <CachedComicLibraryEntry>[],
       );
+  final ValueNotifier<bool> cachedComicsLoadingNotifier = ValueNotifier<bool>(
+    true,
+  );
 
   List<CachedComicLibraryEntry> get cachedComics => cachedComicsNotifier.value;
 
@@ -77,6 +80,7 @@ class AppLibraryState {
 
   void dispose() {
     cachedComicsNotifier.dispose();
+    cachedComicsLoadingNotifier.dispose();
   }
 }
 

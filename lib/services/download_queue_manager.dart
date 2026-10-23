@@ -63,6 +63,7 @@ class DownloadQueueManager implements DownloadMigrationQueue {
 
   final ValueNotifier<DownloadQueueSnapshot> snapshotNotifier =
       ValueNotifier<DownloadQueueSnapshot>(const DownloadQueueSnapshot());
+  final ValueNotifier<bool> isRestoringNotifier = ValueNotifier<bool>(true);
   ValueNotifier<DownloadStorageState> get storageStateNotifier =>
       _migration.storageStateNotifier;
   ValueNotifier<bool> get storageBusyNotifier => _migration.storageBusyNotifier;
@@ -92,13 +93,20 @@ class DownloadQueueManager implements DownloadMigrationQueue {
   bool get shouldBypassCachedReaderLookup => _migration.isActive;
 
   Future<void> restoreQueue() async {
-    final DownloadQueueSnapshot restored = await _queueStore.read();
-    if (_disposed) return;
-    for (final DownloadQueueTask task in restored.tasks) {
-      _taskGenerations[task.id] = ++_nextGeneration;
+    isRestoringNotifier.value = true;
+    try {
+      final DownloadQueueSnapshot restored = await _queueStore.read();
+      if (_disposed) return;
+      for (final DownloadQueueTask task in restored.tasks) {
+        _taskGenerations[task.id] = ++_nextGeneration;
+      }
+      snapshotNotifier.value = restored;
+      _retryScheduler.sync(restored);
+    } finally {
+      if (!_disposed) {
+        isRestoringNotifier.value = false;
+      }
     }
-    snapshotNotifier.value = restored;
-    _retryScheduler.sync(restored);
   }
 
   Future<void> recoverStorageMigration() => _migration.recover();
@@ -526,6 +534,7 @@ class DownloadQueueManager implements DownloadMigrationQueue {
     _retryScheduler.dispose();
     _migration.dispose();
     snapshotNotifier.dispose();
+    isRestoringNotifier.dispose();
   }
 
   Future<void> _persistSnapshot(DownloadQueueSnapshot nextSnapshot) async {
