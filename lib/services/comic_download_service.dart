@@ -185,11 +185,25 @@ class ComicDownloadService {
       sourceUri: page.uri,
     );
 
+    final Map<String, Future<bool>> imageChecks = <String, Future<bool>>{};
+    Future<bool> validateImage(String relativePath) async {
+      _throwIfCancelled(shouldCancel);
+      _throwIfPaused(shouldPause);
+      final bool valid = await imageChecks.putIfAbsent(
+        relativePath,
+        () async => isCompleteImage(await root.readBytes(relativePath)),
+      );
+      _throwIfCancelled(shouldCancel);
+      _throwIfPaused(shouldPause);
+      return valid;
+    }
+
     final bool isCompleted = await _isChapterCompleted(
       root: root,
       manifestRelativePath: manifestRelativePath,
       chapterDirectoryPath: chapterDirectoryPath,
       expectedImageCount: page.imageUrls.length,
+      validateImage: validateImage,
     );
     if (isCompleted) {
       await _upsertCachedChapterIndex(
@@ -230,6 +244,7 @@ class ComicDownloadService {
     final Map<int, String> existingFiles = await _loadExistingImageFiles(
       root,
       chapterDirectoryPath,
+      validateImage: validateImage,
     );
     final String downloadIdentityPath = _joinRelativePath(<String>[
       chapterDirectoryPath,

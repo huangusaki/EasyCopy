@@ -16,7 +16,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       '[load] background refresh start '
       'route=${requestContext.routeKey}',
     );
-    _markTabEntryLoading(requestContext, preservePage: true);
+    _markTabEntryLoading(requestContext);
     await refresh();
     perfLog('[load] background refresh done route=${requestContext.routeKey}');
   }
@@ -145,17 +145,11 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     return requestContext;
   }
 
-  void _markTabEntryLoading(
-    NavigationRequestContext request, {
-    required bool preservePage,
-  }) {
+  void _markTabEntryLoading(NavigationRequestContext request) {
     _mutateOwnedRequestEntry(
       request,
-      (PrimaryTabRouteEntry entry) => entry.copyWith(
-        isLoading: true,
-        clearError: true,
-        clearPage: !preservePage,
-      ),
+      (PrimaryTabRouteEntry entry) =>
+          entry.copyWith(isLoading: true, clearError: true),
       phase: 'mark-loading',
     );
   }
@@ -794,13 +788,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
         visibleUri: resolvedTargetUri,
       );
     } catch (error) {
-      await _loadFallbackProfilePage(
-        resolvedTargetUri,
-        error,
-        authScope: key.authScope,
-        requestContext: requestContext,
-        showFailureNotice: forceRefresh,
-      );
+      await _handlePageLoadFailure(error, requestContext: requestContext);
     }
   }
 
@@ -844,6 +832,9 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       return true;
     }
 
+    if (key.authScope != LocalLibraryStore.guestScope) {
+      return false;
+    }
     final ProfilePageData localProfilePage = await _services
         .localProfilePageLoader
         .loadLocalProfile(targetUri, authScope: key.authScope);
@@ -857,56 +848,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       switchToTab: _shouldActivateAsyncResultTab(requestContext.targetTabIndex),
       visibleUri: targetUri,
     );
-    if (!localProfilePage.isLoggedIn) {
-      return true;
-    }
-    _markTabEntryLoading(requestContext, preservePage: true);
-    // 登录态但无服务端缓存：本地页仅为占位（user==null、仅本地收藏），
-    // 账号信息与服务端书架只能靠服务端拉取。返回 false 让调用方立即前台拉取，
-    // 不走 1200ms 延迟通道——后者会在用户快速切 Tab 时被 _canCommitRequest 静默丢弃，
-    // 导致已登录却停留在本地占位页不再自动刷新。
-    return false;
-  }
-
-  Future<void> _loadFallbackProfilePage(
-    Uri targetUri,
-    Object error, {
-    required String authScope,
-    required NavigationRequestContext requestContext,
-    required bool showFailureNotice,
-  }) async {
-    if (error is SupersededPageLoadException ||
-        error.toString().contains('登录已失效')) {
-      await _handlePageLoadFailure(error, requestContext: requestContext);
-      return;
-    }
-
-    try {
-      final ProfilePageData localProfilePage = await _services
-          .localProfilePageLoader
-          .loadLocalProfile(targetUri, authScope: authScope);
-      if (!_canCommitRequest(requestContext)) {
-        _recordDiscardedMutation(
-          requestContext,
-          phase: 'profile-local-fallback',
-        );
-        return;
-      }
-      _applyLoadedPage(
-        localProfilePage,
-        requestContext: requestContext,
-        switchToTab: _shouldActivateAsyncResultTab(
-          requestContext.targetTabIndex,
-        ),
-        visibleUri: targetUri,
-      );
-      if (showFailureNotice &&
-          requestContext.targetTabIndex == _nav.selectedIndex) {
-        _showNotice(error.toString());
-      }
-    } catch (_) {
-      await _handlePageLoadFailure(error, requestContext: requestContext);
-    }
+    return true;
   }
 
   Future<void> _handlePageLoadFailure(
@@ -935,7 +877,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     final PrimaryTabRouteEntry entry = _tabSessionStore.currentEntry(
       requestContext.targetTabIndex,
     );
-    if (entry.page is DiscoverPageData) {
+    if (entry.page is DiscoverPageData || entry.page is ProfilePageData) {
       _finishTabEntryLoading(requestContext, message: message);
       return;
     }

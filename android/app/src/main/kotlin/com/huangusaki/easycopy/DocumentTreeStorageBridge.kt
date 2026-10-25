@@ -698,10 +698,12 @@ class DocumentTreeStorageBridge(
         val progress = ProgressReporter(operationId = operationId, totalCount = paths.size)
         progress.dispatch(force = true)
         for (path in paths) {
-            if (path in missing) source(path).use { input -> write(path, input) }
-            val copied = target(path) ?: throw IOException("目标缓存文件不可读：$path")
-            if (!copied.use { digest(it) }.contentEquals(digests.getValue(path))) {
-                throw IOException("缓存文件校验失败，原缓存已保留：$path")
+            if (path in missing) {
+                source(path).use { input -> write(path, input) }
+                val copied = target(path) ?: throw IOException("目标缓存文件不可读：$path")
+                if (!copied.use { digest(it) }.contentEquals(digests.getValue(path))) {
+                    throw IOException("缓存文件校验失败，原缓存已保留：$path")
+                }
             }
             progress.advance(path)
         }

@@ -18,12 +18,17 @@ extension _AppScreenTabNavigation on _AppScreenState {
     final SitePage? page = _page;
     if (page is ProfilePageData ||
         (page == null && isProfileUri(_currentUri))) {
-      await _loadProfilePage(
-        targetUri: _currentUri,
-        forceRefresh: true,
-        preserveVisiblePage: _page != null,
-        historyMode: NavigationIntent.preserve,
-      );
+      await Future.wait(<Future<void>>[
+        _loadProfilePage(
+          targetUri: _currentUri,
+          forceRefresh: true,
+          preserveVisiblePage: _page != null,
+          historyMode: NavigationIntent.preserve,
+        ),
+        if (AppConfig.profileSubviewForUri(_currentUri) ==
+            ProfileSubview.cached)
+          _refreshCachedComics(forceRescan: true),
+      ]);
       return;
     }
     await _loadUri(

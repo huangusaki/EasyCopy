@@ -71,6 +71,9 @@ class AppLibraryState {
   final ValueNotifier<bool> cachedComicsLoadingNotifier = ValueNotifier<bool>(
     true,
   );
+  final ValueNotifier<bool> cachedComicsFailedNotifier = ValueNotifier<bool>(
+    false,
+  );
 
   List<CachedComicLibraryEntry> get cachedComics => cachedComicsNotifier.value;
 
@@ -81,6 +84,7 @@ class AppLibraryState {
   void dispose() {
     cachedComicsNotifier.dispose();
     cachedComicsLoadingNotifier.dispose();
+    cachedComicsFailedNotifier.dispose();
   }
 }
 

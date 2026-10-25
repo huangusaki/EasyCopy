@@ -248,6 +248,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
       _handleReaderChaptersChanged,
     );
     _library.cachedComicsNotifier.addListener(_handleCachedComicsChanged);
+    _library.cachedComicsFailedNotifier.addListener(_handleCachedComicsChanged);
     _library.cachedComicsLoadingNotifier.addListener(
       _handleCachedComicsChanged,
     );
@@ -270,6 +271,9 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
       _handleReaderChaptersChanged,
     );
     _library.cachedComicsNotifier.removeListener(_handleCachedComicsChanged);
+    _library.cachedComicsFailedNotifier.removeListener(
+      _handleCachedComicsChanged,
+    );
     _library.cachedComicsLoadingNotifier.removeListener(
       _handleCachedComicsChanged,
     );

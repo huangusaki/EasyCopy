@@ -91,7 +91,7 @@ extension ComicCacheLibraryOps on ComicDownloadService {
         'error': error.toString(),
         'elapsedMs': stopwatch.elapsedMilliseconds,
       });
-      return const <CachedComicLibraryEntry>[];
+      rethrow;
     }
   }
 

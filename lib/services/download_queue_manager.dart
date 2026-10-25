@@ -496,6 +496,8 @@ class DownloadQueueManager implements DownloadMigrationQueue {
         }
         await _runTask(activeTask);
       }
+    } catch (error) {
+      _pauseQueueAfterError(error);
     } finally {
       _isProcessingQueue = false;
       _queueIdle = null;
@@ -523,10 +525,22 @@ class DownloadQueueManager implements DownloadMigrationQueue {
     }
 
     _retryScheduler.cancel(taskId);
-    await _updateTask(_retryPolicy.queuedTask(latestTask, DateTime.now()));
-    if (!_isProcessingQueue) {
-      unawaited(ensureRunning());
+    try {
+      await _updateTask(_retryPolicy.queuedTask(latestTask, DateTime.now()));
+      if (!_isProcessingQueue) {
+        unawaited(ensureRunning());
+      }
+    } catch (error) {
+      _pauseQueueAfterError(error);
     }
+  }
+
+  void _pauseQueueAfterError(Object error) {
+    if (_disposed) return;
+    final DownloadQueueSnapshot paused = snapshot.copyWith(isPaused: true);
+    snapshotNotifier.value = paused;
+    _retryScheduler.sync(paused);
+    _notify('缓存队列已暂停：${formatDownloadError(error)}');
   }
 
   void dispose() {
@@ -646,8 +660,6 @@ class DownloadQueueManager implements DownloadMigrationQueue {
         case DownloadTaskOutcome.failed:
           await _failTask(host, result.error!);
       }
-    } catch (error) {
-      if (!_disposed && host.currentTask != null) await _failTask(host, error);
     } finally {
       try {
         await _finishDeferredCleanups(task);

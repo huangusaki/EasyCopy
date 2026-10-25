@@ -3,13 +3,6 @@ part of '../app_screen.dart';
 extension _AppScreenDownloadActions on _AppScreenState {
   void _handleCachedComicsChanged() => _setStateIfMounted();
 
-  Future<void> _prepareDownloadBootstrap() {
-    return Future.wait(<Future<void>>[
-      _refreshDownloadStorageState(),
-      _restoreDownloadQueue(),
-    ]);
-  }
-
   Set<String> _downloadedChapterKeys(DetailPageData page) {
     return downloadedChapterKeysForDetail(
       page,
@@ -46,6 +39,7 @@ extension _AppScreenDownloadActions on _AppScreenState {
       return activeTask;
     }
     _library.cachedComicsLoadingNotifier.value = true;
+    _library.cachedComicsFailedNotifier.value = false;
     late final Future<void> task;
     task = _runCachedLibraryRefreshLoop(reason, forceRescan: forceRescan)
         .whenComplete(() {
@@ -75,20 +69,24 @@ extension _AppScreenDownloadActions on _AppScreenState {
         'reason': currentReason.name,
         'forceRescan': currentForceRescan,
       });
-      final List<CachedComicLibraryEntry> comics = await _services
-          .downloadService
-          .loadCachedLibrary(forceRescan: currentForceRescan);
-      if (!mounted) {
-        return;
+      try {
+        final List<CachedComicLibraryEntry> comics = await _services
+            .downloadService
+            .loadCachedLibrary(forceRescan: currentForceRescan);
+        if (!mounted) return;
+        _library.cachedComicsNotifier.value = comics;
+        _library.cachedComicsFailedNotifier.value = false;
+        DebugTrace.log('cached_library.refresh_complete', <String, Object?>{
+          'bootId': _shell.bootId,
+          'reason': currentReason.name,
+          'forceRescan': currentForceRescan,
+          'comicCount': comics.length,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+        });
+      } catch (_) {
+        if (!mounted) return;
+        _library.cachedComicsFailedNotifier.value = true;
       }
-      _library.cachedComicsNotifier.value = comics;
-      DebugTrace.log('cached_library.refresh_complete', <String, Object?>{
-        'bootId': _shell.bootId,
-        'reason': currentReason.name,
-        'forceRescan': currentForceRescan,
-        'comicCount': comics.length,
-        'elapsedMs': stopwatch.elapsedMilliseconds,
-      });
       final CacheLibraryRefreshReason? queuedReason = _library.pendingRefresh;
       final bool queuedForceRescan = _library.queuedForceRescan;
       if (queuedReason == null && !queuedForceRescan) {
@@ -106,6 +104,9 @@ extension _AppScreenDownloadActions on _AppScreenState {
     );
     if (!mounted) {
       return '';
+    }
+    if (_library.cachedComicsFailedNotifier.value) {
+      return '读取缓存失败，请重试';
     }
     final int comicCount = _library.cachedComics.length;
     final int chapterCount = _library.cachedComics.fold(
@@ -137,10 +138,6 @@ extension _AppScreenDownloadActions on _AppScreenState {
 
   DownloadQueueSnapshot get _downloadQueueSnapshot =>
       _downloadQueueSnapshotNotifier.value;
-
-  Future<void> _restoreDownloadQueue() async {
-    await _downloadQueueManager.restoreQueue();
-  }
 
   String _comicQueueKey(String value) => UriKeys.pathKey(value);
 
@@ -361,8 +358,14 @@ extension _AppScreenDownloadActions on _AppScreenState {
     )) {
       return;
     }
-    await _downloadQueueManager.removeComicAndDeleteCache(task);
-    _showDownloadNotice('已移除 $comicTitle 的下载任务和本地缓存');
+    try {
+      await _downloadQueueManager.removeComicAndDeleteCache(task);
+      if (mounted) {
+        _showDownloadNotice('已移除 $comicTitle 的下载任务和本地缓存');
+      }
+    } catch (_) {
+      if (mounted) _showDownloadNotice('移除失败，请重试');
+    }
   }
 
   Future<void> _confirmClearDownloadQueue() async {

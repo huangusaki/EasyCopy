@@ -71,6 +71,7 @@ extension _DownloadStorageRoots on ComicDownloadService {
     required String manifestRelativePath,
     required String chapterDirectoryPath,
     required int expectedImageCount,
+    Future<bool> Function(String relativePath)? validateImage,
   }) async {
     if (!await root.exists(manifestRelativePath)) {
       return false;
@@ -95,12 +96,20 @@ extension _DownloadStorageRoots on ComicDownloadService {
         if (value is! String || !_isCacheFileName(value) || !seen.add(value)) {
           return false;
         }
-        final Uint8List bytes = await root.readBytes(
-          _joinRelativePath(<String>[chapterDirectoryPath, value]),
-        );
-        if (!await isCompleteImage(bytes)) return false;
+        final String path = _joinRelativePath(<String>[
+          chapterDirectoryPath,
+          value,
+        ]);
+        final bool valid =
+            await (validateImage?.call(path) ??
+                isCompleteImage(await root.readBytes(path)));
+        if (!valid) return false;
       }
       return true;
+    } on DownloadCancelledException {
+      rethrow;
+    } on DownloadPausedException {
+      rethrow;
     } catch (_) {
       return false;
     }
@@ -108,8 +117,9 @@ extension _DownloadStorageRoots on ComicDownloadService {
 
   Future<Map<int, String>> _loadExistingImageFiles(
     _ResolvedStorageRoot root,
-    String chapterDirectoryPath,
-  ) async {
+    String chapterDirectoryPath, {
+    Future<bool> Function(String relativePath)? validateImage,
+  }) async {
     if (!await root.exists(chapterDirectoryPath)) {
       return const <int, String>{};
     }
@@ -132,9 +142,16 @@ extension _DownloadStorageRoots on ComicDownloadService {
         continue;
       }
       try {
-        if (!await isCompleteImage(await root.readBytes(entry.relativePath))) {
+        final bool valid =
+            await (validateImage?.call(entry.relativePath) ??
+                isCompleteImage(await root.readBytes(entry.relativePath)));
+        if (!valid) {
           continue;
         }
+      } on DownloadCancelledException {
+        rethrow;
+      } on DownloadPausedException {
+        rethrow;
       } catch (_) {
         continue;
       }

@@ -144,11 +144,13 @@ extension _AppScreenBootstrapActions on _AppScreenState {
     try {
       await Future.wait(<Future<void>>[
         _refreshHostsAfterBootstrap(),
-        _prepareDownloadBootstrap(),
+        _refreshDownloadStorageState(),
+        _downloadQueueManager.restoreQueue(),
       ]);
       await _downloadQueueManager.recoverStorageMigration();
     } catch (_) {
       if (mounted) {
+        _library.cachedComicsFailedNotifier.value = true;
         _library.cachedComicsLoadingNotifier.value = false;
       }
       rethrow;

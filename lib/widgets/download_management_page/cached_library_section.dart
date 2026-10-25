@@ -4,12 +4,14 @@ class _CachedLibrarySection extends StatefulWidget {
   const _CachedLibrarySection({
     required this.comics,
     required this.isLoading,
+    required this.failed,
     required this.onOpenCachedComic,
     required this.onDeleteCachedComic,
   });
 
   final List<CachedComicLibraryEntry> comics;
   final bool isLoading;
+  final bool failed;
   final ValueChanged<CachedComicLibraryEntry> onOpenCachedComic;
   final ValueChanged<CachedComicLibraryEntry> onDeleteCachedComic;
 
@@ -31,7 +33,10 @@ class _CachedLibrarySectionState extends State<_CachedLibrarySection> {
     }
     final List<CachedComicLibraryEntry> comics = widget.comics;
     if (comics.isEmpty) {
-      return const AppSurfaceCard(title: '已缓存', child: Text('还没有已缓存漫画。'));
+      return AppSurfaceCard(
+        title: '已缓存',
+        child: Text(widget.failed ? '读取缓存失败，请重新扫描' : '还没有已缓存漫画。'),
+      );
     }
     final bool canCollapse = comics.length > _collapsedLimit;
     final List<CachedComicLibraryEntry> visibleComics =
@@ -52,6 +57,11 @@ class _CachedLibrarySectionState extends State<_CachedLibrarySection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
+          if (widget.failed)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text('读取缓存失败，请重新扫描'),
+            ),
           ...visibleComics.map((CachedComicLibraryEntry entry) {
             return Padding(
               padding: EdgeInsets.only(

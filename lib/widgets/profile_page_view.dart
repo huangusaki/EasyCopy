@@ -491,8 +491,8 @@ class ProfilePageView extends StatelessWidget {
     required List<ComicCardData> items,
     required String emptyMessage,
     required ValueChanged<String> onTap,
+    required bool isLoading,
     ValueChanged<String>? onLongPress,
-    bool isLoading = false,
     PagerData pager = const PagerData(),
     ValueChanged<int>? onOpenPage,
   }) {
@@ -500,20 +500,14 @@ class ProfilePageView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         AppSurfaceCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              if (isLoading)
-                const _ProfileListLoader()
-              else
-                ComicGrid(
+          child: isLoading
+              ? const _ProfileListLoader()
+              : ComicGrid(
                   items: items,
                   onTap: onTap,
                   onLongPress: onLongPress,
                   emptyMessage: emptyMessage,
                 ),
-            ],
-          ),
         ),
         if (!isLoading && _shouldShowPager(pager)) ...<Widget>[
           const SizedBox(height: 16),

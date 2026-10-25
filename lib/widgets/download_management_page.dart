@@ -82,6 +82,7 @@ class DownloadManagementPage extends StatelessWidget {
     required this.migrationProgressListenable,
     required this.cachedComicsListenable,
     required this.cachedComicsLoadingListenable,
+    required this.cachedComicsFailedListenable,
     required this.onOpenCachedComic,
     required this.onDeleteCachedComic,
     required this.supportsCustomDirs,
@@ -105,6 +106,7 @@ class DownloadManagementPage extends StatelessWidget {
   final ValueListenable<StorageMigrationProgress?> migrationProgressListenable;
   final ValueListenable<List<CachedComicLibraryEntry>> cachedComicsListenable;
   final ValueListenable<bool> cachedComicsLoadingListenable;
+  final ValueListenable<bool> cachedComicsFailedListenable;
   final ValueChanged<CachedComicLibraryEntry> onOpenCachedComic;
   final ValueChanged<CachedComicLibraryEntry> onDeleteCachedComic;
   final bool supportsCustomDirs;
@@ -134,6 +136,7 @@ class DownloadManagementPage extends StatelessWidget {
             migrationProgressListenable,
             cachedComicsListenable,
             cachedComicsLoadingListenable,
+            cachedComicsFailedListenable,
             ChineseConverter.instance,
           ]),
           builder: (BuildContext context, Widget? _) {
@@ -165,6 +168,7 @@ class DownloadManagementPage extends StatelessWidget {
                 _CachedLibrarySection(
                   comics: cachedComics,
                   isLoading: cachedComicsLoadingListenable.value,
+                  failed: cachedComicsFailedListenable.value,
                   onOpenCachedComic: (CachedComicLibraryEntry item) {
                     Navigator.of(context).pop();
                     onOpenCachedComic(item);

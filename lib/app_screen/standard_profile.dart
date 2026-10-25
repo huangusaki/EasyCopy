@@ -2,83 +2,113 @@ part of '../app_screen.dart';
 
 extension _AppScreenProfileSections on _AppScreenState {
   List<Widget> _buildProfileSections(ProfilePageData page) {
+    final ProfileSubview view = AppConfig.profileSubviewForUri(_currentUri);
+    final bool failed =
+        _errorMessage != null ||
+        (view == ProfileSubview.cached &&
+            _library.cachedComicsFailedNotifier.value);
+    final bool hasContent = switch (view) {
+      ProfileSubview.root => true,
+      ProfileSubview.cached => _library.cachedComics.isNotEmpty,
+      ProfileSubview.collections => page.collections.isNotEmpty,
+      ProfileSubview.history => page.history.isNotEmpty,
+      ProfileSubview.blocked => page.blockedItems.isNotEmpty,
+    };
     return <Widget>[
-      _hPaddedBox(
-        ProfilePageView(
-          page: page,
-          onAuthenticate: _openAuthFlow,
-          onLogout: _logout,
-          onOpenComic: _navigateToHref,
-          onOpenHistory: (ProfileHistoryItem item) {
-            final String targetHref = item.chapterHref.isNotEmpty
-                ? item.chapterHref
-                : item.comicHref;
-            _navigateToHref(targetHref);
-          },
-          onOpenCollections: () =>
-              _openProfileSubview(ProfileSubview.collections),
-          onOpenHistoryPage: () => _openProfileSubview(ProfileSubview.history),
-          onOpenCachedComicPage: () =>
-              _openProfileSubview(ProfileSubview.cached),
-          onOpenBlockedPage: () => _openProfileSubview(ProfileSubview.blocked),
-          onOpenCollectionsPage: (int page) =>
-              _openProfileSubview(ProfileSubview.collections, page: page),
-          onOpenHistoryPageNumber: (int page) =>
-              _openProfileSubview(ProfileSubview.history, page: page),
-          onOpenBlockedPageNumber: (int page) =>
-              _openProfileSubview(ProfileSubview.blocked, page: page),
-          isLoading: _isLoading,
-          isCachedComicsLoading: _library.cachedComicsLoadingNotifier.value,
-          currentHost: _services.hostManager.currentHost,
-          knownHosts: _services.hostManager.knownHosts,
-          candidateHosts: _services.hostManager.candidateHosts,
-          candidateHostAliases: _services.hostManager.candidateHostAliases,
-          hostSnapshot: _services.hostManager.probeSnapshot,
-          isRefreshingHosts: _shell.isUpdatingHostSettings,
-          onRefreshHosts: _refreshHostSettings,
-          onUseAutomaticHostSelection: _useAutomaticHostSelection,
-          onSelectHost: _selectHost,
-          onAddHost: _addHost,
-          onDeleteHost: _deleteHost,
-          chineseConversionMode: _preferencesController.chineseConversionMode,
-          onChineseConversionModeChanged: (ChineseConversionMode mode) {
-            unawaited(_preferencesController.setChineseConversionMode(mode));
-          },
-          themePreference: _preferencesController.themePreference,
-          onThemePreferenceChanged: (AppThemePreference preference) {
-            unawaited(_preferencesController.setThemePreference(preference));
-          },
-          wallpaperPreferences: _preferencesController.wallpaperPreferences,
-          wallpaperActions: buildWallpaperActions(
-            preferencesController: _preferencesController,
-            showError: (String message) {
-              if (!mounted) {
-                return;
-              }
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text(message)));
+      if (failed)
+        _hPaddedBox(
+          AppSurfaceCard(
+            child: Center(
+              child: TextButton.icon(
+                onPressed: () => unawaited(_retryCurrentPage()),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('加载失败，重试'),
+              ),
+            ),
+          ),
+        ),
+      if (!failed ||
+          (hasContent &&
+              AppConfig.routeKeyForUri(Uri.parse(page.uri)) ==
+                  AppConfig.routeKeyForUri(_currentUri)))
+        _hPaddedBox(
+          ProfilePageView(
+            page: page,
+            onAuthenticate: _openAuthFlow,
+            onLogout: _logout,
+            onOpenComic: _navigateToHref,
+            onOpenHistory: (ProfileHistoryItem item) {
+              final String targetHref = item.chapterHref.isNotEmpty
+                  ? item.chapterHref
+                  : item.comicHref;
+              _navigateToHref(targetHref);
+            },
+            onOpenCollections: () =>
+                _openProfileSubview(ProfileSubview.collections),
+            onOpenHistoryPage: () =>
+                _openProfileSubview(ProfileSubview.history),
+            onOpenCachedComicPage: () =>
+                _openProfileSubview(ProfileSubview.cached),
+            onOpenBlockedPage: () =>
+                _openProfileSubview(ProfileSubview.blocked),
+            onOpenCollectionsPage: (int page) =>
+                _openProfileSubview(ProfileSubview.collections, page: page),
+            onOpenHistoryPageNumber: (int page) =>
+                _openProfileSubview(ProfileSubview.history, page: page),
+            onOpenBlockedPageNumber: (int page) =>
+                _openProfileSubview(ProfileSubview.blocked, page: page),
+            isLoading: _isLoading,
+            isCachedComicsLoading: _library.cachedComicsLoadingNotifier.value,
+            currentHost: _services.hostManager.currentHost,
+            knownHosts: _services.hostManager.knownHosts,
+            candidateHosts: _services.hostManager.candidateHosts,
+            candidateHostAliases: _services.hostManager.candidateHostAliases,
+            hostSnapshot: _services.hostManager.probeSnapshot,
+            isRefreshingHosts: _shell.isUpdatingHostSettings,
+            onRefreshHosts: _refreshHostSettings,
+            onUseAutomaticHostSelection: _useAutomaticHostSelection,
+            onSelectHost: _selectHost,
+            onAddHost: _addHost,
+            onDeleteHost: _deleteHost,
+            chineseConversionMode: _preferencesController.chineseConversionMode,
+            onChineseConversionModeChanged: (ChineseConversionMode mode) {
+              unawaited(_preferencesController.setChineseConversionMode(mode));
+            },
+            themePreference: _preferencesController.themePreference,
+            onThemePreferenceChanged: (AppThemePreference preference) {
+              unawaited(_preferencesController.setThemePreference(preference));
+            },
+            wallpaperPreferences: _preferencesController.wallpaperPreferences,
+            wallpaperActions: buildWallpaperActions(
+              preferencesController: _preferencesController,
+              showError: (String message) {
+                if (!mounted) {
+                  return;
+                }
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(message)));
+              },
+            ),
+            versionLabel: _appVersionLabel,
+            isCheckingForUpdates: _shell.isCheckingForUpdates,
+            onCheckForUpdates: () {
+              unawaited(_checkForUpdates());
+            },
+            onOpenProjectRepository: () {
+              unawaited(_openProjectRepository());
+            },
+            afterContinueReading: _buildDownloadManagementEntry(),
+            cachedComicCards: _cachedComicCardsForProfile(),
+            activeSubview: AppConfig.profileSubviewForUri(_currentUri),
+            onOpenCachedComic: _openCachedComicFromProfile,
+            onDeleteCachedComic: _deleteCachedComicFromProfile,
+            onDeleteHistory: _deleteLocalHistoryFromProfile,
+            onRemoveBlocked: (BlockedContentItem item) {
+              unawaited(_removeBlockedContent(item));
             },
           ),
-          versionLabel: _appVersionLabel,
-          isCheckingForUpdates: _shell.isCheckingForUpdates,
-          onCheckForUpdates: () {
-            unawaited(_checkForUpdates());
-          },
-          onOpenProjectRepository: () {
-            unawaited(_openProjectRepository());
-          },
-          afterContinueReading: _buildDownloadManagementEntry(),
-          cachedComicCards: _cachedComicCardsForProfile(),
-          activeSubview: AppConfig.profileSubviewForUri(_currentUri),
-          onOpenCachedComic: _openCachedComicFromProfile,
-          onDeleteCachedComic: _deleteCachedComicFromProfile,
-          onDeleteHistory: _deleteLocalHistoryFromProfile,
-          onRemoveBlocked: (BlockedContentItem item) {
-            unawaited(_removeBlockedContent(item));
-          },
         ),
-      ),
     ];
   }
 
@@ -87,52 +117,32 @@ extension _AppScreenProfileSections on _AppScreenState {
       listenable: Listenable.merge(<Listenable>[
         _downloadQueueSnapshotNotifier,
         _downloadQueueManager.isRestoringNotifier,
+        _downloadStorageStateNotifier,
+        _storageMigrationProgress,
       ]),
       builder: (BuildContext context, Widget? _) {
         final DownloadQueueSnapshot queueSnapshot = _downloadQueueSnapshot;
-        return ValueListenableBuilder<DownloadStorageState>(
-          valueListenable: _downloadStorageStateNotifier,
-          builder:
-              (
-                BuildContext context,
-                DownloadStorageState storageStateValue,
-                Widget? _,
-              ) {
-                final String statusLabel = queueSnapshot.isEmpty
-                    ? '空闲'
-                    : queueSnapshot.isPaused
-                    ? '已暂停'
-                    : '缓存中';
-                final String queueLabel = queueSnapshot.isEmpty
-                    ? '0 话'
-                    : '${queueSnapshot.remainingCount} 话';
-                return ValueListenableBuilder<StorageMigrationProgress?>(
-                  valueListenable: _storageMigrationProgress,
-                  builder:
-                      (
-                        BuildContext context,
-                        StorageMigrationProgress? migrationProgress,
-                        Widget? _,
-                      ) {
-                        return DownloadManagementEntryCard(
-                          isLoading:
-                              _downloadQueueManager.isRestoringNotifier.value,
-                          statusLabel: migrationProgress != null
-                              ? '迁移中'
-                              : statusLabel,
-                          queueLabel: queueLabel,
-                          noteLabel:
-                              migrationProgress?.message ??
-                              (storageStateValue.errorMessage.isNotEmpty
-                                  ? '目录异常：${storageStateValue.errorMessage}'
-                                  : storageStateValue.isLoading
-                                  ? '正在读取缓存目录…'
-                                  : null),
-                          onTap: _openDownloadManagementPage,
-                        );
-                      },
-                );
-              },
+        final DownloadStorageState storageState =
+            _downloadStorageStateNotifier.value;
+        final StorageMigrationProgress? migrationProgress =
+            _storageMigrationProgress.value;
+        final String statusLabel = queueSnapshot.isEmpty
+            ? '空闲'
+            : queueSnapshot.isPaused
+            ? '已暂停'
+            : '缓存中';
+        return DownloadManagementEntryCard(
+          isLoading: _downloadQueueManager.isRestoringNotifier.value,
+          statusLabel: migrationProgress != null ? '迁移中' : statusLabel,
+          queueLabel: '${queueSnapshot.remainingCount} 话',
+          noteLabel:
+              migrationProgress?.message ??
+              (storageState.errorMessage.isNotEmpty
+                  ? '目录异常：${storageState.errorMessage}'
+                  : storageState.isLoading
+                  ? '正在读取缓存目录…'
+                  : null),
+          onTap: _openDownloadManagementPage,
         );
       },
     );
@@ -150,6 +160,7 @@ extension _AppScreenProfileSections on _AppScreenState {
             migrationProgressListenable: _storageMigrationProgress,
             cachedComicsListenable: _library.cachedComicsNotifier,
             cachedComicsLoadingListenable: _library.cachedComicsLoadingNotifier,
+            cachedComicsFailedListenable: _library.cachedComicsFailedNotifier,
             onOpenCachedComic: (CachedComicLibraryEntry item) {
               _openCachedComicFromProfile(_cachedComicCardKey(item));
             },

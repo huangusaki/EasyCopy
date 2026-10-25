@@ -83,51 +83,53 @@ extension ComicCacheDetailsOps on ComicDownloadService {
     bool forDownload = false,
   }) async {
     final Stopwatch stopwatch = Stopwatch()..start();
-    final DownloadStorageState storageState = await resolveStorageState(
-      verifyWritable: false,
-    );
-    final String storageKey = _storageService.storageKeyForState(storageState);
-    final String targetPathKey = _pathKeyForUri(chapterHref);
-    if (targetPathKey.isEmpty) {
-      return null;
-    }
-    final _ResolvedStorageRoot root = await _resolveStorageRootFromState(
-      storageState,
-    );
-    final Stopwatch locatorStopwatch = Stopwatch()..start();
-    CachedChapterLocator? locator = await _cachedChapterLocatorStore
-        .findByPathKey(storageKey: storageKey, targetPathKey: targetPathKey);
-    DebugTrace.log('cached_reader.locator_lookup', <String, Object?>{
-      'storageKey': storageKey,
-      'targetPathKey': targetPathKey,
-      'hit': locator != null,
-      'elapsedMs': locatorStopwatch.elapsedMilliseconds,
-    });
-
-    CachedChapterEntry? entry;
-    if (locator != null) {
-      entry = CachedChapterEntry(
-        chapterTitle: locator.chapterTitle,
-        chapterHref: locator.chapterPathKey,
-        sourceUri: locator.sourcePathKey,
-        directoryPath: locator.directoryPath,
-        downloadedAt: locator.downloadedAt,
-      );
-    } else {
-      entry = await _findCachedChapter(chapterHref);
-      if (entry != null) {
-        await _upsertCachedChapterLocator(
-          storageKey: storageKey,
-          comicTitle: '',
-          chapter: entry,
-        );
-      }
-    }
-    if (entry == null || entry.directoryPath.isEmpty) {
-      return null;
-    }
-
     try {
+      final DownloadStorageState storageState = await resolveStorageState(
+        verifyWritable: false,
+      );
+      final String storageKey = _storageService.storageKeyForState(
+        storageState,
+      );
+      final String targetPathKey = _pathKeyForUri(chapterHref);
+      if (targetPathKey.isEmpty) {
+        return null;
+      }
+      final _ResolvedStorageRoot root = await _resolveStorageRootFromState(
+        storageState,
+      );
+      final Stopwatch locatorStopwatch = Stopwatch()..start();
+      CachedChapterLocator? locator = await _cachedChapterLocatorStore
+          .findByPathKey(storageKey: storageKey, targetPathKey: targetPathKey);
+      DebugTrace.log('cached_reader.locator_lookup', <String, Object?>{
+        'storageKey': storageKey,
+        'targetPathKey': targetPathKey,
+        'hit': locator != null,
+        'elapsedMs': locatorStopwatch.elapsedMilliseconds,
+      });
+
+      CachedChapterEntry? entry;
+      if (locator != null) {
+        entry = CachedChapterEntry(
+          chapterTitle: locator.chapterTitle,
+          chapterHref: locator.chapterPathKey,
+          sourceUri: locator.sourcePathKey,
+          directoryPath: locator.directoryPath,
+          downloadedAt: locator.downloadedAt,
+        );
+      } else {
+        entry = await _findCachedChapter(chapterHref);
+        if (entry != null) {
+          await _upsertCachedChapterLocator(
+            storageKey: storageKey,
+            comicTitle: '',
+            chapter: entry,
+          );
+        }
+      }
+      if (entry == null || entry.directoryPath.isEmpty) {
+        return null;
+      }
+
       final Stopwatch manifestStopwatch = Stopwatch()..start();
       Map<String, Object?>? manifest = await _readCachedChapterManifest(
         root,
