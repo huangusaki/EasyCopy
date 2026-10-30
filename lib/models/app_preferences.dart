@@ -341,6 +341,7 @@ class ReaderPreferences {
     this.showChapterComments = true,
     this.disablePageTransitionAnimation = false,
     this.tapToTurnPage = false,
+    this.bookMode = false,
   });
 
   factory ReaderPreferences.fromJson(Map<String, Object?> json) {
@@ -380,6 +381,7 @@ class ReaderPreferences {
       disablePageTransitionAnimation:
           (json['disablePageTransitionAnimation'] as bool?) ?? false,
       tapToTurnPage: (json['tapToTurnPage'] as bool?) ?? false,
+      bookMode: (json['bookMode'] as bool?) ?? false,
     );
   }
 
@@ -398,6 +400,7 @@ class ReaderPreferences {
   final bool showChapterComments;
   final bool disablePageTransitionAnimation;
   final bool tapToTurnPage;
+  final bool bookMode;
 
   bool get isPaged =>
       readingDirection == ReaderReadingDirection.leftToRight ||
@@ -419,6 +422,7 @@ class ReaderPreferences {
     bool? showChapterComments,
     bool? disablePageTransitionAnimation,
     bool? tapToTurnPage,
+    bool? bookMode,
   }) {
     return ReaderPreferences(
       screenOrientation: screenOrientation ?? this.screenOrientation,
@@ -438,6 +442,7 @@ class ReaderPreferences {
       disablePageTransitionAnimation:
           disablePageTransitionAnimation ?? this.disablePageTransitionAnimation,
       tapToTurnPage: tapToTurnPage ?? this.tapToTurnPage,
+      bookMode: bookMode ?? this.bookMode,
     );
   }
 
@@ -458,6 +463,7 @@ class ReaderPreferences {
       'showChapterComments': showChapterComments,
       'disablePageTransitionAnimation': disablePageTransitionAnimation,
       'tapToTurnPage': tapToTurnPage,
+      'bookMode': bookMode,
     };
   }
 }

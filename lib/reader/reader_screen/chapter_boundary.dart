@@ -6,7 +6,7 @@ extension _ReaderChapterBoundary on ReaderScreenState {
     ReaderPageData page,
   ) {
     return SizedBox(
-      height: _controller.preferences.isPaged ? 72 : 80,
+      height: _controller.isPaged ? 72 : 80,
       child: Center(
         child: _buildReaderChapterBoundaryCue(
           context,
@@ -59,7 +59,7 @@ extension _ReaderChapterBoundary on ReaderScreenState {
     final ReaderPreferences preferences = _controller.preferences;
     final Alignment alignment;
     final EdgeInsets padding;
-    if (preferences.isPaged) {
+    if (_controller.isPaged) {
       final bool nextOnRight =
           preferences.readingDirection == ReaderReadingDirection.rightToLeft;
       final bool placeOnRight = isPrevious ? !nextOnRight : nextOnRight;
@@ -108,14 +108,14 @@ extension _ReaderChapterBoundary on ReaderScreenState {
             ? _controller.previousChapterPullReady
             : _controller.nextChapterPullReady) &&
         !isLoading;
-    final double triggerDistance = preferences.isPaged ? 152 : 266;
+    final double triggerDistance = _controller.isPaged ? 152 : 266;
     final double progress = (pullDistance / triggerDistance)
         .clamp(0, 1)
         .toDouble();
     final bool isVisible = forceVisible || isLoading || progress > 0;
     final IconData directionIcon = switch ((
       isPrevious,
-      preferences.isPaged,
+      _controller.isPaged,
       preferences.readingDirection,
     )) {
       (false, true, ReaderReadingDirection.leftToRight) =>

@@ -95,6 +95,8 @@ class ReaderController extends ChangeNotifier {
   final void Function(String message) onShowMessage;
 
   PageController pageController = PageController();
+  Future<void> Function(int index)? turnBook;
+  double Function(int index)? imageOffset;
   final ScrollController scrollController = ScrollController();
   final GlobalKey viewportKey = GlobalKey();
   final Map<int, ScrollController> _pagedScrollControllers =
@@ -122,6 +124,8 @@ class ReaderController extends ChangeNotifier {
   ReaderPreferences? _lastObservedPreferences;
   bool _presentationSyncScheduled = false;
   bool _visibleIndexUpdateQueued = false;
+  bool _wide = false;
+  DeferredViewportTicket? _positionTicket;
 
   bool _isSettingsOpen = false;
   bool _isChapterControlsVisible = false;
@@ -130,6 +134,44 @@ class ReaderController extends ChangeNotifier {
   ReaderPageData? get page => _page;
 
   ReaderPreferences get preferences => preferencesController.readerPreferences;
+
+  bool _usesBook(ReaderPreferences prefs) => prefs.bookMode && _wide;
+
+  bool get isBook => _usesBook(preferences);
+
+  bool get isPaged => isBook || preferences.isPaged;
+
+  bool get _loadingPosition =>
+      _positionTicket != null && restoreCoordinator.isActive(_positionTicket!);
+
+  void setViewport(Size size) {
+    final bool wide = size.width > size.height;
+    if (_wide == wide) return;
+    final ReaderPageData? page = _page;
+    if (!preferences.bookMode || page == null || _loadingPosition) {
+      _wide = wide;
+      return;
+    }
+    final ReaderRestoreTarget? target = captureCurrentRestoreTarget(
+      page,
+      preferences: preferences,
+    );
+    _wide = wide;
+    final DeferredViewportTicket ticket = restoreCoordinator.beginRequest();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed ||
+          _page?.uri != page.uri ||
+          !restoreCoordinator.isActive(ticket)) {
+        return;
+      }
+      _handlePageLoaded(
+        page,
+        previousUri: page.uri,
+        forceRestore: true,
+        preferredRestoreTarget: target,
+      );
+    });
+  }
 
   int get currentPageIndex => _currentPageIndex;
 
@@ -164,7 +206,7 @@ class ReaderController extends ChangeNotifier {
   bool get nextChapterPullReady => _chapterBoundary.nextReady;
 
   double get _nextChapterTriggerDistance =>
-      preferences.isPaged ? _pagedTriggerDistance : _pullTriggerDistance;
+      isPaged ? _pagedTriggerDistance : _pullTriggerDistance;
 
   List<ChapterComment> get chapterComments => _comments.items;
 
@@ -205,14 +247,15 @@ class ReaderController extends ChangeNotifier {
     ReaderPageData page, {
     required ReaderPreferences preferences,
   }) {
-    if (preferences.isPaged) {
+    final bool book = _usesBook(preferences);
+    if (book || preferences.isPaged) {
       final int maxPageIndex = math.max(0, readerPagedPageCount(page) - 1);
       final int pageIndex = _currentPageIndex.clamp(0, maxPageIndex);
       final ScrollController? controller = _pagedScrollControllers[pageIndex];
       return ReaderRestoreTarget(
         position: ReaderPosition.paged(
           pageIndex: pageIndex,
-          pageOffset: controller != null && controller.hasClients
+          pageOffset: !book && controller != null && controller.hasClients
               ? controller.offset
               : 0,
         ),
@@ -332,14 +375,27 @@ class ReaderController extends ChangeNotifier {
     restoreCoordinator.noteUserInteraction();
   }
 
+  int _stepIndex(int direction) {
+    if (!isBook) return _currentPageIndex + direction;
+    final int count = _page!.imageUrls.length;
+    if (direction > 0) {
+      return _currentPageIndex >= count
+          ? _currentPageIndex + 1
+          : math.min((_currentPageIndex ~/ 2 + 1) * 2, count);
+    }
+    return _currentPageIndex >= count
+        ? (count == 0 ? -1 : (count - 1) ~/ 2 * 2)
+        : (_currentPageIndex ~/ 2 - 1) * 2;
+  }
+
   Future<void> stepForward() async {
     if (isZoomGestureLocked) return;
     restoreCoordinator.noteUserInteraction();
-    if (preferences.isPaged) {
+    if (isPaged) {
       final ReaderPageData? page = _page;
       if (page == null) return;
       final int totalPageCount = readerPagedPageCount(page);
-      final int nextPageIndex = _currentPageIndex + 1;
+      final int nextPageIndex = _stepIndex(1);
       if (nextPageIndex >= totalPageCount) {
         if (page.nextHref.trim().isNotEmpty) {
           await triggerNextChapter(page);
@@ -369,8 +425,9 @@ class ReaderController extends ChangeNotifier {
   Future<void> stepBackward() async {
     if (isZoomGestureLocked) return;
     restoreCoordinator.noteUserInteraction();
-    if (preferences.isPaged) {
-      final int previousPageIndex = _currentPageIndex - 1;
+    if (isPaged) {
+      if (_page == null) return;
+      final int previousPageIndex = _stepIndex(-1);
       if (previousPageIndex < 0) {
         final ReaderPageData? page = _page;
         if (page != null && page.prevHref.trim().isNotEmpty) {
@@ -402,9 +459,9 @@ class ReaderController extends ChangeNotifier {
   Future<void> scrollCurrentPageUp() => _scrollCurrentPageBy(-1);
 
   Future<void> _scrollCurrentPageBy(int direction) async {
-    if (isZoomGestureLocked) return;
+    if (isZoomGestureLocked || isBook) return;
     restoreCoordinator.noteUserInteraction();
-    final ScrollController? controller = preferences.isPaged
+    final ScrollController? controller = isPaged
         ? _pagedScrollControllers[_currentPageIndex]
         : scrollController;
     if (controller == null || !controller.hasClients) return;
@@ -423,6 +480,11 @@ class ReaderController extends ChangeNotifier {
   }
 
   Future<void> animateToPage(int pageIndex) async {
+    if (isBook) {
+      await turnBook?.call(pageIndex);
+      _restartAutoTurn();
+      return;
+    }
     if (!pageController.hasClients) return;
     if (preferences.disablePageTransitionAnimation) {
       pageController.jumpToPage(pageIndex);
@@ -448,15 +510,17 @@ class ReaderController extends ChangeNotifier {
     final int clampedIndex = imageIndex.clamp(0, page.imageUrls.length - 1);
     final DeferredViewportTicket ticket = restoreCoordinator.beginRequest();
 
-    if (preferences.isPaged) {
+    if (isPaged) {
       _jumpToPage(page.uri, clampedIndex, attempts: 8, ticket: ticket);
-      _jumpPageOffset(
-        page.uri,
-        clampedIndex,
-        offset: 0,
-        attempts: 8,
-        ticket: ticket,
-      );
+      if (!isBook) {
+        _jumpPageOffset(
+          page.uri,
+          clampedIndex,
+          offset: 0,
+          attempts: 8,
+          ticket: ticket,
+        );
+      }
       return;
     }
     _jumpToOffset(page.uri, estimatedScrollOffset, attempts: 8, ticket: ticket);
@@ -538,9 +602,9 @@ class ReaderController extends ChangeNotifier {
       Duration(seconds: preferences.autoPageTurnSeconds),
       () async {
         if (_disposed || _page == null) return;
-        if (preferences.isPaged) {
+        if (isPaged) {
           final int totalPageCount = readerPagedPageCount(page);
-          final int nextPageIndex = _currentPageIndex + 1;
+          final int nextPageIndex = _stepIndex(1);
           if (nextPageIndex >= totalPageCount) return;
           await animateToPage(nextPageIndex);
           return;
@@ -585,7 +649,7 @@ class ReaderController extends ChangeNotifier {
       _disposePagedScrollControllers();
       _imageItemKeys.clear();
       _imageAspectRatios.clear();
-      if (!preferences.isPaged && scrollController.hasClients) {
+      if (!isPaged && scrollController.hasClients) {
         scrollController.jumpTo(0);
       }
     }
@@ -632,16 +696,28 @@ class ReaderController extends ChangeNotifier {
     final DeferredViewportTicket ticket = restoreCoordinator.beginRequest();
     final bool restoreAtEnd =
         openAtEnd && resetControllers && preferredRestoreTarget == null;
-    final ReaderPosition? savedPosition = await progressStore.readPosition(
-      catalogHref: page.catalogHref,
-      chapterHref: page.uri,
-    );
-    if (_disposed || _page == null || _page!.uri != page.uri) return;
+    ReaderPosition? savedPosition;
+    if (preferredRestoreTarget == null) {
+      _positionTicket = ticket;
+      try {
+        savedPosition = await progressStore.readPosition(
+          catalogHref: page.catalogHref,
+          chapterHref: page.uri,
+        );
+      } finally {
+        if (identical(_positionTicket, ticket)) _positionTicket = null;
+      }
+    }
+    if (_disposed ||
+        _page?.uri != page.uri ||
+        !restoreCoordinator.isActive(ticket)) {
+      return;
+    }
 
     final ReaderRestoreTarget restoreTarget =
         preferredRestoreTarget ?? ReaderRestoreTarget(position: savedPosition);
 
-    if (preferences.isPaged) {
+    if (isPaged) {
       final int maxPageIndex = math.max(0, readerPagedPageCount(page) - 1);
       final int? preferredImageIndex = restoreTarget.imageIndexFor(page);
       final ReaderPosition? sourcePosition =
@@ -654,14 +730,16 @@ class ReaderController extends ChangeNotifier {
           : (sourcePosition?.isPaged == true
                 ? sourcePosition!.pageIndex.clamp(0, maxPageIndex)
                 : (preferredImageIndex ?? 0));
-      final double? pageOffset = restoreAtEnd
+      final double? pageOffset = isBook
+          ? 0
+          : restoreAtEnd
           ? null
           : (sourcePosition?.isPaged == true
                 ? sourcePosition!.pageOffset
                 : null);
       if (resetControllers) {
         _disposePagedScrollControllers();
-        _replacePageController(initialPage: pageIndex);
+        if (!isBook) _replacePageController(initialPage: pageIndex);
       }
       _lastPersistedPosition = ReaderPosition.paged(
         pageIndex: pageIndex,
@@ -675,6 +753,7 @@ class ReaderController extends ChangeNotifier {
                 : pageIndex);
       _refreshReaderPrefetchWindow(page, _visibleImageIndex);
       if (!_disposed) notifyListeners();
+      if (isBook) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!_isActiveRestore(ticket, pageUri: page.uri, isPaged: true)) return;
         _jumpToPage(page.uri, pageIndex, attempts: 10, ticket: ticket);
@@ -732,7 +811,7 @@ class ReaderController extends ChangeNotifier {
         restoreCoordinator.isActive(ticket) &&
         _page != null &&
         _page!.uri == pageUri &&
-        preferences.isPaged == isPaged;
+        this.isPaged == isPaged;
   }
 
   void _jumpToOffset(
@@ -790,6 +869,35 @@ class ReaderController extends ChangeNotifier {
       imageIndex,
     ).currentContext;
     if (itemContext == null) {
+      double? offset = imageOffset?.call(imageIndex);
+      if (offset != null && scrollController.hasClients) {
+        int? anchor;
+        RenderBox? box;
+        for (final entry in _imageItemKeys.entries) {
+          final RenderObject? item = entry.value.currentContext
+              ?.findRenderObject();
+          if (item is! RenderBox ||
+              !item.attached ||
+              (anchor != null &&
+                  (entry.key - imageIndex).abs() >=
+                      (anchor - imageIndex).abs())) {
+            continue;
+          }
+          anchor = entry.key;
+          box = item;
+        }
+        if (anchor != null) {
+          final RenderObject viewport = viewportKey.currentContext!
+              .findRenderObject()!;
+          offset +=
+              scrollController.offset +
+              box!.localToGlobal(Offset.zero, ancestor: viewport).dy -
+              imageOffset!(anchor);
+        }
+        scrollController.jumpTo(
+          offset.clamp(0, scrollController.position.maxScrollExtent).toDouble(),
+        );
+      }
       if (attempts > 0) {
         Future<void>.delayed(
           const Duration(milliseconds: 250),
@@ -819,6 +927,10 @@ class ReaderController extends ChangeNotifier {
     required DeferredViewportTicket ticket,
   }) {
     if (!_isActiveRestore(ticket, pageUri: pageUri, isPaged: true)) return;
+    if (isBook) {
+      handlePageChanged(pageIndex);
+      return;
+    }
     if (!pageController.hasClients) {
       if (attempts > 0) {
         Future<void>.delayed(
@@ -890,7 +1002,7 @@ class ReaderController extends ChangeNotifier {
 
   void _handleScroll() {
     final ReaderPageData? page = _page;
-    if (page == null || !scrollController.hasClients || preferences.isPaged) {
+    if (page == null || !scrollController.hasClients || isPaged) {
       return;
     }
     final double currentOffset = scrollController.offset;
@@ -941,7 +1053,7 @@ class ReaderController extends ChangeNotifier {
     _visibleIndexUpdateQueued = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _visibleIndexUpdateQueued = false;
-      if (_disposed || preferences.isPaged) return;
+      if (_disposed || isPaged) return;
       _updateVisibleImageIndex();
     });
   }
@@ -1147,13 +1259,15 @@ class ReaderController extends ChangeNotifier {
   Future<void> _persistCurrentProgress() async {
     final ReaderPageData? page = _page;
     if (page == null) return;
-    if (preferences.isPaged) {
+    if (isPaged) {
       final ScrollController? pageScrollController =
           _pagedScrollControllers[_currentPageIndex];
       final ReaderPosition position = ReaderPosition.paged(
         pageIndex: _currentPageIndex,
         pageOffset:
-            pageScrollController != null && pageScrollController.hasClients
+            !isBook &&
+                pageScrollController != null &&
+                pageScrollController.hasClients
             ? pageScrollController.offset
             : 0,
       );
@@ -1187,12 +1301,14 @@ class ReaderController extends ChangeNotifier {
     if (_disposed) return;
 
     final ReaderPageData? page = _page;
-    final ReaderRestoreTarget? readerRestoreTarget = page != null
+    final bool loading = _loadingPosition;
+    final ReaderRestoreTarget? readerRestoreTarget = page != null && !loading
         ? captureCurrentRestoreTarget(page, preferences: previousPreferences)
         : null;
     notifyListeners();
 
     final bool requiresReaderRestore =
+        previousPreferences.bookMode != nextPreferences.bookMode ||
         previousPreferences.readingDirection !=
             nextPreferences.readingDirection ||
         previousPreferences.pageFit != nextPreferences.pageFit ||
@@ -1200,7 +1316,7 @@ class ReaderController extends ChangeNotifier {
             nextPreferences.openingPosition ||
         previousPreferences.showChapterComments !=
             nextPreferences.showChapterComments;
-    if (requiresReaderRestore && page != null) {
+    if (requiresReaderRestore && page != null && !loading) {
       _handlePageLoaded(
         page,
         previousUri: page.uri,

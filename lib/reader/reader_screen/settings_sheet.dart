@@ -18,6 +18,9 @@ extension _ReaderSettingsSheet on ReaderScreenState {
             animation: preferencesController,
             builder: (BuildContext context, Widget? _) {
               final ReaderPreferences preferences = _controller.preferences;
+              final Size size = MediaQuery.sizeOf(context);
+              final bool book =
+                  preferences.bookMode && size.width > size.height;
               return ReaderSheetSwipeDismissRegion(
                 dismissDistance: _settingsDismissDistance,
                 // 只有列表停在顶部时才允许下滑关闭，否则滚列表会被误判成关闭手势。
@@ -102,10 +105,34 @@ extension _ReaderSettingsSheet on ReaderScreenState {
                                               );
                                             },
                                       ),
+                                    if (size.width > size.height)
+                                      SettingsSwitchRow(
+                                        label: '横屏书本',
+                                        value: preferences.bookMode,
+                                        onChanged: (bool value) {
+                                          unawaited(
+                                            preferencesController
+                                                .updateReaderPreferences(
+                                                  (current) => current.copyWith(
+                                                    bookMode: value,
+                                                  ),
+                                                ),
+                                          );
+                                        },
+                                      ),
                                     SettingsSelectRow<ReaderReadingDirection>(
                                       label: '阅读方向',
-                                      value: preferences.readingDirection,
+                                      value: book && !preferences.isPaged
+                                          ? ReaderReadingDirection.leftToRight
+                                          : preferences.readingDirection,
                                       items: ReaderReadingDirection.values
+                                          .where(
+                                            (value) =>
+                                                !book ||
+                                                value !=
+                                                    ReaderReadingDirection
+                                                        .topToBottom,
+                                          )
                                           .map((ReaderReadingDirection value) {
                                             return DropdownMenuItem<
                                               ReaderReadingDirection
@@ -140,70 +167,74 @@ extension _ReaderSettingsSheet on ReaderScreenState {
                                             );
                                           },
                                     ),
-                                    SettingsSelectRow<ReaderPageFit>(
-                                      label: '页面缩放',
-                                      value: preferences.pageFit,
-                                      items: ReaderPageFit.values
-                                          .map((ReaderPageFit value) {
-                                            return DropdownMenuItem<
-                                              ReaderPageFit
-                                            >(
-                                              value: value,
-                                              child: Text(
-                                                value == ReaderPageFit.fitWidth
-                                                    ? '匹配宽度'
-                                                    : '适应屏幕',
-                                              ),
-                                            );
-                                          })
-                                          .toList(growable: false),
-                                      onChanged: (ReaderPageFit? value) {
-                                        if (value == null) return;
-                                        unawaited(
-                                          preferencesController
-                                              .updateReaderPreferences(
-                                                (ReaderPreferences current) =>
-                                                    current.copyWith(
-                                                      pageFit: value,
+                                    if (!book)
+                                      SettingsSelectRow<ReaderPageFit>(
+                                        label: '页面缩放',
+                                        value: preferences.pageFit,
+                                        items: ReaderPageFit.values
+                                            .map((ReaderPageFit value) {
+                                              return DropdownMenuItem<
+                                                ReaderPageFit
+                                              >(
+                                                value: value,
+                                                child: Text(
+                                                  value ==
+                                                          ReaderPageFit.fitWidth
+                                                      ? '匹配宽度'
+                                                      : '适应屏幕',
+                                                ),
+                                              );
+                                            })
+                                            .toList(growable: false),
+                                        onChanged: (ReaderPageFit? value) {
+                                          if (value == null) return;
+                                          unawaited(
+                                            preferencesController
+                                                .updateReaderPreferences(
+                                                  (ReaderPreferences current) =>
+                                                      current.copyWith(
+                                                        pageFit: value,
+                                                      ),
+                                                ),
+                                          );
+                                        },
+                                      ),
+                                    if (!book)
+                                      SettingsSelectRow<ReaderOpeningPosition>(
+                                        label: '开页位置',
+                                        value: preferences.openingPosition,
+                                        items: ReaderOpeningPosition.values
+                                            .map((ReaderOpeningPosition value) {
+                                              return DropdownMenuItem<
+                                                ReaderOpeningPosition
+                                              >(
+                                                value: value,
+                                                child: Text(
+                                                  value ==
+                                                          ReaderOpeningPosition
+                                                              .top
+                                                      ? '顶部'
+                                                      : '中心',
+                                                ),
+                                              );
+                                            })
+                                            .toList(growable: false),
+                                        onChanged:
+                                            (ReaderOpeningPosition? value) {
+                                              if (value == null) return;
+                                              unawaited(
+                                                preferencesController
+                                                    .updateReaderPreferences(
+                                                      (
+                                                        ReaderPreferences
+                                                        current,
+                                                      ) => current.copyWith(
+                                                        openingPosition: value,
+                                                      ),
                                                     ),
-                                              ),
-                                        );
-                                      },
-                                    ),
-                                    SettingsSelectRow<ReaderOpeningPosition>(
-                                      label: '开页位置',
-                                      value: preferences.openingPosition,
-                                      items: ReaderOpeningPosition.values
-                                          .map((ReaderOpeningPosition value) {
-                                            return DropdownMenuItem<
-                                              ReaderOpeningPosition
-                                            >(
-                                              value: value,
-                                              child: Text(
-                                                value ==
-                                                        ReaderOpeningPosition
-                                                            .top
-                                                    ? '顶部'
-                                                    : '中心',
-                                              ),
-                                            );
-                                          })
-                                          .toList(growable: false),
-                                      onChanged:
-                                          (ReaderOpeningPosition? value) {
-                                            if (value == null) return;
-                                            unawaited(
-                                              preferencesController
-                                                  .updateReaderPreferences(
-                                                    (
-                                                      ReaderPreferences current,
-                                                    ) => current.copyWith(
-                                                      openingPosition: value,
-                                                    ),
-                                                  ),
-                                            );
-                                          },
-                                    ),
+                                              );
+                                            },
+                                      ),
                                     SettingsSliderRow(
                                       label:
                                           '自动翻页(${preferences.autoPageTurnSeconds}秒)',

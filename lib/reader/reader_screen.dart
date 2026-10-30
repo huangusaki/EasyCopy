@@ -13,6 +13,7 @@ import 'package:reader/models/page_models.dart';
 import 'package:reader/reader/dependencies.dart';
 import 'package:reader/reader/internal/reader_comment_layout.dart';
 import 'package:reader/reader/internal/reader_paged_scroll_physics.dart';
+import 'package:reader/reader/reader_book.dart';
 import 'package:reader/reader/reader_controller.dart';
 import 'package:reader/reader/reader_image.dart';
 import 'package:reader/reader/reader_pinch_zoom.dart';
@@ -93,6 +94,7 @@ class ReaderScreen extends StatefulWidget {
 class ReaderScreenState extends State<ReaderScreen> {
   late final ReaderController _controller;
   final ScrollController _settingsSheetScrollController = ScrollController();
+  GlobalKey<ReaderBookState> _bookKey = GlobalKey<ReaderBookState>();
   double _instantPageDragDx = 0;
 
   ReaderController get controller => _controller;
@@ -117,6 +119,14 @@ class ReaderScreenState extends State<ReaderScreen> {
       onShowMessage: _showNotice,
     );
     _controller.attachPlatformSubscriptions();
+    _controller.imageOffset = (int index) =>
+        _estimateOffsetForImage(context, widget.page, index);
+    _controller.turnBook = (int index) async {
+      final int count = widget.page.imageUrls.length;
+      await _bookKey.currentState?.turnTo(
+        index >= count ? (count + 1) ~/ 2 : index ~/ 2,
+      );
+    };
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _controller.setPage(widget.page, openAtEnd: widget.openAtEnd);
@@ -125,9 +135,18 @@ class ReaderScreenState extends State<ReaderScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _controller.setViewport(MediaQuery.sizeOf(context));
+  }
+
+  @override
   void didUpdateWidget(covariant ReaderScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.page, widget.page)) {
+      if (oldWidget.page.uri != widget.page.uri) {
+        _bookKey = GlobalKey<ReaderBookState>();
+      }
       _controller.setPage(
         widget.page,
         previousUri: oldWidget.page.uri,
@@ -277,12 +296,17 @@ class ReaderScreenState extends State<ReaderScreen> {
 
   String _readerPageCountLabel(ReaderPageData page) {
     if (page.imageUrls.isEmpty) return '--/--';
-    final ReaderPreferences preferences = _controller.preferences;
     final int visibleIndex =
-        (preferences.isPaged
+        (_controller.isPaged
                 ? _controller.currentPageIndex
                 : _controller.visibleImageIndex)
             .clamp(0, page.imageUrls.length - 1);
+    if (_controller.isBook &&
+        _controller.currentPageIndex < page.imageUrls.length) {
+      final int first = visibleIndex ~/ 2 * 2 + 1;
+      final int last = math.min(first + 1, page.imageUrls.length);
+      return '${first == last ? first : '$first–$last'}/${page.imageUrls.length}';
+    }
     return '${visibleIndex + 1}/${page.imageUrls.length}';
   }
 
@@ -291,12 +315,11 @@ class ReaderScreenState extends State<ReaderScreen> {
     ReaderPageData page,
   ) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final ReaderPreferences preferences = _controller.preferences;
     final int imageCount = page.imageUrls.length;
     final bool showSeekBar = imageCount > 1;
     final int currentImageIndex = imageCount == 0
         ? 0
-        : (preferences.isPaged
+        : (_controller.isPaged
                   ? _controller.currentPageIndex
                   : _controller.visibleImageIndex)
               .clamp(0, imageCount - 1);
@@ -394,12 +417,11 @@ class ReaderScreenState extends State<ReaderScreen> {
     int imageIndex,
   ) {
     if (_controller.isZoomGestureLocked || page.imageUrls.isEmpty) return;
+    _bookKey.currentState?.cancelTurn();
     final int clampedIndex = imageIndex.clamp(0, page.imageUrls.length - 1);
-    final double estimatedOffset = _estimateOffsetForImage(
-      context,
-      page,
-      clampedIndex,
-    );
+    final double estimatedOffset = _controller.isPaged
+        ? 0
+        : _estimateOffsetForImage(context, page, clampedIndex);
     _controller.seekToImageIndex(
       page: page,
       imageIndex: clampedIndex,
@@ -553,6 +575,78 @@ class ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
+  Widget _buildBook(BuildContext context, ReaderPageData page) {
+    final ReaderPreferences prefs = _controller.preferences;
+    final int count = page.imageUrls.length;
+    final int spreads = (count + 1) ~/ 2;
+    final bool reverse =
+        prefs.readingDirection == ReaderReadingDirection.rightToLeft;
+    return SafeArea(
+      top: !prefs.fullscreen,
+      bottom: !prefs.fullscreen,
+      child: Padding(
+        padding: EdgeInsets.all(prefs.showPageGap ? 8 : 0),
+        child: ReaderBook(
+          key: _bookKey,
+          index: _controller.currentPageIndex >= count
+              ? spreads
+              : _controller.currentPageIndex ~/ 2,
+          count: math.max(
+            1,
+            spreads + (_controller.shouldShowCommentTailPage(page) ? 1 : 0),
+          ),
+          reverse: reverse,
+          enabled:
+              !_controller.isZoomGestureLocked &&
+              !_controller.isNextChapterLoading,
+          animate: !prefs.disablePageTransitionAnimation,
+          onStart: () {
+            _controller.noteUserInteraction();
+            _controller.cancelAutoTurn();
+            _controller.hideChapterControls();
+          },
+          onEnd: _controller.restartAutoTurnAfterScroll,
+          onChanged: (int index) =>
+              _controller.handlePageChanged(math.min(index * 2, count)),
+          onEdge: (bool forward) => unawaited(
+            forward ? _controller.stepForward() : _controller.stepBackward(),
+          ),
+          pageBuilder: (BuildContext context, int index, bool right) {
+            final int side = right != reverse ? 1 : 0;
+            return LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                if (index == spreads &&
+                    _controller.shouldShowCommentTailPage(page)) {
+                  return side == 0
+                      ? _buildReaderCommentTailPage(
+                          context,
+                          page,
+                          minHeight: constraints.maxHeight,
+                        )
+                      : const SizedBox.expand();
+                }
+                final int image = index * 2 + side;
+                if (image >= count) return const SizedBox.expand();
+                return _buildReaderImageFrame(
+                  context,
+                  page: page,
+                  imageIndex: image,
+                  imageUrl: page.imageUrls[image],
+                  viewportHeight: constraints.maxHeight,
+                  fit: BoxFit.contain,
+                  alignment: right
+                      ? Alignment.centerLeft
+                      : Alignment.centerRight,
+                  color: ReaderBook.paper,
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildReaderPagedContent(BuildContext context, ReaderPageData page) {
     final ReaderPreferences preferences = _controller.preferences;
     final bool reverse =
@@ -700,11 +794,14 @@ class ReaderScreenState extends State<ReaderScreen> {
     required int imageIndex,
     required String imageUrl,
     double? viewportHeight,
+    BoxFit? fit,
+    Alignment alignment = Alignment.center,
+    Color? color,
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final ReaderPreferences preferences = _controller.preferences;
     final bool showGap = preferences.showPageGap;
-    final BoxFit fit = preferences.pageFit == ReaderPageFit.fitWidth
+    fit ??= preferences.pageFit == ReaderPageFit.fitWidth
         ? BoxFit.fitWidth
         : BoxFit.contain;
     final Uri? parsedUri = Uri.tryParse(imageUrl);
@@ -728,12 +825,15 @@ class ReaderScreenState extends State<ReaderScreen> {
       );
     }
     return ColoredBox(
-      color: showGap ? colorScheme.surface : colorScheme.surfaceContainerLowest,
+      color:
+          color ??
+          (showGap ? colorScheme.surface : colorScheme.surfaceContainerLowest),
       child: ReaderChapterImage(
         key: ValueKey<String>('reader-image-$imageUrl-$viewportHeight'),
         imageProvider: imageProvider,
         debugUrl: imageUrl,
         fit: fit,
+        alignment: alignment,
         viewportHeight: viewportHeight,
         aspectRatio: _controller.imageAspectRatios[imageUrl],
         onResolvedAspectRatio: (double aspectRatio) {
@@ -877,12 +977,13 @@ class ReaderScreenState extends State<ReaderScreen> {
       builder: (BuildContext context, Widget? _) {
         final ReaderPageData page = widget.page;
         final ColorScheme colorScheme = Theme.of(context).colorScheme;
-        final ReaderPreferences preferences = _controller.preferences;
         final bool isZoomed = _controller.zoomScale > 1.01;
 
-        Widget readerContent = preferences.isPaged
-            ? _buildReaderPagedContent(context, page)
-            : _buildReaderScrollableContent(context, page);
+        Widget readerContent = _controller.isBook
+            ? _buildBook(context, page)
+            : (_controller.isPaged
+                  ? _buildReaderPagedContent(context, page)
+                  : _buildReaderScrollableContent(context, page));
 
         if (PlatformCapabilities.isDesktop) {
           readerContent = ScrollConfiguration(
@@ -921,8 +1022,8 @@ class ReaderScreenState extends State<ReaderScreen> {
               final double consumedDy = clampedPanY - _controller.panOffsetY;
               final double remainingDy = dy - consumedDy;
               double overscrollDy = 0;
-              if (remainingDy.abs() > 0.5) {
-                final ScrollController vc = _controller.preferences.isPaged
+              if (!_controller.isBook && remainingDy.abs() > 0.5) {
+                final ScrollController vc = _controller.isPaged
                     ? _controller.pagedScrollControllerFor(
                         _controller.currentPageIndex,
                       )
@@ -955,9 +1056,11 @@ class ReaderScreenState extends State<ReaderScreen> {
               );
             },
             onPanEnd: (DragEndDetails details) {
-              if (_controller.isScaleGestureActive) return;
+              if (_controller.isScaleGestureActive || _controller.isBook) {
+                return;
+              }
               _controller.handleZoomedPanEnd(page);
-              final ScrollController vc = _controller.preferences.isPaged
+              final ScrollController vc = _controller.isPaged
                   ? _controller.pagedScrollControllerFor(
                       _controller.currentPageIndex,
                     )

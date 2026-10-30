@@ -10,6 +10,7 @@ class ReaderChapterImage extends StatefulWidget {
     required this.onResolvedAspectRatio,
     this.viewportHeight,
     this.aspectRatio,
+    this.alignment = Alignment.center,
   });
 
   final ImageProvider<Object> imageProvider;
@@ -18,6 +19,7 @@ class ReaderChapterImage extends StatefulWidget {
   final ValueChanged<double> onResolvedAspectRatio;
   final double? viewportHeight;
   final double? aspectRatio;
+  final Alignment alignment;
 
   @override
   State<ReaderChapterImage> createState() => _ReaderChapterImageState();
@@ -73,7 +75,14 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
         final int width = imageInfo.image.width;
         final int height = imageInfo.image.height;
         if (width > 0 && height > 0) {
-          widget.onResolvedAspectRatio(width / height);
+          final ValueChanged<double> onResolved = widget.onResolvedAspectRatio;
+          if (synchronousCall) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) onResolved(width / height);
+            });
+          } else {
+            onResolved(width / height);
+          }
         }
         if (!mounted || _hasFrame) {
           return;
@@ -127,6 +136,7 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
     final Widget image = Image(
       image: widget.imageProvider,
       fit: widget.fit,
+      alignment: widget.alignment,
       width: double.infinity,
       height: widget.viewportHeight,
       gaplessPlayback: true,
