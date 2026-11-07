@@ -464,6 +464,7 @@ extension _AppScreenPageSections on _AppScreenState {
   }
 
   List<Widget> _buildDetailSections(DetailPageData page) {
+    final bool local = isLocalComic(page.uri);
     final Set<String> downloadedChapterKeys = _downloadedChapterKeys(page);
     final Set<String> visitedChapterKeys = _chapterKeys.visitedKeys(page);
     final String lastReadChapterPathKey = _chapterKeys.lastReadKey(page);
@@ -486,8 +487,8 @@ extension _AppScreenPageSections on _AppScreenState {
           onReadNow: page.startReadingHref.isNotEmpty
               ? () => _openDetailChapter(page, page.startReadingHref)
               : null,
-          onDownload: () => _showDetailDownloadPicker(page),
-          onToggleCollection: page.comicId.trim().isEmpty
+          onDownload: local ? null : () => _showDetailDownloadPicker(page),
+          onToggleCollection: local || page.comicId.trim().isEmpty
               ? null
               : () => unawaited(_toggleDetailCollection(page)),
           isCollectionBusy: _shell.isUpdatingCollection,

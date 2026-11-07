@@ -1,84 +1,17 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:opencc_t2s/opencc_t2s.dart';
 import 'package:reader/models/app_preferences.dart';
 
-typedef ChineseConversionEngineFactory =
-    FutureOr<ChineseConversionEngine> Function();
-
-abstract interface class ChineseConversionEngine {
-  String convert(String text);
-
-  void dispose();
-}
-
-class _T2SChineseConversionEngine implements ChineseConversionEngine {
-  final T2SConverter _converter = T2SConverter();
-
-  @override
-  String convert(String text) => _converter.convert(text);
-
-  @override
-  void dispose() => _converter.clearCache();
-}
-
-/// 繁简转换服务
-///
-/// 封装 opencc_t2s，提供文本的繁简转换能力。
-/// 使用单例模式，全局共享 Converter 实例以提高性能。
+/// 全局共享繁简转换器及其文本缓存。
 class ChineseConverter extends ChangeNotifier {
-  ChineseConverter({ChineseConversionEngineFactory? engineFactory})
-    : _engineFactory = engineFactory ?? _T2SChineseConversionEngine.new;
-
   static final ChineseConverter instance = ChineseConverter();
 
-  final ChineseConversionEngineFactory _engineFactory;
-
-  ChineseConversionEngine? _t2sEngine;
-  Future<ChineseConversionEngine?>? _initialization;
-  int _modeRequestGeneration = 0;
-  int _resourceGeneration = 0;
-
-  /// 获取当前转换模式
+  final T2SConverter _converter = T2SConverter();
   ChineseConversionMode _currentMode = ChineseConversionMode.disabled;
 
-  /// 当前转换模式
   ChineseConversionMode get currentMode => _currentMode;
 
-  /// 设置转换模式
-  ///
-  /// 关闭模式不会构建转换引擎。启用模式会异步准备唯一的转换引擎；准备期间
-  /// [convert] 继续返回原文。返回 `false` 表示请求已过期或初始化失败。
-  Future<bool> setMode(ChineseConversionMode mode) async {
-    final int requestGeneration = ++_modeRequestGeneration;
-
-    if (mode == ChineseConversionMode.disabled) {
-      _updateCurrentMode(ChineseConversionMode.disabled);
-      return true;
-    }
-
-    final ChineseConversionEngine? readyEngine = _t2sEngine;
-    if (readyEngine != null) {
-      _updateCurrentMode(ChineseConversionMode.t2s);
-      return true;
-    }
-
-    _updateCurrentMode(ChineseConversionMode.disabled);
-    final ChineseConversionEngine? engine = await _ensureEngine();
-    if (requestGeneration != _modeRequestGeneration) {
-      return false;
-    }
-    if (engine == null) {
-      _updateCurrentMode(ChineseConversionMode.disabled);
-      return false;
-    }
-
-    _updateCurrentMode(ChineseConversionMode.t2s);
-    return true;
-  }
-
-  void _updateCurrentMode(ChineseConversionMode mode) {
+  void setMode(ChineseConversionMode mode) {
     if (_currentMode == mode) {
       return;
     }
@@ -86,77 +19,13 @@ class ChineseConverter extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 转换单个文本
-  ///
-  /// 根据当前 [currentMode] 转换文本。
-  /// 如果模式为 [ChineseConversionMode.disabled] 或文本为空，直接返回原文本。
-  String convert(String text) {
-    final ChineseConversionEngine? engine = _t2sEngine;
-    if (_currentMode == ChineseConversionMode.disabled || engine == null) {
-      return text;
-    }
-    if (text.isEmpty) return text;
+  String convert(String text) => _currentMode == ChineseConversionMode.disabled
+      ? text
+      : _converter.convert(text);
 
-    try {
-      return engine.convert(text);
-    } catch (_) {
-      // 转换失败时返回原文
-      return text;
-    }
-  }
-
-  Future<ChineseConversionEngine?> _ensureEngine() {
-    final ChineseConversionEngine? readyEngine = _t2sEngine;
-    if (readyEngine != null) {
-      return Future<ChineseConversionEngine?>.value(readyEngine);
-    }
-
-    final Future<ChineseConversionEngine?>? pending = _initialization;
-    if (pending != null) {
-      return pending;
-    }
-
-    final int resourceGeneration = _resourceGeneration;
-    late final Future<ChineseConversionEngine?> initialization;
-    initialization = _createEngine(resourceGeneration).whenComplete(() {
-      if (identical(_initialization, initialization)) {
-        _initialization = null;
-      }
-    });
-    _initialization = initialization;
-    return initialization;
-  }
-
-  Future<ChineseConversionEngine?> _createEngine(int resourceGeneration) async {
-    try {
-      final ChineseConversionEngine createdEngine =
-          await Future<ChineseConversionEngine>.sync(_engineFactory);
-      if (resourceGeneration != _resourceGeneration) {
-        createdEngine.dispose();
-        return null;
-      }
-
-      final ChineseConversionEngine? existingEngine = _t2sEngine;
-      if (existingEngine != null) {
-        createdEngine.dispose();
-        return existingEngine;
-      }
-      _t2sEngine = createdEngine;
-      return createdEngine;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// 清理资源
   @override
   void dispose() {
-    _modeRequestGeneration += 1;
-    _resourceGeneration += 1;
-    _currentMode = ChineseConversionMode.disabled;
-    _initialization = null;
-    _t2sEngine?.dispose();
-    _t2sEngine = null;
+    _converter.clearCache();
     super.dispose();
   }
 }

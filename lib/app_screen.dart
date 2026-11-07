@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:file_selector/file_selector.dart';
@@ -33,6 +34,8 @@ import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/app_update_checker.dart';
 import 'package:reader/services/blocked_content_filter.dart';
 import 'package:reader/services/chinese_converter.dart';
+import 'package:reader/services/comic_archive.dart';
+import 'package:reader/services/comic_archive_files.dart';
 import 'package:reader/services/comic_download_service.dart';
 import 'package:reader/services/debug_trace.dart';
 import 'package:reader/services/desktop_webview_environment.dart';
@@ -43,6 +46,7 @@ import 'package:reader/services/download_queue_manager/retry_policy.dart';
 import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
 import 'package:reader/services/frame_jank_logger.dart';
+import 'package:reader/services/local_comic.dart';
 import 'package:reader/services/local_library_store.dart';
 import 'package:reader/services/navigation_request_guard.dart';
 import 'package:reader/services/network_diagnostics.dart';
@@ -60,6 +64,7 @@ import 'package:reader/services/webview_page_payload_decoder.dart';
 import 'package:reader/utils/platform_capabilities.dart';
 import 'package:reader/webview/page_extractor_script.dart';
 import 'package:reader/widgets/auth_webview_screen.dart';
+import 'package:reader/widgets/comic_archive_dialogs.dart';
 import 'package:reader/widgets/comic_grid.dart';
 import 'package:reader/widgets/comic_quick_preview_sheet.dart';
 import 'package:reader/widgets/desktop/ambient_backdrop.dart';
@@ -80,11 +85,13 @@ import 'package:reader/widgets/profile_page_view.dart';
 import 'package:reader/widgets/responsive_layout.dart';
 import 'package:reader/widgets/settings_ui.dart';
 import 'package:reader/widgets/standard_bottom_inset.dart';
+import 'package:reader/widgets/tab_switch_gestures.dart';
 import 'package:reader/widgets/top_notice.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 part 'app_screen/bootstrap_actions.dart';
+part 'app_screen/archive_actions.dart';
 part 'app_screen/download_actions.dart';
 part 'app_screen/host_actions.dart';
 part 'app_screen/navigation.dart';
@@ -119,11 +126,10 @@ class AppScreen extends StatefulWidget {
 }
 
 class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
+  bool _archiveDialogOpen = false;
   WebViewController? _controller;
   WebViewController? _downloadController;
   late final AppPreferencesController _preferencesController;
-  ChineseConversionMode? _requestedChineseConversionMode;
-  int _chineseConversionRequestGeneration = 0;
   late final AppScreenServices _services;
   late final ReaderScreenServices _readerServices;
   final AppScreenUiState _ui = AppScreenUiState();
@@ -255,7 +261,9 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
     _services.blockedContentStore.revision.addListener(
       _handleBlockedContentChanged,
     );
-    _requestChineseConversionMode(_preferencesController.chineseConversionMode);
+    ChineseConverter.instance.setMode(
+      _preferencesController.chineseConversionMode,
+    );
     _ui.standardScrollController.addListener(_scrollState.handleStandardScroll);
     unawaited(_loadAppVersionInfo());
     unawaited(DisplayModeService.requestHighRefreshRate());
@@ -547,7 +555,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
                           ),
                         ),
                       )
-                    : isReaderChapterUri(_currentUri)
+                    : isReaderChapterUri(_currentUri) && _errorMessage == null
                     ? KeyedSubtree(
                         key: const ValueKey<String>('reader-loading'),
                         child: _buildReaderLoadingScreen(context),

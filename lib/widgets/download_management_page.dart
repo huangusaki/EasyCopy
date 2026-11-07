@@ -85,6 +85,8 @@ class DownloadManagementPage extends StatelessWidget {
     required this.cachedComicsFailedListenable,
     required this.onOpenCachedComic,
     required this.onDeleteCachedComic,
+    required this.onImportArchive,
+    required this.onExportComic,
     required this.supportsCustomDirs,
     required this.onPauseQueue,
     required this.onResumeQueue,
@@ -109,6 +111,8 @@ class DownloadManagementPage extends StatelessWidget {
   final ValueListenable<bool> cachedComicsFailedListenable;
   final ValueChanged<CachedComicLibraryEntry> onOpenCachedComic;
   final ValueChanged<CachedComicLibraryEntry> onDeleteCachedComic;
+  final VoidCallback onImportArchive;
+  final ValueChanged<CachedComicLibraryEntry> onExportComic;
   final bool supportsCustomDirs;
   final VoidCallback onPauseQueue;
   final VoidCallback onResumeQueue;
@@ -125,7 +129,27 @@ class DownloadManagementPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: opaquePageBackground(context),
-      appBar: AppBar(title: const Text('下载管理')),
+      appBar: AppBar(
+        title: const Text('下载管理'),
+        actions: <Widget>[
+          ListenableBuilder(
+            listenable: Listenable.merge(<Listenable>[
+              storageBusyListenable,
+              migrationProgressListenable,
+            ]),
+            builder: (BuildContext context, Widget? _) => TextButton.icon(
+              onPressed:
+                  storageBusyListenable.value ||
+                      migrationProgressListenable.value != null
+                  ? null
+                  : onImportArchive,
+              icon: const Icon(Icons.file_upload_outlined),
+              label: const Text('导入'),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
       body: SafeArea(
         child: ListenableBuilder(
           listenable: Listenable.merge(<Listenable>[
@@ -169,11 +193,15 @@ class DownloadManagementPage extends StatelessWidget {
                   comics: cachedComics,
                   isLoading: cachedComicsLoadingListenable.value,
                   failed: cachedComicsFailedListenable.value,
+                  canExport:
+                      !storageBusyListenable.value &&
+                      migrationProgressListenable.value == null,
                   onOpenCachedComic: (CachedComicLibraryEntry item) {
                     Navigator.of(context).pop();
                     onOpenCachedComic(item);
                   },
                   onDeleteCachedComic: onDeleteCachedComic,
+                  onExportComic: onExportComic,
                 ),
                 const SizedBox(height: 16),
                 _StorageSection(

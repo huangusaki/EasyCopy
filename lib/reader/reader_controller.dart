@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/chapter_comment.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/reader/internal/reader_book_layout.dart';
 import 'package:reader/reader/internal/reader_environment.dart';
 import 'package:reader/reader/internal/reader_restore_target.dart';
 import 'package:reader/reader/reader_controller/chapter_boundary.dart';
@@ -13,6 +14,7 @@ import 'package:reader/reader/reader_controller/zoom_state.dart';
 import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/deferred_viewport_coordinator.dart';
 import 'package:reader/services/image_cache.dart';
+import 'package:reader/services/local_comic.dart';
 import 'package:reader/services/reader_history_recorder.dart';
 import 'package:reader/services/reader_platform_bridge.dart';
 import 'package:reader/services/reader_progress_store.dart';
@@ -34,6 +36,7 @@ typedef ReaderChapterNavigationCallback =
     });
 
 String readerChapterIdForPage(ReaderPageData page) {
+  if (isLocalComic(page.uri)) return '';
   final Uri uri = Uri.parse(page.uri);
   final List<String> segments = uri.pathSegments;
   final int chapterIndex = segments.indexOf('chapter');
@@ -103,6 +106,9 @@ class ReaderController extends ChangeNotifier {
       <int, ScrollController>{};
   final Map<int, GlobalKey> _imageItemKeys = <int, GlobalKey>{};
   final Map<String, double> _imageAspectRatios = <String, double>{};
+  List<BookSpread> _bookPages = const <BookSpread>[BookSpread(0, 0)];
+  bool _bookTurning = false;
+  bool _bookLayoutDirty = false;
   final DeferredViewportCoordinator restoreCoordinator =
       DeferredViewportCoordinator();
   late final ReaderCommentsController _comments;
@@ -221,6 +227,42 @@ class ReaderController extends ChangeNotifier {
   int? get batteryLevel => _batteryLevel;
 
   Map<String, double> get imageAspectRatios => _imageAspectRatios;
+
+  List<BookSpread> get bookPages => _bookPages;
+
+  int bookIndexFor(int image) =>
+      _bookPages.lastIndexWhere((BookSpread p) => p.start <= image);
+
+  void _updateBookPages() {
+    if (_bookTurning) {
+      _bookLayoutDirty = true;
+      return;
+    }
+    final ReaderPageData? page = _page;
+    if (page == null) return;
+    _bookPages = bookSpreads(
+      page.imageUrls,
+      _imageAspectRatios,
+      comments: shouldShowCommentTailPage(page),
+    );
+  }
+
+  void beginBookTurn() {
+    _bookTurning = true;
+    noteUserInteraction();
+    cancelAutoTurn();
+    hideChapterControls();
+  }
+
+  void endBookTurn() {
+    _bookTurning = false;
+    if (_bookLayoutDirty) {
+      _bookLayoutDirty = false;
+      _updateBookPages();
+      if (!_disposed) notifyListeners();
+    }
+    restartAutoTurnAfterScroll();
+  }
 
   ScrollController pagedScrollControllerFor(int pageIndex) {
     return _pagedScrollControllers.putIfAbsent(pageIndex, () {
@@ -377,15 +419,11 @@ class ReaderController extends ChangeNotifier {
 
   int _stepIndex(int direction) {
     if (!isBook) return _currentPageIndex + direction;
-    final int count = _page!.imageUrls.length;
-    if (direction > 0) {
-      return _currentPageIndex >= count
-          ? _currentPageIndex + 1
-          : math.min((_currentPageIndex ~/ 2 + 1) * 2, count);
-    }
-    return _currentPageIndex >= count
-        ? (count == 0 ? -1 : (count - 1) ~/ 2 * 2)
-        : (_currentPageIndex ~/ 2 - 1) * 2;
+    final int next = bookIndexFor(_currentPageIndex) + direction;
+    if (next < 0) return -1;
+    return next < _bookPages.length
+        ? _bookPages[next].start
+        : readerPagedPageCount(_page!);
   }
 
   Future<void> stepForward() async {
@@ -649,10 +687,13 @@ class ReaderController extends ChangeNotifier {
       _disposePagedScrollControllers();
       _imageItemKeys.clear();
       _imageAspectRatios.clear();
+      _bookTurning = false;
+      _bookLayoutDirty = false;
       if (!isPaged && scrollController.hasClients) {
         scrollController.jumpTo(0);
       }
     }
+    _updateBookPages();
     _comments.prepare(page, resetForNewChapter: changedPage);
     _scheduleReaderPresentationSync();
     if (changedPage || forceRestore) {
@@ -1112,7 +1153,10 @@ class ReaderController extends ChangeNotifier {
 
   void recordImageAspectRatio(String imageUrl, double aspectRatio) {
     if (_imageAspectRatios[imageUrl] == aspectRatio) return;
+    final bool wasWide = isBookWide(_imageAspectRatios[imageUrl]);
     _imageAspectRatios[imageUrl] = aspectRatio;
+    if (wasWide != isBookWide(aspectRatio)) _updateBookPages();
+    if (_bookTurning && isBook) return;
     if (!_disposed) notifyListeners();
   }
 
@@ -1305,6 +1349,10 @@ class ReaderController extends ChangeNotifier {
     final ReaderRestoreTarget? readerRestoreTarget = page != null && !loading
         ? captureCurrentRestoreTarget(page, preferences: previousPreferences)
         : null;
+    if (previousPreferences.showChapterComments !=
+        nextPreferences.showChapterComments) {
+      _updateBookPages();
+    }
     notifyListeners();
 
     final bool requiresReaderRestore =

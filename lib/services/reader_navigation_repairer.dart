@@ -1,5 +1,6 @@
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
+import 'package:reader/services/local_comic.dart';
 import 'package:reader/services/uri_keys.dart';
 
 typedef ReaderNavigationPageLoader =
@@ -17,11 +18,37 @@ class ReaderNavigationRepairer {
     required ReaderNavigationDetailLoader loadDetailPage,
     String preferredCatalogHref = '',
   }) async {
-    if (!page.hasMissingChapterNavigation) {
+    if (isLocalComic(page.uri) || !page.hasMissingChapterNavigation) {
       return page;
     }
 
-    ReaderPageData repairedPage = page;
+    final Uri? detailUri = _detailUriForPage(
+      page,
+      preferredCatalogHref: preferredCatalogHref,
+    );
+    if (detailUri != null) {
+      try {
+        final DetailPageData? detailPage = await loadDetailPage(
+          detailUri,
+          authScope: authScope,
+        );
+        if (detailPage != null) {
+          final _AdjacentChapterLinks? links = _adjacentChapterLinks(
+            detailPage,
+            page.uri,
+          );
+          if (links != null) {
+            return page.mergeMissingNavigation(
+              prevHref: links.prevHref,
+              nextHref: links.nextHref,
+              catalogHref: detailPage.uri,
+            );
+          }
+        }
+      } catch (_) {
+        // 没有可用目录时，才尝试从章节页补齐链接。
+      }
+    }
 
     try {
       final ReaderPageData? freshReaderPage = await loadReaderPage(
@@ -29,48 +56,16 @@ class ReaderNavigationRepairer {
         authScope: authScope,
       );
       if (freshReaderPage != null) {
-        repairedPage = repairedPage.mergeMissingNavigation(
+        return page.mergeMissingNavigation(
           prevHref: freshReaderPage.prevHref,
           nextHref: freshReaderPage.nextHref,
           catalogHref: freshReaderPage.catalogHref,
         );
       }
     } catch (_) {
-      // 修复失败保留原页面。
+      // 修复失败保留原页面，后续可重试。
     }
-
-    if (!repairedPage.hasMissingChapterNavigation) {
-      return repairedPage;
-    }
-
-    final Uri? detailUri = _detailUriForPage(
-      repairedPage,
-      preferredCatalogHref: preferredCatalogHref,
-    );
-    if (detailUri == null) {
-      return repairedPage;
-    }
-
-    try {
-      final DetailPageData? detailPage = await loadDetailPage(
-        detailUri,
-        authScope: authScope,
-      );
-      if (detailPage == null) {
-        return repairedPage;
-      }
-      final _AdjacentChapterLinks links = _adjacentChapterLinks(
-        detailPage,
-        repairedPage.uri,
-      );
-      return repairedPage.mergeMissingNavigation(
-        prevHref: links.prevHref,
-        nextHref: links.nextHref,
-        catalogHref: detailPage.uri,
-      );
-    } catch (_) {
-      return repairedPage;
-    }
+    return page;
   }
 
   static Uri? _detailUriForPage(
@@ -112,7 +107,7 @@ class ReaderNavigationRepairer {
     return path.startsWith('/comic/') && !path.contains('/chapter/');
   }
 
-  static _AdjacentChapterLinks _adjacentChapterLinks(
+  static _AdjacentChapterLinks? _adjacentChapterLinks(
     DetailPageData page,
     String currentChapterHref,
   ) {
@@ -126,7 +121,7 @@ class ReaderNavigationRepairer {
       (ChapterData chapter) => _chapterPathKey(chapter.href) == currentKey,
     );
     if (index == -1) {
-      return const _AdjacentChapterLinks();
+      return null;
     }
     return _AdjacentChapterLinks(
       prevHref: index > 0 ? chapters[index - 1].href : '',

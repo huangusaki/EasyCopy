@@ -140,21 +140,20 @@ class CachedChapterLocatorStore {
     return CachedChapterLocator.fromRow(rows.first);
   }
 
-  Future<List<CachedChapterLocator>> entriesForStorage(
-    String storageKey,
-  ) async {
+  Future<bool> hasEntriesForStorage(String storageKey) async {
     await ensureInitialized();
     final String normalizedStorageKey = storageKey.trim();
     if (normalizedStorageKey.isEmpty) {
-      return const <CachedChapterLocator>[];
+      return false;
     }
     final List<Map<String, Object?>> rows = await _database!.query(
       _tableName,
+      columns: <String>['id'],
       where: 'storage_key = ?',
       whereArgs: <Object>[normalizedStorageKey],
-      orderBy: 'downloaded_at DESC, updated_at DESC',
+      limit: 1,
     );
-    return rows.map(CachedChapterLocator.fromRow).toList(growable: false);
+    return rows.isNotEmpty;
   }
 
   Future<void> upsert(CachedChapterLocator locator) async {
@@ -214,21 +213,28 @@ class CachedChapterLocatorStore {
     await batch.commit(noResult: true);
   }
 
-  Future<void> removeDirectoryPath({
+  Future<void> removeDirectoryPaths({
     required String storageKey,
-    required String directoryPath,
+    required Iterable<String> directoryPaths,
   }) async {
     await ensureInitialized();
     final String normalizedStorageKey = storageKey.trim();
-    final String normalizedDirectoryPath = directoryPath.trim();
-    if (normalizedStorageKey.isEmpty || normalizedDirectoryPath.isEmpty) {
+    final Set<String> normalizedPaths = directoryPaths
+        .map((String path) => path.trim())
+        .where((String path) => path.isNotEmpty)
+        .toSet();
+    if (normalizedStorageKey.isEmpty || normalizedPaths.isEmpty) {
       return;
     }
-    await _database!.delete(
-      _tableName,
-      where: 'storage_key = ? AND directory_path = ?',
-      whereArgs: <Object>[normalizedStorageKey, normalizedDirectoryPath],
-    );
+    final sqflite.Batch batch = _database!.batch();
+    for (final String path in normalizedPaths) {
+      batch.delete(
+        _tableName,
+        where: 'storage_key = ? AND directory_path = ?',
+        whereArgs: <Object>[normalizedStorageKey, path],
+      );
+    }
+    await batch.commit(noResult: true);
   }
 
   Future<void> removeComicDirectory({

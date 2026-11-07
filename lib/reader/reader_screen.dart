@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -11,8 +10,8 @@ import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/chapter_comment.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/reader/dependencies.dart';
+import 'package:reader/reader/internal/reader_book_layout.dart';
 import 'package:reader/reader/internal/reader_comment_layout.dart';
-import 'package:reader/reader/internal/reader_paged_scroll_physics.dart';
 import 'package:reader/reader/reader_book.dart';
 import 'package:reader/reader/reader_controller.dart';
 import 'package:reader/reader/reader_image.dart';
@@ -22,12 +21,12 @@ import 'package:reader/reader/reader_sheet_swipe_dismiss.dart';
 import 'package:reader/reader/reader_status_label.dart';
 import 'package:reader/services/app_preferences_controller.dart';
 import 'package:reader/services/chinese_converter.dart';
-import 'package:reader/services/document_tree_image_provider.dart';
 import 'package:reader/services/image_cache.dart';
+import 'package:reader/services/local_comic.dart';
+import 'package:reader/services/local_image_provider.dart';
 import 'package:reader/services/reader_comment_utils.dart';
 import 'package:reader/services/reader_history_recorder.dart';
 import 'package:reader/services/site_session.dart';
-import 'package:reader/services/tree_image_provider.dart';
 import 'package:reader/utils/platform_capabilities.dart';
 import 'package:reader/widgets/responsive_layout.dart';
 import 'package:reader/widgets/settings_ui.dart';
@@ -122,10 +121,7 @@ class ReaderScreenState extends State<ReaderScreen> {
     _controller.imageOffset = (int index) =>
         _estimateOffsetForImage(context, widget.page, index);
     _controller.turnBook = (int index) async {
-      final int count = widget.page.imageUrls.length;
-      await _bookKey.currentState?.turnTo(
-        index >= count ? (count + 1) ~/ 2 : index ~/ 2,
-      );
+      await _bookKey.currentState?.turnTo(_controller.bookIndexFor(index));
     };
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -303,8 +299,10 @@ class ReaderScreenState extends State<ReaderScreen> {
             .clamp(0, page.imageUrls.length - 1);
     if (_controller.isBook &&
         _controller.currentPageIndex < page.imageUrls.length) {
-      final int first = visibleIndex ~/ 2 * 2 + 1;
-      final int last = math.min(first + 1, page.imageUrls.length);
+      final BookSpread spread =
+          _controller.bookPages[_controller.bookIndexFor(visibleIndex)];
+      final int first = spread.start + 1;
+      final int last = spread.end;
       return '${first == last ? first : '$first–$last'}/${page.imageUrls.length}';
     }
     return '${visibleIndex + 1}/${page.imageUrls.length}';
@@ -578,7 +576,9 @@ class ReaderScreenState extends State<ReaderScreen> {
   Widget _buildBook(BuildContext context, ReaderPageData page) {
     final ReaderPreferences prefs = _controller.preferences;
     final int count = page.imageUrls.length;
-    final int spreads = (count + 1) ~/ 2;
+    final List<BookSpread> pages = _controller.bookPages;
+    final int index = _controller.bookIndexFor(_controller.currentPageIndex);
+    final int end = pages[index].end;
     final bool reverse =
         prefs.readingDirection == ReaderReadingDirection.rightToLeft;
     return SafeArea(
@@ -586,62 +586,83 @@ class ReaderScreenState extends State<ReaderScreen> {
       bottom: !prefs.fullscreen,
       child: Padding(
         padding: EdgeInsets.all(prefs.showPageGap ? 8 : 0),
-        child: ReaderBook(
-          key: _bookKey,
-          index: _controller.currentPageIndex >= count
-              ? spreads
-              : _controller.currentPageIndex ~/ 2,
-          count: math.max(
-            1,
-            spreads + (_controller.shouldShowCommentTailPage(page) ? 1 : 0),
-          ),
-          reverse: reverse,
-          enabled:
-              !_controller.isZoomGestureLocked &&
-              !_controller.isNextChapterLoading,
-          animate: !prefs.disablePageTransitionAnimation,
-          onStart: () {
-            _controller.noteUserInteraction();
-            _controller.cancelAutoTurn();
-            _controller.hideChapterControls();
-          },
-          onEnd: _controller.restartAutoTurnAfterScroll,
-          onChanged: (int index) =>
-              _controller.handlePageChanged(math.min(index * 2, count)),
-          onEdge: (bool forward) => unawaited(
-            forward ? _controller.stepForward() : _controller.stepBackward(),
-          ),
-          pageBuilder: (BuildContext context, int index, bool right) {
-            final int side = right != reverse ? 1 : 0;
-            return LayoutBuilder(
-              builder: (BuildContext context, BoxConstraints constraints) {
-                if (index == spreads &&
-                    _controller.shouldShowCommentTailPage(page)) {
-                  return side == 0
-                      ? _buildReaderCommentTailPage(
+        child: Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            // Resolve only the next two images and reuse their decoded cache.
+            Offstage(
+              child: SizedBox(
+                height: 1,
+                child: Row(
+                  children: <Widget>[
+                    for (int i = end; i < math.min(end + 2, count); i++)
+                      Expanded(
+                        child: _buildReaderImageFrame(
                           context,
-                          page,
-                          minHeight: constraints.maxHeight,
-                        )
-                      : const SizedBox.expand();
-                }
-                final int image = index * 2 + side;
-                if (image >= count) return const SizedBox.expand();
-                return _buildReaderImageFrame(
-                  context,
-                  page: page,
-                  imageIndex: image,
-                  imageUrl: page.imageUrls[image],
-                  viewportHeight: constraints.maxHeight,
-                  fit: BoxFit.contain,
-                  alignment: right
-                      ? Alignment.centerLeft
-                      : Alignment.centerRight,
-                  color: ReaderBook.paper,
+                          page: page,
+                          imageIndex: i,
+                          imageUrl: page.imageUrls[i],
+                          viewportHeight: 1,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            ReaderBook(
+              key: _bookKey,
+              index: index,
+              pages: pages,
+              reverse: reverse,
+              enabled:
+                  !_controller.isZoomGestureLocked &&
+                  !_controller.isNextChapterLoading,
+              animate: !prefs.disablePageTransitionAnimation,
+              onStart: _controller.beginBookTurn,
+              onEnd: _controller.endBookTurn,
+              onChanged: (int index) =>
+                  _controller.handlePageChanged(pages[index].start),
+              onEdge: (bool forward) => unawaited(
+                forward
+                    ? _controller.stepForward()
+                    : _controller.stepBackward(),
+              ),
+              pageBuilder: (BuildContext context, int index, bool? right) {
+                final BookSpread spread = pages[index];
+                final int side = right != null && right != reverse ? 1 : 0;
+                return LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                    if (spread.start == count &&
+                        _controller.shouldShowCommentTailPage(page)) {
+                      return side == 0
+                          ? _buildReaderCommentTailPage(
+                              context,
+                              page,
+                              minHeight: constraints.maxHeight,
+                            )
+                          : const SizedBox.expand();
+                    }
+                    final int image = spread.start + side;
+                    if (image >= spread.end) return const SizedBox.expand();
+                    return _buildReaderImageFrame(
+                      context,
+                      page: page,
+                      imageIndex: image,
+                      imageUrl: page.imageUrls[image],
+                      viewportHeight: constraints.maxHeight,
+                      fit: BoxFit.contain,
+                      alignment: right == null
+                          ? Alignment.center
+                          : right
+                          ? Alignment.centerLeft
+                          : Alignment.centerRight,
+                      color: ReaderBook.paper,
+                    );
+                  },
                 );
               },
-            );
-          },
+            ),
+          ],
         ),
       ),
     );
@@ -660,10 +681,7 @@ class ReaderScreenState extends State<ReaderScreen> {
     final ScrollPhysics pagePhysics =
         _controller.isZoomGestureLocked || instantPageSwitch
         ? const NeverScrollableScrollPhysics()
-        : const ReaderPagedScrollPhysics(
-            triggerPageRatio: 0.65,
-            parent: BouncingScrollPhysics(),
-          );
+        : const BouncingScrollPhysics();
     final Widget pageView = PageView.builder(
       key: ValueKey<String>(
         'reader-paged-${page.uri}-${preferences.readingDirection.name}-${preferences.pageFit.name}-${preferences.showPageGap}-$showCommentTail',
@@ -804,26 +822,13 @@ class ReaderScreenState extends State<ReaderScreen> {
     fit ??= preferences.pageFit == ReaderPageFit.fitWidth
         ? BoxFit.fitWidth
         : BoxFit.contain;
-    final Uri? parsedUri = Uri.tryParse(imageUrl);
-    final bool isLocalFile = parsedUri != null && parsedUri.scheme == 'file';
-    final bool isDocumentTreeFile =
-        parsedUri != null && parsedUri.scheme == 'content';
-    final bool isDocumentTreeRelativeFile =
-        parsedUri != null && parsedUri.scheme == treeImageScheme;
-    final ImageProvider<Object> imageProvider;
-    if (isLocalFile) {
-      imageProvider = FileImage(File.fromUri(parsedUri));
-    } else if (isDocumentTreeRelativeFile) {
-      imageProvider = TreeImageProvider.fromUri(parsedUri);
-    } else if (isDocumentTreeFile) {
-      imageProvider = DocumentTreeImageProvider(imageUrl);
-    } else {
-      imageProvider = CachedNetworkImageProvider(
-        imageUrl,
-        cacheManager: AppImageCaches.readerCache,
-        headers: AppImageCaches.readerImageHeaders(page.uri),
-      );
-    }
+    final ImageProvider<Object> imageProvider =
+        localImageProvider(imageUrl) ??
+        CachedNetworkImageProvider(
+          imageUrl,
+          cacheManager: AppImageCaches.readerCache,
+          headers: AppImageCaches.readerImageHeaders(page.uri),
+        );
     return ColoredBox(
       color:
           color ??
@@ -837,6 +842,7 @@ class ReaderScreenState extends State<ReaderScreen> {
         viewportHeight: viewportHeight,
         aspectRatio: _controller.imageAspectRatios[imageUrl],
         onResolvedAspectRatio: (double aspectRatio) {
+          if (_controller.page?.uri != page.uri) return;
           if (!aspectRatio.isFinite || aspectRatio <= 0) return;
           _controller.recordImageAspectRatio(imageUrl, aspectRatio);
         },

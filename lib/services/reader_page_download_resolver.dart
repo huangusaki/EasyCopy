@@ -8,7 +8,7 @@ class ReaderPageDownloadResolver {
     required ReaderPageMaybeLoader loadFromStorageCache,
     required ReaderPageMaybeLoader loadFromPageCache,
     required ReaderPageLoader loadFromLightweightSource,
-    required ReaderPageLoader loadFromWebViewFallback,
+    ReaderPageLoader? loadFromWebViewFallback,
   }) : _loadFromStorageCache = loadFromStorageCache,
        _loadFromPageCache = loadFromPageCache,
        _loadFromLightweightSource = loadFromLightweightSource,
@@ -17,7 +17,7 @@ class ReaderPageDownloadResolver {
   final ReaderPageMaybeLoader _loadFromStorageCache;
   final ReaderPageMaybeLoader _loadFromPageCache;
   final ReaderPageLoader _loadFromLightweightSource;
-  final ReaderPageLoader _loadFromWebViewFallback;
+  final ReaderPageLoader? _loadFromWebViewFallback;
 
   Future<ReaderPageData> resolve(Uri chapterUri) async {
     final ReaderPageData? pageCachedPage = await _loadFromPageCache(chapterUri);
@@ -37,10 +37,12 @@ class ReaderPageDownloadResolver {
       final ReaderPageData lightweightPage = await _loadFromLightweightSource(
         chapterUri,
       );
-      if (_hasRemoteImageList(lightweightPage)) {
-        return lightweightPage;
+      if (!_hasRemoteImageList(lightweightPage)) {
+        throw StateError('章节解析失败');
       }
+      return lightweightPage;
     } catch (_) {
+      if (_loadFromWebViewFallback == null) rethrow;
       // Let WebView fallback handle parser incompatibilities.
     }
 

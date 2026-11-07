@@ -162,6 +162,9 @@ class AppScreenServices {
         profileLoader: localProfilePageLoader.loadProfile,
         standardLoader: standardLoader,
         htmlSource: htmlPageSource,
+        readerFallback: PlatformCapabilities.usesMobileWebView
+            ? standardLoader
+            : null,
       ),
     );
   }
@@ -196,7 +199,9 @@ class AppScreenServices {
           }
           return page;
         },
-        loadFromWebViewFallback: webViewFallback,
+        loadFromWebViewFallback: PlatformCapabilities.usesMobileWebView
+            ? webViewFallback
+            : null,
       ),
     );
   }

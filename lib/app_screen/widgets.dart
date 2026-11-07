@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:reader/app_screen/models.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/chinese_converter.dart';
+import 'package:reader/services/local_comic.dart';
 import 'package:reader/theme/app_theme.dart';
 import 'package:reader/widgets/cover_image.dart';
 import 'package:reader/widgets/responsive_layout.dart';

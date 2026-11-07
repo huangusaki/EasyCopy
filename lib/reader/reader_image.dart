@@ -28,8 +28,6 @@ class ReaderChapterImage extends StatefulWidget {
 class _ReaderChapterImageState extends State<ReaderChapterImage> {
   ImageStream? _imageStream;
   ImageStreamListener? _imageStreamListener;
-  bool _hasFrame = false;
-  bool _hasError = false;
 
   @override
   void didChangeDependencies() {
@@ -41,17 +39,7 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
   void didUpdateWidget(covariant ReaderChapterImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.imageProvider != widget.imageProvider) {
-      _hasFrame = false;
-      _hasError = false;
-      _resolveImage(force: true);
-      return;
-    }
-    if (oldWidget.aspectRatio != widget.aspectRatio &&
-        widget.aspectRatio != null &&
-        !_hasFrame) {
-      setState(() {
-        _hasFrame = true;
-      });
+      _resolveImage();
     }
   }
 
@@ -61,11 +49,11 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
     super.dispose();
   }
 
-  void _resolveImage({bool force = false}) {
+  void _resolveImage() {
     final ImageStream newStream = widget.imageProvider.resolve(
       createLocalImageConfiguration(context),
     );
-    if (!force && _imageStream?.key == newStream.key) {
+    if (_imageStream?.key == newStream.key) {
       return;
     }
     _detachImageStream();
@@ -74,23 +62,16 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
       (ImageInfo imageInfo, bool synchronousCall) {
         final int width = imageInfo.image.width;
         final int height = imageInfo.image.height;
-        if (width > 0 && height > 0) {
-          final ValueChanged<double> onResolved = widget.onResolvedAspectRatio;
-          if (synchronousCall) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) onResolved(width / height);
-            });
-          } else {
-            onResolved(width / height);
-          }
+        imageInfo.dispose();
+        if (!mounted || width <= 0 || height <= 0) return;
+        final ValueChanged<double> onResolved = widget.onResolvedAspectRatio;
+        if (synchronousCall) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) onResolved(width / height);
+          });
+        } else {
+          onResolved(width / height);
         }
-        if (!mounted || _hasFrame) {
-          return;
-        }
-        setState(() {
-          _hasFrame = true;
-          _hasError = false;
-        });
       },
       onError: (Object error, StackTrace? stackTrace) {
         if (!mounted) {
@@ -99,9 +80,6 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
         DebugTrace.log('reader.image_error', <String, Object?>{
           'url': widget.debugUrl,
           'error': error.toString(),
-        });
-        setState(() {
-          _hasError = true;
         });
       },
     );
@@ -154,8 +132,7 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
             int? frame,
             bool wasSynchronouslyLoaded,
           ) {
-            final bool isLoaded =
-                wasSynchronouslyLoaded || frame != null || _hasFrame;
+            final bool isLoaded = wasSynchronouslyLoaded || frame != null;
             if (widget.viewportHeight != null) {
               return SizedBox(
                 height: widget.viewportHeight,
@@ -164,16 +141,7 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
             }
             return AspectRatio(
               aspectRatio: resolvedAspectRatio,
-              child: Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  Positioned.fill(
-                    child: isLoaded
-                        ? child
-                        : (_hasError ? _buildErrorBox() : _buildLoadingBox()),
-                  ),
-                ],
-              ),
+              child: isLoaded ? child : _buildLoadingBox(),
             );
           },
     );

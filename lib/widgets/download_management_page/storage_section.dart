@@ -320,7 +320,7 @@ class _InfoRow extends StatelessWidget {
 
 enum _QueueMenuAction { retry, removeCurrent, removeQueue, removeQueueAndCache }
 
-enum _CachedMenuAction { delete }
+enum _CachedMenuAction { export, delete }
 
 class _QueuedComicGroup {
   const _QueuedComicGroup({required this.task, required this.tasks});

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:reader/reader/internal/reader_book_layout.dart';
 
 final Future<ui.Image> _paper = () {
   final math.Random random = math.Random(7);
@@ -26,7 +27,7 @@ final Future<ui.Image> _paper = () {
 class ReaderBook extends StatefulWidget {
   const ReaderBook({
     required this.index,
-    required this.count,
+    required this.pages,
     required this.reverse,
     required this.enabled,
     required this.animate,
@@ -41,11 +42,12 @@ class ReaderBook extends StatefulWidget {
   static const Color paper = Color(0xfffaf9f6);
 
   final int index;
-  final int count;
+  final List<BookSpread> pages;
+  int get count => pages.length;
   final bool reverse;
   final bool enabled;
   final bool animate;
-  final Widget Function(BuildContext context, int index, bool right)
+  final Widget Function(BuildContext context, int index, bool? right)
   pageBuilder;
   final ValueChanged<int> onChanged;
   final ValueChanged<bool> onEdge;
@@ -67,6 +69,10 @@ class ReaderBookState extends State<ReaderBook>
   double _grip = 0;
   bool _dragging = false;
   ui.Image? _grain;
+  // Pages keep their elements while moving between the idle spread and the
+  // fold layers, so starting or landing a turn does not rebuild them.
+  final Map<(int, int, bool, bool?), GlobalKey> _leaves =
+      <(int, int, bool, bool?), GlobalKey>{};
 
   bool get _right => (_to! > _index) != widget.reverse;
   bool get _valid => _to != null && _to! >= 0 && _to! < widget.count;
@@ -85,10 +91,14 @@ class ReaderBookState extends State<ReaderBook>
   void didUpdateWidget(covariant ReaderBook oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.index != oldWidget.index ||
-        widget.count != oldWidget.count ||
+        widget.pages != oldWidget.pages ||
         widget.reverse != oldWidget.reverse ||
         widget.animate != oldWidget.animate ||
         !widget.enabled) {
+      // Fresh keys for outside jumps: the switcher may still hold old pages.
+      if (widget.index != _index || widget.pages != oldWidget.pages) {
+        _leaves.clear();
+      }
       _reset();
       _index = widget.index;
     }
@@ -127,7 +137,8 @@ class ReaderBookState extends State<ReaderBook>
       _dy = 0;
       _turn.value = 0;
     });
-    await _settle(true);
+    // Taps lift the leaf briskly rather than easing in from rest.
+    await _settle(true, 3.6);
   }
 
   void _start(DragStartDetails details) {
@@ -159,7 +170,7 @@ class ReaderBookState extends State<ReaderBook>
     final bool finish = speed.abs() >= 450
         ? speed.sign == _dx.sign
         : _dx.abs() >= _size.width * 0.24;
-    unawaited(_settle(finish));
+    unawaited(_settle(finish, _dx.sign * speed / _size.width));
   }
 
   void _cancel() {
@@ -168,7 +179,8 @@ class ReaderBookState extends State<ReaderBook>
     unawaited(_settle(false));
   }
 
-  Future<void> _settle(bool finish) async {
+  /// [velocity] is in turn progress per second; the leaf leaves at that speed.
+  Future<void> _settle(bool finish, [double velocity = 0]) async {
     final int? to = _to;
     if (to == null) {
       widget.onEnd();
@@ -177,17 +189,20 @@ class ReaderBookState extends State<ReaderBook>
     final bool valid = _valid;
     if (widget.animate && valid) {
       final double end = finish ? 1 : 0;
+      final double distance = (end - _turn.value).abs();
+      final double toward = velocity * (end - _turn.value).sign;
+      final double longest = 0.1 + 0.28 * distance;
+      final double seconds = toward > 0
+          ? (2 * distance / toward).clamp(math.min(0.1, longest), longest)
+          : longest;
       try {
         await _turn
             .animateTo(
               end,
-              duration: Duration(
-                milliseconds: (420 * (end - _turn.value).abs()).round().clamp(
-                  100,
-                  420,
-                ),
+              duration: Duration(microseconds: (seconds * 1e6).round()),
+              curve: _Release(
+                distance == 0 ? 0 : (toward * seconds / distance).clamp(0, 3),
               ),
-              curve: finish ? Curves.easeInOutCubic : Curves.easeOutCubic,
             )
             .orCancel;
       } on TickerCanceled {
@@ -210,13 +225,20 @@ class ReaderBookState extends State<ReaderBook>
     widget.onEnd();
   }
 
-  Widget _page(int index, bool right) {
+  Widget _page(int index, bool? right) {
+    final BookSpread spread = widget.pages[index];
     return Positioned(
-      left: right ? _size.width / 2 : 0,
-      width: _size.width / 2,
+      left: right == true ? _size.width / 2 : 0,
+      width: right == null ? _size.width : _size.width / 2,
       top: 0,
       height: _size.height,
       child: RepaintBoundary(
+        key: _leaves.putIfAbsent((
+          spread.start,
+          spread.end,
+          spread.wide,
+          right,
+        ), GlobalKey.new),
         child: CustomPaint(
           foregroundPainter: _grain == null
               ? null
@@ -232,6 +254,30 @@ class ReaderBookState extends State<ReaderBook>
       ),
     );
   }
+
+  Widget _spine() => Positioned(
+    left: _size.width / 2 - 32,
+    top: 0,
+    bottom: 0,
+    width: 64,
+    child: const IgnorePointer(
+      child: RepaintBoundary(child: CustomPaint(painter: _BookSpine())),
+    ),
+  );
+
+  Widget _spread(int index) => Stack(
+    key: ValueKey<(int, int, bool)>((
+      widget.pages[index].start,
+      widget.pages[index].end,
+      widget.pages[index].wide,
+    )),
+    fit: StackFit.expand,
+    children: <Widget>[
+      if (widget.pages[index].wide)
+        _page(index, null)
+      else ...<Widget>[_page(index, false), _page(index, true), _spine()],
+    ],
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -257,7 +303,20 @@ class ReaderBookState extends State<ReaderBook>
           _reset();
           _size = size;
         }
-        final bool folding = _valid && widget.animate;
+        final bool moving = _valid && widget.animate;
+        final Set<int> near = <int>{
+          for (final int i in <int>[_index - 1, _index, _index + 1])
+            if (i >= 0 && i < widget.count) widget.pages[i].start,
+          if (_valid) widget.pages[_to!].start,
+        };
+        _leaves.removeWhere(
+          ((int, int, bool, bool?) key, _) => !near.contains(key.$1),
+        );
+        final bool sliding =
+            moving && (widget.pages[_index].wide || widget.pages[_to!].wide);
+        final bool folding = moving && !sliding;
+        final Widget current = _spread(_index);
+        final Widget? next = sliding ? _spread(_to!) : null;
         final Widget front = Stack(
           children: <Widget>[if (folding) _page(_index, _right)],
         );
@@ -270,15 +329,7 @@ class ReaderBookState extends State<ReaderBook>
             _page(folding ? _to! : _index, folding ? _right : true),
           ],
         );
-        final Widget spine = Positioned(
-          left: size.width / 2 - 32,
-          top: 0,
-          bottom: 0,
-          width: 64,
-          child: const IgnorePointer(
-            child: RepaintBoundary(child: CustomPaint(painter: _BookSpine())),
-          ),
-        );
+        final Widget spine = _spine();
         final Widget book = GestureDetector(
           behavior: HitTestBehavior.opaque,
           onHorizontalDragStart: widget.enabled ? _start : null,
@@ -289,35 +340,71 @@ class ReaderBookState extends State<ReaderBook>
             child: AnimatedBuilder(
               animation: _turn,
               builder: (BuildContext context, Widget? _) {
-                final _Fold? fold = folding
-                    ? _Fold(size, _turn.value, _right, _grip, _dy)
-                    : null;
+                if (sliding) {
+                  final double t = _turn.value;
+                  final double dx = (_right ? -1 : 1) * size.width;
+                  final bool forward = _to! > _index;
+                  // The upper spread slides over the lower one, which drifts
+                  // with a little parallax and dims while it is covered.
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: <Widget>[
+                      Transform.translate(
+                        offset: Offset(dx * (forward ? t : t - 1) * 0.3, 0),
+                        child: forward ? current : next,
+                      ),
+                      IgnorePointer(
+                        child: ColoredBox(
+                          color: Colors.black.withValues(
+                            alpha: 0.22 * (forward ? t : 1 - t),
+                          ),
+                        ),
+                      ),
+                      Transform.translate(
+                        offset: Offset(dx * (forward ? t - 1 : t), 0),
+                        child: DecoratedBox(
+                          decoration: const BoxDecoration(
+                            boxShadow: <BoxShadow>[
+                              BoxShadow(
+                                color: Color(0x47000000),
+                                blurRadius: 22,
+                              ),
+                            ],
+                          ),
+                          child: forward ? next : current,
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                if (!folding) {
+                  return AnimatedSwitcher(
+                    duration: widget.animate
+                        ? const Duration(milliseconds: 180)
+                        : Duration.zero,
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeOutCubic,
+                    child: current,
+                  );
+                }
+                final _Fold fold = _Fold(size, _turn.value, _right, _grip, _dy);
                 return Stack(
                   fit: StackFit.expand,
                   children: <Widget>[
                     base,
-                    if (fold != null)
-                      ClipPath(clipper: _PageClip(fold.front), child: front),
+                    ClipPath(clipper: _PageClip(fold.front), child: front),
                     spine,
-                    if (fold != null) ...<Widget>[
-                      // Cast onto the exposed page, below the lifted sheet.
-                      IgnorePointer(
-                        child: CustomPaint(painter: _FoldShadow(fold)),
-                      ),
-                      ClipPath(
-                        clipper: _PageClip(fold.back),
-                        child: Transform(transform: fold.matrix, child: back),
-                      ),
-                      IgnorePointer(
-                        child: CustomPaint(
-                          painter: _FoldShade(
-                            fold,
-                            ReaderBook.paper,
-                            Colors.black,
-                          ),
-                        ),
-                      ),
-                    ],
+                    // Cast onto the exposed page, below the lifted sheet.
+                    IgnorePointer(
+                      child: CustomPaint(painter: _FoldShadow(fold)),
+                    ),
+                    ClipPath(
+                      clipper: _PageClip(fold.back),
+                      child: Transform(transform: fold.matrix, child: back),
+                    ),
+                    IgnorePointer(
+                      child: CustomPaint(painter: _FoldShade(fold)),
+                    ),
                   ],
                 );
               },
@@ -404,6 +491,7 @@ class _Fold {
     final double w = size.width;
     final double h = size.height;
     final double t = value.clamp(0.0001, 1);
+    bind = Curves.easeOutCubic.transform(((t - 0.5) * 2).clamp(0, 1));
     strength = math.sin(math.pi * t);
     final Offset edge = Offset(right ? w : 0, grip);
     final Offset drag = Offset(
@@ -450,6 +538,7 @@ class _Fold {
   late final Offset mid;
   late final Offset normal;
   late final double strength;
+  late final double bind;
   late final double lift;
   final Path crease = Path();
 
@@ -510,23 +599,51 @@ class _FoldShadow extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final double s = fold.strength;
+    final Offset n = fold.normal;
+    final Offset along = Offset(-n.dy, n.dx) * 1e4;
+    // The raised leaf drops a soft shadow on the page it still covers.
     canvas.save();
-    canvas.translate(
-      fold.normal.dx * fold.lift * 0.24,
-      4 * fold.strength + fold.normal.dy * fold.lift * 0.24,
+    canvas.clipPath(
+      Path()..addPolygon(<Offset>[
+        fold.mid + along,
+        fold.mid - along,
+        fold.mid - along - n * 1e4,
+        fold.mid + along - n * 1e4,
+      ], true),
     );
-    canvas.drawShadow(
+    canvas.translate(-n.dx * fold.lift * 0.2, 2 * s - n.dy * fold.lift * 0.2);
+    canvas.drawPath(
       fold.back,
-      Colors.black.withValues(alpha: 0.28 * fold.strength),
-      24 * fold.strength,
-      true,
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.24 * s)
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 1 + 7 * s),
     );
     canvas.restore();
-    canvas.drawShadow(
-      fold.back,
-      Colors.black.withValues(alpha: 0.22 * fold.strength),
-      3 * fold.strength,
-      true,
+    // The curl shades the page it uncovers, darkest right under the crease.
+    final double reach = 12 + fold.lift * 1.6;
+    canvas.drawPaint(
+      Paint()
+        ..shader = ui.Gradient.linear(
+          fold.mid - n,
+          fold.mid + n * reach,
+          <Color>[
+            Colors.transparent,
+            Colors.black.withValues(alpha: 0.3 * s),
+            Colors.black.withValues(alpha: 0.14 * s),
+            Colors.black.withValues(alpha: 0.04 * s),
+            Colors.transparent,
+          ],
+          <double>[0, 1 / (reach + 1), 0.3, 0.65, 1],
+        ),
+    );
+    canvas.drawPath(
+      fold.crease,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4 + 6 * s
+        ..color = Colors.black.withValues(alpha: 0.3 * s)
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 2 + 6 * s),
     );
   }
 
@@ -535,31 +652,47 @@ class _FoldShadow extends CustomPainter {
 }
 
 class _FoldShade extends CustomPainter {
-  const _FoldShade(this.fold, this.paper, this.ink);
+  const _FoldShade(this.fold);
   final _Fold fold;
-  final Color paper;
-  final Color ink;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final double width = 18 + fold.lift * 1.8;
-    final Offset start = fold.mid - fold.normal * width;
-    final Offset end = fold.mid + fold.normal * fold.lift * 0.55;
+    final double shade = fold.strength * (1 - fold.bind);
+    final Offset crest = fold.mid + fold.normal * fold.lift * 0.5;
+    final double width = 24 + fold.lift * 2.4;
     canvas.save();
     canvas.clipPath(fold.back);
+    // A rolled sheet: dark where it turns away, a glossy band, then soft shade.
     canvas.drawPaint(
       Paint()
         ..shader = ui.Gradient.linear(
-          start,
-          end,
+          crest,
+          crest - fold.normal * width,
+          <Color>[
+            Colors.black.withValues(alpha: 0.3 * shade),
+            Colors.black.withValues(alpha: 0.05 * shade),
+            Colors.white.withValues(alpha: 0.3 * shade),
+            Colors.white.withValues(alpha: 0),
+            Colors.black.withValues(alpha: 0.1 * shade),
+            Colors.black.withValues(alpha: 0),
+          ],
+          const <double>[0, 0.08, 0.2, 0.36, 0.62, 1],
+        ),
+    );
+    // The landing leaf carries its gutter shade into the binding.
+    canvas.drawPaint(
+      Paint()
+        ..shader = ui.Gradient.linear(
+          fold.mid - fold.normal * 32,
+          fold.mid,
           <Color>[
             Colors.transparent,
-            Colors.black.withValues(alpha: 0.025 * fold.strength),
-            Colors.black.withValues(alpha: 0.17 * fold.strength),
-            Colors.black.withValues(alpha: 0.045 * fold.strength),
-            paper.withValues(alpha: 0.035 * fold.strength),
+            Colors.black.withValues(alpha: 0.025 * fold.bind),
+            Colors.black.withValues(alpha: 0.09 * fold.bind),
+            Colors.black.withValues(alpha: 0.23 * fold.bind),
+            Colors.black.withValues(alpha: 0.36 * fold.bind),
           ],
-          const <double>[0, 0.35, 0.72, 0.93, 1],
+          const <double>[0, 0.3, 0.66, 0.92, 1],
         ),
     );
     canvas.restore();
@@ -568,17 +701,28 @@ class _FoldShade extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 0.65
-        ..color = ink.withValues(alpha: 0.13 * fold.strength),
+        ..color = Colors.black.withValues(alpha: 0.1 * fold.strength),
     );
     canvas.drawPath(
       fold.crease,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 0.9
-        ..color = paper.withValues(alpha: 0.65 * fold.strength),
+        ..color = Colors.white.withValues(alpha: 0.6 * shade),
     );
   }
 
   @override
   bool shouldRepaint(_FoldShade oldDelegate) => true;
+}
+
+// Hermite ease: leaves at [slope] times the average speed and lands at rest,
+// so a released or tapped leaf keeps moving instead of stalling.
+class _Release extends Curve {
+  const _Release(this.slope);
+  final double slope;
+
+  @override
+  double transformInternal(double t) =>
+      t * t * (3 - 2 * t) + slope * t * (1 - t) * (1 - t);
 }

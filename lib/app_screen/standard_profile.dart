@@ -161,6 +161,12 @@ extension _AppScreenProfileSections on _AppScreenState {
             cachedComicsListenable: _library.cachedComicsNotifier,
             cachedComicsLoadingListenable: _library.cachedComicsLoadingNotifier,
             cachedComicsFailedListenable: _library.cachedComicsFailedNotifier,
+            onImportArchive: () {
+              unawaited(_importComicArchive());
+            },
+            onExportComic: (CachedComicLibraryEntry item) {
+              unawaited(_exportComicArchive(item));
+            },
             onOpenCachedComic: (CachedComicLibraryEntry item) {
               _openCachedComicFromProfile(_cachedComicCardKey(item));
             },
@@ -261,7 +267,7 @@ extension _AppScreenProfileSections on _AppScreenState {
       requestContext: requestContext,
       switchToTab: _shouldActivateAsyncResultTab(requestContext.targetTabIndex),
     );
-    if (item.comicHref.trim().isNotEmpty) {
+    if (item.comicHref.trim().isNotEmpty && !isLocalComic(item.comicHref)) {
       unawaited(
         _refreshCachedComicDetail(
           item,

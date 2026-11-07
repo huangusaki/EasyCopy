@@ -66,7 +66,9 @@ extension ComicCacheDetailsOps on ComicDownloadService {
       authors: snapshot?.authors ?? '',
       authorLinks: snapshot?.authorLinks ?? const <LinkAction>[],
       updatedAt: snapshot?.updatedAt ?? '',
-      status: snapshot?.status ?? '已缓存',
+      status: isLocalComic(entry.comicHref)
+          ? '本地漫画'
+          : snapshot?.status ?? '已缓存',
       summary: snapshot?.summary ?? '',
       tags: snapshot?.tags ?? const <LinkAction>[],
       startReadingHref: fallbackStartReadingHref,
@@ -118,13 +120,6 @@ extension ComicCacheDetailsOps on ComicDownloadService {
         );
       } else {
         entry = await _findCachedChapter(chapterHref);
-        if (entry != null) {
-          await _upsertCachedChapterLocator(
-            storageKey: storageKey,
-            comicTitle: '',
-            chapter: entry,
-          );
-        }
       }
       if (entry == null || entry.directoryPath.isEmpty) {
         return null;
@@ -137,10 +132,11 @@ extension ComicCacheDetailsOps on ComicDownloadService {
       );
       if (manifest == null) {
         if (locator != null) {
-          await _cachedChapterLocatorStore.removeDirectoryPath(
+          await _cachedChapterLocatorStore.removeDirectoryPaths(
             storageKey: storageKey,
-            directoryPath: entry.directoryPath,
+            directoryPaths: <String>[entry.directoryPath],
           );
+          locator = null;
         }
         entry = await _findCachedChapter(chapterHref, forceRescan: true);
         if (entry == null || entry.directoryPath.isEmpty) {
@@ -150,11 +146,6 @@ extension ComicCacheDetailsOps on ComicDownloadService {
         if (manifest == null) {
           return null;
         }
-        await _upsertCachedChapterLocator(
-          storageKey: storageKey,
-          comicTitle: '',
-          chapter: entry,
-        );
       }
       if (_pathKeyForUri(_stringValue(manifest['chapterHref'])) !=
               targetPathKey &&
@@ -268,7 +259,7 @@ extension ComicCacheDetailsOps on ComicDownloadService {
       final String progressLabel = _stringValue(
         normalizedManifest['progressLabel'],
       );
-      await _upsertCachedChapterLocator(
+      final CachedChapterLocator resolvedLocator = _locatorForChapter(
         storageKey: storageKey,
         comicTitle: _stringValue(normalizedManifest['comicTitle']),
         chapter: CachedChapterEntry(
@@ -279,6 +270,20 @@ extension ComicCacheDetailsOps on ComicDownloadService {
           downloadedAt: downloadedAt,
         ),
       );
+      // Library fallback may already have rebuilt the missing locator.
+      locator ??= await _cachedChapterLocatorStore.findByPathKey(
+        storageKey: storageKey,
+        targetPathKey: targetPathKey,
+      );
+      if (locator == null ||
+          locator.chapterPathKey != resolvedLocator.chapterPathKey ||
+          locator.sourcePathKey != resolvedLocator.sourcePathKey ||
+          locator.directoryPath != resolvedLocator.directoryPath ||
+          locator.comicTitle != resolvedLocator.comicTitle ||
+          locator.chapterTitle != resolvedLocator.chapterTitle ||
+          locator.downloadedAt != resolvedLocator.downloadedAt) {
+        await _cachedChapterLocatorStore.upsert(resolvedLocator);
+      }
 
       return ReaderPageData(
         title: chapterTitle.isNotEmpty
@@ -378,38 +383,50 @@ extension ComicCacheDetailsOps on ComicDownloadService {
       _sanitizePathSegment(comicTitle),
       ...chapterDirectoryPaths.map(_parentRelativePath),
     }.where(_isCacheFileName).toSet();
-    for (final String comicDirectory in comicDirectories) {
-      final List<String> paths = await _cacheFilePaths(
-        root,
-        relativePath: comicDirectory,
-        comicKey: comicKey,
-      );
-      if (paths.isEmpty) continue;
-      final Set<String> existingFiles =
-          (await root.listEntries(comicDirectory, recursive: true))
-              .where((_StorageEntry entry) => !entry.isDirectory)
-              .map((_StorageEntry entry) => entry.relativePath)
-              .toSet();
-      final Set<String> chapterDirectories = <String>{};
-      for (final String path in paths) {
-        if (!existingFiles.contains(path)) continue;
-        await root.deletePath(path);
-        chapterDirectories.add(_parentRelativePath(path));
-      }
-      for (final String chapterDirectory in chapterDirectories) {
-        await _removeChapterFromIndex(
-          storageKey: storageKey,
-          chapterDirectoryPath: chapterDirectory,
+    final Set<String> deletedChapterDirectories = <String>{};
+    try {
+      for (final String comicDirectory in comicDirectories) {
+        final List<String> paths = await _cacheFilePaths(
+          root,
+          relativePath: comicDirectory,
+          comicKey: comicKey,
         );
+        if (paths.isEmpty) continue;
+        final Set<String> existingFiles =
+            (await root.listEntries(comicDirectory, recursive: true))
+                .where((_StorageEntry entry) => !entry.isDirectory)
+                .map((_StorageEntry entry) => entry.relativePath)
+                .toSet();
+        final Set<String> chapterDirectories = <String>{};
+        for (final String path in paths) {
+          if (!existingFiles.contains(path)) continue;
+          if (await root.deletePath(path)) {
+            final String chapterDirectory = _parentRelativePath(path);
+            chapterDirectories.add(chapterDirectory);
+            deletedChapterDirectories.add(chapterDirectory);
+          }
+        }
+        for (final String chapterDirectory in chapterDirectories) {
+          if ((await root.listEntries(
+            chapterDirectory,
+            recursive: false,
+          )).isEmpty) {
+            await root.deletePath(chapterDirectory);
+          }
+        }
         if ((await root.listEntries(
-          chapterDirectory,
+          comicDirectory,
           recursive: false,
         )).isEmpty) {
-          await root.deletePath(chapterDirectory);
+          await root.deletePath(comicDirectory);
         }
       }
-      if ((await root.listEntries(comicDirectory, recursive: false)).isEmpty) {
-        await root.deletePath(comicDirectory);
+    } finally {
+      if (deletedChapterDirectories.isNotEmpty) {
+        await _removeChaptersFromIndex(
+          storageKey: storageKey,
+          chapterDirectoryPaths: deletedChapterDirectories,
+        );
       }
     }
   }
@@ -486,9 +503,9 @@ extension ComicCacheDetailsOps on ComicDownloadService {
       )).isEmpty) {
         await root.deletePath(chapterDirectoryPath);
       }
-      await _removeChapterFromIndex(
+      await _removeChaptersFromIndex(
         storageKey: storageKey,
-        chapterDirectoryPath: chapterDirectoryPath,
+        chapterDirectoryPaths: <String>{chapterDirectoryPath},
       );
     }
   }

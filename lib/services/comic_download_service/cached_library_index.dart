@@ -31,9 +31,9 @@ extension ComicCacheLibraryOps on ComicDownloadService {
             .map(CachedComicLibraryEntry.fromJson)
             .toList(growable: false);
         if (indexedLibrary.isNotEmpty) {
-          final List<CachedChapterLocator> existingLocators =
-              await _cachedChapterLocatorStore.entriesForStorage(storageKey);
-          if (existingLocators.isEmpty) {
+          if (!await _cachedChapterLocatorStore.hasEntriesForStorage(
+            storageKey,
+          )) {
             await _replaceCachedChapterLocators(
               storageKey: storageKey,
               comics: indexedLibrary,
@@ -225,7 +225,12 @@ extension ComicCacheLibraryOps on ComicDownloadService {
           final List<CachedChapterEntry> chapters =
               entry.value.toList(growable: false)..sort(
                 (CachedChapterEntry left, CachedChapterEntry right) =>
-                    right.downloadedAt.compareTo(left.downloadedAt),
+                    isLocalComic(comicHrefs[entry.key] ?? '')
+                    ? comicArchiveNaturalCompare(
+                        left.chapterHref,
+                        right.chapterHref,
+                      )
+                    : right.downloadedAt.compareTo(left.downloadedAt),
               );
           final CachedComicLibraryEntry? previousEntry =
               previousEntriesByKey[entry.key];
@@ -375,23 +380,20 @@ extension ComicCacheLibraryOps on ComicDownloadService {
     );
   }
 
-  Future<void> _removeChapterFromIndex({
+  Future<void> _removeChaptersFromIndex({
     required String storageKey,
-    required String chapterDirectoryPath,
+    required Set<String> chapterDirectoryPaths,
   }) async {
     final List<CachedComicLibraryEntry> comics = await _readCachedLibraryIndex(
       storageKey,
     );
-    if (comics.isEmpty) {
-      return;
-    }
     final List<CachedComicLibraryEntry> nextComics =
         <CachedComicLibraryEntry>[];
     for (final CachedComicLibraryEntry comic in comics) {
       final List<CachedChapterEntry> chapters = comic.chapters
           .where(
             (CachedChapterEntry chapter) =>
-                chapter.directoryPath != chapterDirectoryPath,
+                !chapterDirectoryPaths.contains(chapter.directoryPath),
           )
           .toList(growable: false);
       if (chapters.isEmpty) {
@@ -407,10 +409,12 @@ extension ComicCacheLibraryOps on ComicDownloadService {
         ),
       );
     }
-    await _writeCachedLibraryIndex(storageKey, nextComics);
-    await _cachedChapterLocatorStore.removeDirectoryPath(
+    if (comics.isNotEmpty) {
+      await _writeCachedLibraryIndex(storageKey, nextComics);
+    }
+    await _cachedChapterLocatorStore.removeDirectoryPaths(
       storageKey: storageKey,
-      directoryPath: chapterDirectoryPath,
+      directoryPaths: chapterDirectoryPaths,
     );
   }
 

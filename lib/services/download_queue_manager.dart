@@ -78,6 +78,7 @@ class DownloadQueueManager implements DownloadMigrationQueue {
   bool _disposed = false;
   DownloadQueueTask? _runningTask;
   bool _storageSwitchPending = false;
+  bool _archiveActive = false;
   Completer<void>? _queueIdle;
 
   DownloadQueueSnapshot get snapshot => snapshotNotifier.value;
@@ -388,16 +389,38 @@ class DownloadQueueManager implements DownloadMigrationQueue {
     }
   }
 
-  String? storageEditBlockReason() =>
-      _migration.isActive ? '正在切换缓存目录，请稍后再试' : null;
+  String? storageEditBlockReason() => _archiveActive
+      ? '正在导入或导出，请稍后再试'
+      : _migration.isActive
+      ? '正在切换缓存目录，请稍后再试'
+      : null;
+
+  Future<T> runArchiveOperation<T>(Future<T> Function() action) async {
+    final String? blocked = storageEditBlockReason();
+    if (blocked != null) throw StateError(blocked);
+    _archiveActive = true;
+    storageBusyNotifier.value = true;
+    bool wasRunning = false;
+    try {
+      wasRunning = await suspendForStorageSwitch();
+      return await _writes.switchStorage(action);
+    } finally {
+      _archiveActive = false;
+      if (!_disposed) storageBusyNotifier.value = false;
+      await resumeAfterStorageSwitch(wasRunning);
+    }
+  }
 
   Future<bool> applyStoragePreferences(
     DownloadPreferences preferences, {
     bool migrateExisting = true,
-  }) => _migration.applyPreferences(
-    preferences,
-    migrateExisting: migrateExisting,
-  );
+  }) {
+    if (_archiveActive) throw StateError('正在导入或导出，请稍后再试');
+    return _migration.applyPreferences(
+      preferences,
+      migrateExisting: migrateExisting,
+    );
+  }
 
   @override
   Future<bool> suspendForStorageSwitch() async {

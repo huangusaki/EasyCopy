@@ -52,6 +52,7 @@ dependencies:
   window_manager: ^0.5.1
   opencc_t2s:
     path: packages/opencc_t2s
+  archive: 4.6.0
 
 dev_dependencies:
   flutter_test:

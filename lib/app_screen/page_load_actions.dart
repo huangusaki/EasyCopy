@@ -310,7 +310,9 @@ extension _AppScreenPageLoadActions on _AppScreenState {
               previousPage is! DetailPageData ||
               previousPage.uri != resolvedPage.uri,
         );
-        unawaited(_persistCachedDetailSnapshot(resolvedPage));
+        if (!isLocalComic(resolvedPage.uri)) {
+          unawaited(_persistCachedDetailSnapshot(resolvedPage));
+        }
       }
     }, syncSearch: switchToTab || tabIndex == _nav.selectedIndex);
 
@@ -422,7 +424,8 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       );
       return;
     }
-    if (!AppConfig.isAllowedNavigationUri(targetUri)) {
+    if (!isLocalComic(targetUri.toString()) &&
+        !AppConfig.isAllowedNavigationUri(targetUri)) {
       _showNotice('已阻止跳转到站外页面');
       return;
     }
@@ -434,6 +437,10 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       preserveVisiblePage: preserveVisiblePage,
       sourceKind: NavigationRequestSourceKind.navigation,
     );
+    if (isLocalComic(targetUri.toString())) {
+      await _loadLocalComicPage(targetUri, requestContext: requestContext);
+      return;
+    }
     final PagePreparation preparation = _createPagePreparation(
       sessionGeneration: sessionGeneration,
       authScope: key.authScope,
@@ -633,6 +640,46 @@ extension _AppScreenPageLoadActions on _AppScreenState {
         });
       }
       await _handlePageLoadFailure(error, requestContext: requestContext);
+    }
+  }
+
+  Future<void> _loadLocalComicPage(
+    Uri uri, {
+    required NavigationRequestContext requestContext,
+  }) async {
+    try {
+      SitePage? page;
+      if (isReaderChapterUri(uri)) {
+        page = await _services.downloadService.loadCachedReaderPage(
+          uri.toString(),
+        );
+      } else {
+        final List<CachedComicLibraryEntry> library = await _services
+            .downloadService
+            .loadCachedLibrary();
+        for (final CachedComicLibraryEntry comic in library) {
+          if (comic.comicHref == uri.toString()) {
+            page = _services.downloadService.buildCachedDetailPage(comic);
+            break;
+          }
+        }
+      }
+      if (page == null) {
+        await _handlePageLoadFailure(
+          '本地漫画文件不存在或已损坏',
+          requestContext: requestContext,
+        );
+        return;
+      }
+      _applyLoadedPage(
+        page,
+        requestContext: requestContext,
+        switchToTab: _shouldActivateAsyncResultTab(
+          requestContext.targetTabIndex,
+        ),
+      );
+    } catch (_) {
+      await _handlePageLoadFailure('无法读取本地漫画', requestContext: requestContext);
     }
   }
 

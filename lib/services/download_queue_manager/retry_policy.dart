@@ -109,6 +109,8 @@ String formatDownloadError(Object error) {
     TimeoutException _ => '章节解析超时',
     HttpException error => error.message,
     FileSystemException error => error.message,
+    FormatException error => error.message,
+    StateError error => error.message,
     PlatformException error =>
       error.message?.trim().isNotEmpty == true
           ? error.message!.trim()

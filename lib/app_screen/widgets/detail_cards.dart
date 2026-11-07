@@ -92,32 +92,34 @@ class DetailHeroCard extends StatelessWidget {
                             icon: const Icon(Icons.chrome_reader_mode_rounded),
                             label: const Text('开始阅读'),
                           ),
-                          const SizedBox(width: 12),
-                          FilledButton.tonalIcon(
-                            onPressed: isCollectionBusy
-                                ? null
-                                : onToggleCollection,
-                            style: FilledButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 16,
+                          if (!isLocalComic(page.uri)) ...<Widget>[
+                            const SizedBox(width: 12),
+                            FilledButton.tonalIcon(
+                              onPressed: isCollectionBusy
+                                  ? null
+                                  : onToggleCollection,
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 16,
+                                ),
                               ),
+                              icon: _buildCollectionIcon(),
+                              label: Text(page.isCollected ? '取消收藏' : '加入书架'),
                             ),
-                            icon: _buildCollectionIcon(),
-                            label: Text(page.isCollected ? '取消收藏' : '加入书架'),
-                          ),
-                          const SizedBox(width: 12),
-                          FilledButton.tonalIcon(
-                            onPressed: onDownload,
-                            style: FilledButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 16,
+                            const SizedBox(width: 12),
+                            FilledButton.tonalIcon(
+                              onPressed: onDownload,
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 16,
+                                ),
                               ),
+                              icon: const Icon(Icons.download_rounded),
+                              label: const Text('缓存章节'),
                             ),
-                            icon: const Icon(Icons.download_rounded),
-                            label: const Text('缓存章节'),
-                          ),
+                          ],
                         ],
                       ),
                     ],
@@ -179,25 +181,29 @@ class DetailHeroCard extends StatelessWidget {
                   label: const Text('开始阅读'),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.tonalIcon(
-                  onPressed: isCollectionBusy ? null : onToggleCollection,
-                  icon: _buildCollectionIcon(),
-                  label: Text(page.isCollected ? '取消收藏' : '加入书架'),
+              if (!isLocalComic(page.uri)) ...<Widget>[
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: isCollectionBusy ? null : onToggleCollection,
+                    icon: _buildCollectionIcon(),
+                    label: Text(page.isCollected ? '取消收藏' : '加入书架'),
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.tonalIcon(
-              onPressed: onDownload,
-              icon: const Icon(Icons.download_rounded),
-              label: const Text('缓存章节'),
+          if (!isLocalComic(page.uri)) ...<Widget>[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                onPressed: onDownload,
+                icon: const Icon(Icons.download_rounded),
+                label: const Text('缓存章节'),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );

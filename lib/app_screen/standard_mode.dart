@@ -2,10 +2,28 @@ part of '../app_screen.dart';
 
 extension _AppScreenStandardMode on _AppScreenState {
   Widget _buildStandardMode(BuildContext context) {
-    if (usesDesktopWindowShell(context)) {
-      return _buildDesktopStandardMode(context);
+    final Widget shell = usesDesktopWindowShell(context)
+        ? _buildDesktopStandardMode(context)
+        : _buildMobileStandardMode(context);
+    if (!PlatformCapabilities.isDesktop) {
+      return shell;
     }
+    return DesktopShortcuts(
+      shortcuts: _preferencesController.shortcutPreferences,
+      onSelectTab: (int index) => unawaited(_onItemTapped(index)),
+      onStepTab: (int step) => _stepPrimaryTab(step, cycle: true),
+      onRefresh: () {
+        if (!_isLoading) {
+          unawaited(_retryCurrentPage());
+        }
+      },
+      onBack: () => unawaited(_handleBackNavigation()),
+      onFocusSearch: _ui.desktopSearchFocusNode.requestFocus,
+      child: shell,
+    );
+  }
 
+  Widget _buildMobileStandardMode(BuildContext context) {
     return Scaffold(
       key: const ValueKey<String>('standard-scaffold'),
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -27,68 +45,57 @@ extension _AppScreenStandardMode on _AppScreenState {
         _preferencesController.preferences.wallpaperPreferences.isActive;
     return AmbientBackdrop(
       enabled: !wallpaperActive,
-      child: DesktopShortcuts(
-        shortcuts: _preferencesController.shortcutPreferences,
-        onSelectTab: (int index) => unawaited(_onItemTapped(index)),
-        onRefresh: () {
-          if (!_isLoading) {
-            unawaited(_retryCurrentPage());
-          }
-        },
-        onBack: () => unawaited(_handleBackNavigation()),
-        onFocusSearch: _ui.desktopSearchFocusNode.requestFocus,
-        child: Scaffold(
-          key: const ValueKey<String>('standard-scaffold'),
-          backgroundColor: Colors.transparent,
-          floatingActionButton: _buildSortFab(context),
-          floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-          body: Column(
-            children: <Widget>[
-              DesktopTitleBar(
-                showBackButton: _routes.shouldShowBackButton,
-                onBack: () => unawaited(_handleBackNavigation()),
-                isLoading: _isLoading,
-                onRefresh: () => unawaited(_retryCurrentPage()),
-                onOpenShortcuts: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (BuildContext context) => KeyboardShortcutsPage(
-                      preferencesController: _preferencesController,
-                    ),
+      child: Scaffold(
+        key: const ValueKey<String>('standard-scaffold'),
+        backgroundColor: Colors.transparent,
+        floatingActionButton: _buildSortFab(context),
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+        body: Column(
+          children: <Widget>[
+            DesktopTitleBar(
+              showBackButton: _routes.shouldShowBackButton,
+              onBack: () => unawaited(_handleBackNavigation()),
+              isLoading: _isLoading,
+              onRefresh: () => unawaited(_retryCurrentPage()),
+              onOpenShortcuts: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (BuildContext context) => KeyboardShortcutsPage(
+                    preferencesController: _preferencesController,
                   ),
                 ),
-                searchField: DesktopSearchField(
-                  controller: _searchActions.textController,
-                  focusNode: _ui.desktopSearchFocusNode,
-                  history: _searchActions.entries,
-                  onSubmit: _searchActions.submitVisible,
-                  onRemoveHistoryEntry: (String term) =>
-                      unawaited(_searchActions.removeHistoryEntry(term)),
-                  onClearHistory: () =>
-                      unawaited(_searchActions.confirmClearHistory(context)),
-                ),
               ),
-              Expanded(
-                child: Stack(
-                  children: <Widget>[
-                    Positioned.fill(child: _buildStandardBody(context)),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: Center(
-                        child: DesktopDock(
-                          selectedIndex: _nav.selectedIndex,
-                          destinations: appDestinations,
-                          onDestinationSelected: (int index) =>
-                              unawaited(_onItemTapped(index)),
-                        ),
+              searchField: DesktopSearchField(
+                controller: _searchActions.textController,
+                focusNode: _ui.desktopSearchFocusNode,
+                history: _searchActions.entries,
+                onSubmit: _searchActions.submitVisible,
+                onRemoveHistoryEntry: (String term) =>
+                    unawaited(_searchActions.removeHistoryEntry(term)),
+                onClearHistory: () =>
+                    unawaited(_searchActions.confirmClearHistory(context)),
+              ),
+            ),
+            Expanded(
+              child: Stack(
+                children: <Widget>[
+                  Positioned.fill(child: _buildStandardBody(context)),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: Center(
+                      child: DesktopDock(
+                        selectedIndex: _nav.selectedIndex,
+                        destinations: appDestinations,
+                        onDestinationSelected: (int index) =>
+                            unawaited(_onItemTapped(index)),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -275,27 +282,35 @@ extension _AppScreenStandardMode on _AppScreenState {
       ),
       tabIndex: _nav.selectedIndex,
       routeDepth: _tabSessionStore.depth(_nav.selectedIndex),
-      child: RefreshIndicator(
-        onRefresh: () {
-          if (!PlatformCapabilities.isDesktop) {
-            unawaited(HapticFeedback.mediumImpact());
-          }
-          return _retryCurrentPage();
+      // 手势放在截图边界内，切页时旧页面从手指拖到的位置继续滑出。
+      child: TabSwitchGestures(
+        onStep: _stepPrimaryTab,
+        canStep: (int step) {
+          final int index = _nav.selectedIndex + step;
+          return index >= 0 && index < appDestinations.length;
         },
-        child: NotificationListener<ScrollNotification>(
-          onNotification: (ScrollNotification notification) {
-            _updateBottomBarVisibility(notification);
-            return _scrollState.handleScrollNotification(
-              notification,
-              onUserInteraction: _noteViewportInteraction,
-            );
+        child: RefreshIndicator(
+          onRefresh: () {
+            if (!PlatformCapabilities.isDesktop) {
+              unawaited(HapticFeedback.mediumImpact());
+            }
+            return _retryCurrentPage();
           },
-          child: CustomScrollView(
-            controller: _ui.standardScrollController,
-            physics: const AlwaysScrollableScrollPhysics(
-              parent: BouncingScrollPhysics(),
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (ScrollNotification notification) {
+              _updateBottomBarVisibility(notification);
+              return _scrollState.handleScrollNotification(
+                notification,
+                onUserInteraction: _noteViewportInteraction,
+              );
+            },
+            child: CustomScrollView(
+              controller: _ui.standardScrollController,
+              physics: const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics(),
+              ),
+              slivers: slivers,
             ),
-            slivers: slivers,
           ),
         ),
       ),

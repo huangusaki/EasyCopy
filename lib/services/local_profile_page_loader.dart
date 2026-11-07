@@ -46,7 +46,6 @@ class LocalProfilePageLoader {
     Uri uri, {
     required String authScope,
   }) async {
-    await _libraryStore.ensureInitialized();
     await _session.ensureInitialized();
 
     final ProfileSubview view = AppConfig.profileSubviewForUri(uri);
@@ -106,25 +105,25 @@ class LocalProfilePageLoader {
       }
     }
 
-    final String localScope = isLoggedIn ? authScope : guestScope;
-
-    final (
-      List<ProfileLibraryItem> collectionsPreview,
-      int collectionsTotal,
-    ) = await _libraryStore.readCollectionsPage(
-      localScope,
-      page: view == ProfileSubview.collections ? activePage : 1,
-      pageSize: 20,
-      sort: collectionSort,
-    );
-    final (
-      List<ProfileHistoryItem> historyPreview,
-      int historyTotal,
-    ) = await _libraryStore.readHistoryPage(
-      localScope,
-      page: view == ProfileSubview.history ? activePage : 1,
-      pageSize: 20,
-    );
+    final (List<ProfileLibraryItem> collectionsPreview, int collectionsTotal) =
+        !isLoggedIn &&
+            (view == ProfileSubview.root || view == ProfileSubview.collections)
+        ? await _libraryStore.readCollectionsPage(
+            guestScope,
+            page: view == ProfileSubview.collections ? activePage : 1,
+            pageSize: 20,
+            sort: collectionSort,
+          )
+        : (const <ProfileLibraryItem>[], 0);
+    final (List<ProfileHistoryItem> historyPreview, int historyTotal) =
+        !isLoggedIn &&
+            (view == ProfileSubview.root || view == ProfileSubview.history)
+        ? await _libraryStore.readHistoryPage(
+            guestScope,
+            page: view == ProfileSubview.history ? activePage : 1,
+            pageSize: 20,
+          )
+        : (const <ProfileHistoryItem>[], 0);
 
     switch (view) {
       case ProfileSubview.collections:

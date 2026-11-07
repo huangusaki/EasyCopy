@@ -5,6 +5,7 @@ import 'package:reader/app_screen/models.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/deferred_viewport_coordinator.dart';
+import 'package:reader/services/local_comic.dart';
 
 const String detailAllChapterTabKey = '__detail_all__';
 
@@ -55,7 +56,7 @@ class DetailChapterController {
       _handledAutoScrollKey = '';
       _selectedTabKey =
           preferredTabKey ?? fallbackTab?.key ?? detailAllChapterTabKey;
-      _sortAscending = false;
+      _sortAscending = isLocalComic(page.uri);
       return;
     }
     if (!tabs.any(
@@ -129,7 +130,7 @@ class DetailChapterController {
     if (active == null || active.chapters.isEmpty) {
       return const <ChapterData>[];
     }
-    if (!_sortAscending) {
+    if (_sortAscending == isLocalComic(page.uri)) {
       return active.chapters;
     }
     return active.chapters.reversed.toList(growable: false);

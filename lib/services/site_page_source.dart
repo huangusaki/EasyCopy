@@ -96,15 +96,18 @@ class RoutedSitePageSource implements SitePageSource {
     required ProfilePageLoader profileLoader,
     required SitePageLoader standardLoader,
     required SitePageSource htmlSource,
+    SitePageLoader? readerFallback,
   }) : _apiClient = apiClient,
        _profileLoader = profileLoader,
        _standardLoader = standardLoader,
-       _htmlSource = htmlSource;
+       _htmlSource = htmlSource,
+       _readerFallback = readerFallback;
 
   final SiteApiClient _apiClient;
   final ProfilePageLoader _profileLoader;
   final SitePageLoader _standardLoader;
   final SitePageSource _htmlSource;
+  final SitePageLoader? _readerFallback;
 
   @override
   Future<SitePage> load(
@@ -136,6 +139,8 @@ class RoutedSitePageSource implements SitePageSource {
           _probeReader(page, label: 'reader.first_image');
           return page;
         } catch (error) {
+          final SitePageLoader? fallback = _readerFallback;
+          if (fallback == null) rethrow;
           DebugTrace.log('reader.html_loader_fallback', <String, Object?>{
             'uri': targetUri.toString(),
             'error': error.toString(),
@@ -144,7 +149,7 @@ class RoutedSitePageSource implements SitePageSource {
             'Reader HTML loader failed for ${targetUri.path}; '
             'falling back to standard loader. $error',
           );
-          final SitePage page = await _standardLoader(
+          final SitePage page = await fallback(
             targetUri,
             authScope: authScope,
             requestContext: requestContext,

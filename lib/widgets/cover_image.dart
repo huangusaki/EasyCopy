@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:reader/services/image_cache.dart';
+import 'package:reader/services/local_image_provider.dart';
 
 class CoverImage extends StatelessWidget {
   const CoverImage({
@@ -20,12 +21,24 @@ class CoverImage extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
+        final ImageProvider<Object>? localImage = localImageProvider(imageUrl);
+        final int? cacheWidth = _coverCacheWidth(context, constraints);
         Widget child = imageUrl.isEmpty
             ? const PlaceholderImage()
+            : localImage != null
+            ? Image(
+                image: ResizeImage.resizeIfNeeded(cacheWidth, null, localImage),
+                fit: fit,
+                frameBuilder: (context, child, frame, wasSynchronouslyLoaded) =>
+                    wasSynchronouslyLoaded || frame != null
+                    ? child
+                    : const CoverSkeleton(),
+                errorBuilder: (_, __, ___) => const PlaceholderImage(),
+              )
             : CachedNetworkImage(
                 imageUrl: imageUrl,
                 fit: fit,
-                memCacheWidth: _coverCacheWidth(context, constraints),
+                memCacheWidth: cacheWidth,
                 cacheManager: AppImageCaches.coverCache,
                 placeholder: (_, __) => const CoverSkeleton(),
                 errorWidget: (_, __, ___) => const PlaceholderImage(),

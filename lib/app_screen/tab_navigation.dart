@@ -429,6 +429,23 @@ extension _AppScreenTabNavigation on _AppScreenState {
     return true;
   }
 
+  void _stepPrimaryTab(int step, {bool cycle = false}) {
+    final int index = cycle
+        ? (_nav.selectedIndex + step) % appDestinations.length
+        : (_nav.selectedIndex + step).clamp(0, appDestinations.length - 1);
+    if (index == _nav.selectedIndex) {
+      return;
+    }
+    final FocusNode? focus = FocusManager.instance.primaryFocus;
+    if (focus?.context?.findAncestorStateOfType<EditableTextState>() != null) {
+      focus!.unfocus();
+    }
+    if (!PlatformCapabilities.isDesktop) {
+      unawaited(HapticFeedback.selectionClick());
+    }
+    unawaited(_onItemTapped(index));
+  }
+
   Future<void> _onItemTapped(int index) async {
     if (index < 0 || index >= appDestinations.length) {
       return;

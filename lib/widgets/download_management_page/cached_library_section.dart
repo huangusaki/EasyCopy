@@ -5,15 +5,19 @@ class _CachedLibrarySection extends StatefulWidget {
     required this.comics,
     required this.isLoading,
     required this.failed,
+    required this.canExport,
     required this.onOpenCachedComic,
     required this.onDeleteCachedComic,
+    required this.onExportComic,
   });
 
   final List<CachedComicLibraryEntry> comics;
   final bool isLoading;
   final bool failed;
+  final bool canExport;
   final ValueChanged<CachedComicLibraryEntry> onOpenCachedComic;
   final ValueChanged<CachedComicLibraryEntry> onDeleteCachedComic;
+  final ValueChanged<CachedComicLibraryEntry> onExportComic;
 
   @override
   State<_CachedLibrarySection> createState() => _CachedLibrarySectionState();
@@ -71,6 +75,9 @@ class _CachedLibrarySectionState extends State<_CachedLibrarySection> {
                 entry: entry,
                 onTap: () => widget.onOpenCachedComic(entry),
                 onDelete: () => widget.onDeleteCachedComic(entry),
+                onExport: widget.canExport
+                    ? () => widget.onExportComic(entry)
+                    : null,
               ),
             );
           }),
@@ -107,11 +114,13 @@ class _CachedComicRow extends StatelessWidget {
     required this.entry,
     required this.onTap,
     required this.onDelete,
+    required this.onExport,
   });
 
   final CachedComicLibraryEntry entry;
   final VoidCallback onTap;
   final VoidCallback onDelete;
+  final VoidCallback? onExport;
 
   @override
   Widget build(BuildContext context) {
@@ -181,13 +190,21 @@ class _CachedComicRow extends StatelessWidget {
               PopupMenuButton<_CachedMenuAction>(
                 tooltip: '更多操作',
                 onSelected: (_CachedMenuAction action) {
-                  if (action == _CachedMenuAction.delete) {
-                    onDelete();
+                  switch (action) {
+                    case _CachedMenuAction.export:
+                      onExport?.call();
+                    case _CachedMenuAction.delete:
+                      onDelete();
                   }
                 },
                 itemBuilder: (BuildContext context) {
-                  return const <PopupMenuEntry<_CachedMenuAction>>[
+                  return <PopupMenuEntry<_CachedMenuAction>>[
                     PopupMenuItem<_CachedMenuAction>(
+                      value: _CachedMenuAction.export,
+                      enabled: onExport != null,
+                      child: const Text('导出 ZIP'),
+                    ),
+                    const PopupMenuItem<_CachedMenuAction>(
                       value: _CachedMenuAction.delete,
                       child: Text('删除本地缓存'),
                     ),

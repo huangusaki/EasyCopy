@@ -169,7 +169,20 @@ extension _AppScreenReaderNavigation on _AppScreenState {
   Future<DetailPageData?> _loadRepairDetailPage(
     Uri uri, {
     required String authScope,
+    required String chapterHref,
   }) async {
+    final CachedPageHit? cached = await _pageRepository.readCached(
+      PageQueryKey.forUri(uri, authScope: authScope),
+    );
+    final SitePage? cachedPage = cached?.page;
+    final String chapterKey = _chapterKeys.pathKey(chapterHref);
+    if (cachedPage is DetailPageData &&
+        !cached!.envelope.isSoftExpired(DateTime.now()) &&
+        _detailChapterList(
+          cachedPage,
+        ).any((chapter) => _chapterKeys.pathKey(chapter.href) == chapterKey)) {
+      return cachedPage;
+    }
     final SitePage page = await _pageRepository.loadFresh(
       uri,
       authScope: authScope,
@@ -202,7 +215,11 @@ extension _AppScreenReaderNavigation on _AppScreenState {
         authScope: key.authScope,
         preferredCatalogHref: context.catalogHref,
         loadReaderPage: _loadRepairReaderPage,
-        loadDetailPage: _loadRepairDetailPage,
+        loadDetailPage: (uri, {required authScope}) => _loadRepairDetailPage(
+          uri,
+          authScope: authScope,
+          chapterHref: page.uri,
+        ),
       );
       if (!_didReaderNavigationChange(page, repairedPage)) {
         DebugTrace.log('reader.navigation_repair_noop', <String, Object?>{

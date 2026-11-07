@@ -260,22 +260,23 @@ extension _ReaderSettingsSheet on ReaderScreenState {
                                 const SizedBox(height: 24),
                                 SettingsSection(
                                   children: <Widget>[
-                                    SettingsSwitchRow(
-                                      label: '显示评论页',
-                                      value: preferences.showChapterComments,
-                                      onChanged: (bool value) {
-                                        unawaited(
-                                          preferencesController
-                                              .updateReaderPreferences(
-                                                (ReaderPreferences current) =>
-                                                    current.copyWith(
-                                                      showChapterComments:
-                                                          value,
-                                                    ),
-                                              ),
-                                        );
-                                      },
-                                    ),
+                                    if (!isLocalComic(widget.page.uri))
+                                      SettingsSwitchRow(
+                                        label: '显示评论页',
+                                        value: preferences.showChapterComments,
+                                        onChanged: (bool value) {
+                                          unawaited(
+                                            preferencesController
+                                                .updateReaderPreferences(
+                                                  (ReaderPreferences current) =>
+                                                      current.copyWith(
+                                                        showChapterComments:
+                                                            value,
+                                                      ),
+                                                ),
+                                          );
+                                        },
+                                      ),
                                     SettingsSwitchRow(
                                       label: '关闭翻页动画',
                                       value: preferences

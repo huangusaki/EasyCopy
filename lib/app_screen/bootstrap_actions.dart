@@ -2,9 +2,9 @@ part of '../app_screen.dart';
 
 extension _AppScreenBootstrapActions on _AppScreenState {
   void _handlePreferencesChanged() {
-    final ChineseConversionMode mode =
-        _preferencesController.chineseConversionMode;
-    _requestChineseConversionMode(mode);
+    ChineseConverter.instance.setMode(
+      _preferencesController.chineseConversionMode,
+    );
 
     final DownloadPreferences previousDownloadPreferences =
         _shell.lastDownloadPrefs ?? _preferencesController.downloadPreferences;
@@ -29,45 +29,6 @@ extension _AppScreenBootstrapActions on _AppScreenState {
           ),
         );
       }
-    }
-  }
-
-  void _requestChineseConversionMode(ChineseConversionMode mode) {
-    if (_requestedChineseConversionMode == mode) {
-      return;
-    }
-    _requestedChineseConversionMode = mode;
-    final int requestGeneration = ++_chineseConversionRequestGeneration;
-    unawaited(_applyChineseConversionMode(mode, requestGeneration));
-  }
-
-  Future<void> _applyChineseConversionMode(
-    ChineseConversionMode mode,
-    int requestGeneration,
-  ) async {
-    final bool applied = await ChineseConverter.instance.setMode(mode);
-    if (!mounted ||
-        _chineseConversionRequestGeneration != requestGeneration ||
-        _requestedChineseConversionMode != mode ||
-        _preferencesController.chineseConversionMode != mode) {
-      return;
-    }
-
-    if (applied) {
-      _setStateIfMounted();
-      return;
-    }
-
-    _requestedChineseConversionMode = ChineseConversionMode.disabled;
-    _chineseConversionRequestGeneration += 1;
-    _setStateIfMounted();
-    _showNotice('简体显示不可用，已恢复原文。');
-    try {
-      await _preferencesController.setChineseConversionMode(
-        ChineseConversionMode.disabled,
-      );
-    } catch (_) {
-      // 内存状态已恢复为原文，持久化失败不影响继续使用应用。
     }
   }
 
