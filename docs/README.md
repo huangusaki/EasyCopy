@@ -105,6 +105,12 @@ flutter build windows --release
 
 推送 `v*` tag 会触发 GitHub Actions 自动构建并发布 Android 与 Windows 产物。tag 必须与 `pubspec.yaml` 的 `version` 一致（如 `v2.6.0`）；若存在 `.github/release-notes/v<版本>.md`，其内容会作为该次 Release Note。
 
+### iOS 实验性构建
+
+在 GitHub 的 **Actions → iOS Unsigned Build → Run workflow** 手动构建，完成后从该次运行的 **Artifacts** 下载 `EasyCopy-<版本>-ios-unsigned`（保留 14 天）。无需配置 Apple 证书或 Secrets，工作流会临时生成 iOS 工程，并将未签名的 Release 应用封装为 IPA，不自动发布到 Releases。
+
+**未签名 IPA 不能直接安装到普通 iPhone / iPad，也不能直接用于 App Store / TestFlight，安装需自行签名。** iOS 尚未做功能测试，编译成功不代表所有功能可用。
+
 ## 🧱 项目结构
 
 Flutter 工程，核心代码位于 `lib/`：

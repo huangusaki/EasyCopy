@@ -1,0 +1,115 @@
+name: iOS Unsigned Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    name: Build unsigned IPA (experimental)
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      FLUTTER_VERSION: "3.41.4"
+      PUB_HOSTED_URL: "https://pub.dev"
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # Generate only the missing platform in a temporary project so that
+      # flutter create cannot replace the app's sources or dependency files.
+      - name: Generate iOS project
+        run: |
+          set -euo pipefail
+          flutter create \
+            --platforms=ios \
+            --project-name=easycopy \
+            --org=com.huangusaki \
+            --no-pub \
+            "$RUNNER_TEMP/easycopy-ios"
+          cp -R "$RUNNER_TEMP/easycopy-ios/ios" ios
+
+      - name: Configure app identity and icons
+        id: app
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import plistlib
+          import re
+          import subprocess
+          from pathlib import Path
+
+          info_path = Path("ios/Runner/Info.plist")
+          with info_path.open("rb") as file:
+              info = plistlib.load(file)
+          info["CFBundleDisplayName"] = "EasyCopy"
+          info["CFBundleName"] = "EasyCopy"
+          info["NSPhotoLibraryUsageDescription"] = "选择图片作为应用壁纸"
+          with info_path.open("wb") as file:
+              plistlib.dump(info, file, sort_keys=False)
+
+          icons = Path("ios/Runner/Assets.xcassets/AppIcon.appiconset")
+          catalog = json.loads((icons / "Contents.json").read_text(encoding="utf-8"))
+          for entry in catalog["images"]:
+              size = round(float(entry["size"].split("x")[0]) * float(entry["scale"].rstrip("x")))
+              subprocess.run([
+                  "sips", "-z", str(size), str(size),
+                  "assets/icons/app_icon_ios_1024.png",
+                  "--out", str(icons / entry["filename"]),
+              ], check=True, stdout=subprocess.DEVNULL)
+
+          version = re.search(r"^version:\s*(\S+)", Path("pubspec.yaml").read_text(encoding="utf-8"), re.MULTILINE)[1]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as file:
+              file.write(f"version={version}\n")
+          PY
+
+      - name: Install dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Build unsigned iOS app
+        run: flutter build ios --release --no-codesign --no-pub
+
+      # Flutter's IPA export requires signing. Package the unsigned device
+      # bundle directly; it still needs signing before installation on iOS.
+      - name: Package unsigned IPA
+        env:
+          APP_VERSION: ${{ steps.app.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/ios/unsigned/Payload dist
+          cp -R build/ios/iphoneos/Runner.app build/ios/unsigned/Payload/
+          cd build/ios/unsigned
+          zip -qry "$GITHUB_WORKSPACE/dist/EasyCopy-${APP_VERSION}-ios-unsigned.ipa" Payload
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyCopy-${{ steps.app.outputs.version }}-ios-unsigned
+          path: dist/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Write build summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ### iOS 未签名构建（实验性）
+          - 在本次运行的 **Artifacts** 中下载 IPA，保留 14 天。
+          - 产物未经签名，普通 iPhone / iPad 需自行签名后才能安装，不能直接用于 App Store / TestFlight。
+          - 未做 iOS 功能测试；构建成功仅代表编译通过。
+          EOF
