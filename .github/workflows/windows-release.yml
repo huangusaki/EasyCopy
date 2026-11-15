@@ -117,7 +117,7 @@ jobs:
           $sourceExePath = Join-Path $buildOutputDir 'easy_copy.exe'
           $noticeSourcePath = Join-Path $env:GITHUB_WORKSPACE 'NOTICE'
           $distDir = Join-Path $env:GITHUB_WORKSPACE 'dist'
-          $artifactDirName = "easy_copy-$version-windows-x64"
+          $artifactDirName = "EasyCopy-$version-windows-x64"
           $artifactDirPath = Join-Path $distDir $artifactDirName
           $artifactZipPath = Join-Path $distDir "$artifactDirName.zip"
 

@@ -16,23 +16,52 @@ class AppRoot extends StatelessWidget {
   final Widget? home;
   final AppPreferencesController? preferencesController;
 
+  /// 偏好任意一项变动（阅读设置、壁纸滑杆等）都会触发这里重建，
+  /// 主题只随主题偏好与壁纸开关变化，缓存起来避免每次从头构建。
+  static final Map<(AppThemePreference, bool, Brightness), ThemeData>
+  _themeCache = <(AppThemePreference, bool, Brightness), ThemeData>{};
+
+  static ThemeData _themeFor(
+    AppPreferences preferences, {
+    required bool wallpaperActive,
+    required Brightness brightness,
+  }) {
+    return _themeCache.putIfAbsent(
+      (preferences.themePreference, wallpaperActive, brightness),
+      () =>
+          (brightness == Brightness.dark
+                  ? preferences.buildDarkTheme()
+                  : preferences.buildLightTheme())
+              .applyWallpaperOverlay(active: wallpaperActive),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppPreferencesController controller =
         preferencesController ?? AppPreferencesController.instance;
+    // 在 builder 外创建，保证实例不变，偏好变动时不连带重建整个 AppScreen。
+    final Widget homeWidget =
+        home ?? AppScreen(preferencesController: controller);
     return AnimatedBuilder(
       animation: controller,
       builder: (BuildContext context, Widget? _) {
         final WallpaperPreferences wallpaper =
             controller.preferences.wallpaperPreferences;
         final bool wallpaperActive = wallpaper.isActive;
-        final ThemeData lightTheme = controller.preferences.buildLightTheme();
-        final ThemeData darkTheme = controller.preferences.buildDarkTheme();
         return MaterialApp(
           title: AppConfig.appName,
           debugShowCheckedModeBanner: false,
-          theme: lightTheme.applyWallpaperOverlay(active: wallpaperActive),
-          darkTheme: darkTheme.applyWallpaperOverlay(active: wallpaperActive),
+          theme: _themeFor(
+            controller.preferences,
+            wallpaperActive: wallpaperActive,
+            brightness: Brightness.light,
+          ),
+          darkTheme: _themeFor(
+            controller.preferences,
+            wallpaperActive: wallpaperActive,
+            brightness: Brightness.dark,
+          ),
           themeMode: controller.preferences.materialThemeMode,
           builder: (BuildContext context, Widget? child) {
             final MediaQueryData mediaQuery = MediaQuery.of(context);
@@ -78,7 +107,7 @@ class AppRoot extends StatelessWidget {
               child: body,
             );
           },
-          home: home ?? AppScreen(preferencesController: controller),
+          home: homeWidget,
         );
       },
     );
@@ -115,13 +144,15 @@ class AppWallpaperBackground extends StatelessWidget {
         fit: StackFit.expand,
         children: <Widget>[
           Positioned.fill(
-            child: CroppedWallpaperImage(
-              path: path,
-              cropLeft: wallpaper.cropLeft,
-              cropTop: wallpaper.cropTop,
-              cropWidth: wallpaper.cropWidth,
-              cropHeight: wallpaper.cropHeight,
-              blurSigma: blur,
+            child: RepaintBoundary(
+              child: CroppedWallpaperImage(
+                path: path,
+                cropLeft: wallpaper.cropLeft,
+                cropTop: wallpaper.cropTop,
+                cropWidth: wallpaper.cropWidth,
+                cropHeight: wallpaper.cropHeight,
+                blurSigma: blur,
+              ),
             ),
           ),
           if (scrimAlpha > 0.001)

@@ -131,7 +131,6 @@ class ProfilePageView extends StatelessWidget {
   final Widget? afterContinueReading;
   final List<ComicCardData> cachedComicCards;
   final ProfileSubview activeSubview;
-  static const double _libraryPreviewHeight = 204;
   static const double _libraryPreviewWidth = 100;
 
   @override
@@ -157,8 +156,13 @@ class ProfilePageView extends StatelessWidget {
         ? null
         : onDeleteHistory;
     final TextScaler textScaler = MediaQuery.textScalerOf(context);
-    final double libraryPreviewHeight = textScaler.scale(_libraryPreviewHeight);
-    final double libraryPreviewWidth = textScaler.scale(_libraryPreviewWidth);
+    final double libraryPreviewWidth =
+        textScaler.scale(_libraryPreviewWidth) +
+        ComicCardInk.contentPadding * 2;
+    final double libraryPreviewHeight = _LibraryCard.previewHeightFor(
+      textScaler: textScaler,
+      width: libraryPreviewWidth,
+    );
 
     if (activeSubview == ProfileSubview.cached) {
       return _buildComicCollectionSection(
@@ -225,10 +229,9 @@ class ProfilePageView extends StatelessWidget {
             children: <Widget>[
               SizedBox(
                 height: libraryPreviewHeight,
-                child: ListView.separated(
+                child: ListView.builder(
                   scrollDirection: Axis.horizontal,
                   itemCount: collectionCards.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 12),
                   itemBuilder: (BuildContext context, int index) {
                     final ComicCardData item = collectionCards[index];
                     return SizedBox(
@@ -261,10 +264,9 @@ class ProfilePageView extends StatelessWidget {
             children: <Widget>[
               SizedBox(
                 height: libraryPreviewHeight,
-                child: ListView.separated(
+                child: ListView.builder(
                   scrollDirection: Axis.horizontal,
                   itemCount: cachedComicCards.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 12),
                   itemBuilder: (BuildContext context, int index) {
                     final ComicCardData item = cachedComicCards[index];
                     return SizedBox(
@@ -312,10 +314,9 @@ class ProfilePageView extends StatelessWidget {
             children: <Widget>[
               SizedBox(
                 height: libraryPreviewHeight,
-                child: ListView.separated(
+                child: ListView.builder(
                   scrollDirection: Axis.horizontal,
                   itemCount: historyCards.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 12),
                   itemBuilder: (BuildContext context, int index) {
                     final ComicCardData item = historyCards[index];
                     return SizedBox(

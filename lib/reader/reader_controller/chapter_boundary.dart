@@ -22,6 +22,7 @@ class ReaderChapterBoundaryController {
     required this.flushProgress,
     required this.onRequestChapterNavigation,
     required this.notify,
+    required this.notifyPull,
   });
 
   final double Function() triggerDistance;
@@ -30,6 +31,9 @@ class ReaderChapterBoundaryController {
   final Future<void> Function() flushProgress;
   final ReaderBoundaryNavigationCallback onRequestChapterNavigation;
   final VoidCallback notify;
+
+  /// 拖拽距离逐帧变化，只需刷新提示浮层。
+  final VoidCallback notifyPull;
 
   bool _isLoading = false;
   double _previousDistance = 0;
@@ -44,23 +48,24 @@ class ReaderChapterBoundaryController {
   void clearPrevious() {
     if (_previousDistance <= 0) return;
     _previousDistance = 0;
-    notify();
+    notifyPull();
   }
 
   void clearNext() {
     if (_nextDistance <= 0) return;
     _nextDistance = 0;
-    notify();
+    notifyPull();
   }
 
   void reset() {
     if (_previousDistance <= 0 && _nextDistance <= 0 && !_isLoading) {
       return;
     }
+    final bool wasLoading = _isLoading;
     _previousDistance = 0;
     _nextDistance = 0;
     _isLoading = false;
-    notify();
+    wasLoading ? notify() : notifyPull();
   }
 
   Future<void> triggerPrevious(ReaderPageData page) async {
@@ -262,7 +267,7 @@ class ReaderChapterBoundaryController {
       return;
     }
     _nextDistance = clampedDistance;
-    notify();
+    notifyPull();
   }
 
   void _updatePreviousDistance(double distance) {
@@ -275,7 +280,7 @@ class ReaderChapterBoundaryController {
       return;
     }
     _previousDistance = clampedDistance;
-    notify();
+    notifyPull();
   }
 }
 

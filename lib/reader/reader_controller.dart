@@ -83,8 +83,19 @@ class ReaderController extends ChangeNotifier {
           notifyListeners();
         }
       },
+      notifyPull: () {
+        if (!_disposed) {
+          _gestureFrame.ping();
+        }
+      },
     );
   }
+
+  /// 缩放、平移、章节拖拽距离这类逐帧变化只通知这里，
+  /// 避免每帧重建整个阅读器（列表、图片、浮层）。
+  final _GestureFrameNotifier _gestureFrame = _GestureFrameNotifier();
+
+  Listenable get gestureFrameListenable => _gestureFrame;
 
   final AppPreferencesController preferencesController;
   final ReaderProgressStore progressStore;
@@ -391,6 +402,7 @@ class ReaderController extends ChangeNotifier {
     pageController.dispose();
     scrollController.dispose();
     _comments.dispose();
+    _gestureFrame.dispose();
     super.dispose();
   }
 
@@ -1241,9 +1253,18 @@ class ReaderController extends ChangeNotifier {
 
   void _mutateZoom(bool Function() mutation) {
     final bool wasLocked = _zoom.isLocked;
+    final bool wasGestureActive = _zoom.isScaleGestureActive;
+    final bool wasZoomed = _zoom.scale > 1.01;
     final bool changed = mutation();
     if (changed && !_disposed) {
-      notifyListeners();
+      // 只有影响布局/手势结构的状态翻转才重建整棵树，其余只重绘变换层。
+      if (wasLocked != _zoom.isLocked ||
+          wasGestureActive != _zoom.isScaleGestureActive ||
+          wasZoomed != _zoom.scale > 1.01) {
+        notifyListeners();
+      } else {
+        _gestureFrame.ping();
+      }
     }
     _handleZoomLockChanged(wasLocked);
   }
@@ -1375,4 +1396,8 @@ class ReaderController extends ChangeNotifier {
     }
     _scheduleReaderPresentationSync();
   }
+}
+
+class _GestureFrameNotifier extends ChangeNotifier {
+  void ping() => notifyListeners();
 }

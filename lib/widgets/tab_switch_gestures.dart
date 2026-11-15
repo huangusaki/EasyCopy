@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -36,21 +37,21 @@ class _TabSwitchGesturesState extends State<TabSwitchGestures>
 
   bool _canStep(int step) => widget.canStep?.call(step) ?? true;
 
-  /// 阻尼跟手；没有相邻 Tab 时只给一点橡皮筋提示。
+  /// 起步 1:1 跟手，越往外阻力越大并趋近上限；没有相邻 Tab 时只给一点橡皮筋提示。
   double _followOffset(double distance) {
     final bool blocked = !_canStep(distance < 0 ? 1 : -1);
     final double limit = _followLimit * (blocked ? 0.2 : 1);
-    final double damped = distance.abs() * (blocked ? 0.3 : 0.7);
     if (limit <= 0) {
       return 0;
     }
-    return distance.sign * limit * damped / (damped + limit);
+    final double travel = distance.abs() * (blocked ? 0.3 : 1);
+    return distance.sign * limit * (1 - math.exp(-travel / limit));
   }
 
   void _startDrag(DragStartDetails details) {
     _offset.stop();
     _dragDistance = 0;
-    _followLimit = (context.size?.width ?? 0) * 0.2;
+    _followLimit = (context.size?.width ?? 0) * 0.3;
   }
 
   void _updateDrag(DragUpdateDetails details) {

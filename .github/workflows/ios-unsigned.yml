@@ -1,10 +1,23 @@
 name: iOS Unsigned Build
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.0.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark this GitHub Release as a prerelease"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-ios:
@@ -23,6 +36,45 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Resolve release metadata
+        id: meta
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+          REQUESTED_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            release_tag="$REQUESTED_TAG"
+            prerelease_flag="$REQUESTED_PRERELEASE"
+          else
+            release_tag="$GITHUB_REF_NAME"
+            prerelease_flag="false"
+          fi
+
+          version_line="$(sed -nE 's/^version:[[:space:]]+(.+)$/\1/p' pubspec.yaml | head -n1)"
+          app_version="${version_line%%+*}"
+          expected_tag="v${app_version}"
+          notes_path=".github/release-notes/${release_tag}.md"
+
+          if [[ -z "$version_line" || "$release_tag" != "$expected_tag" ]]; then
+            echo "Tag ${release_tag} does not match pubspec version ${app_version}. Expected ${expected_tag}." >&2
+            exit 1
+          fi
+
+          if [[ -f "$notes_path" ]]; then
+            echo "has_custom_notes=true" >> "$GITHUB_OUTPUT"
+            echo "release_notes_path=$notes_path" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_custom_notes=false" >> "$GITHUB_OUTPUT"
+            echo "release_notes_path=" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_title=EasyCopy $app_version" >> "$GITHUB_OUTPUT"
+          echo "app_version=$app_version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease_flag" >> "$GITHUB_OUTPUT"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -45,13 +97,10 @@ jobs:
           cp -R "$RUNNER_TEMP/easycopy-ios/ios" ios
 
       - name: Configure app identity and icons
-        id: app
         run: |
           python3 - <<'PY'
           import json
-          import os
           import plistlib
-          import re
           import subprocess
           from pathlib import Path
 
@@ -74,9 +123,6 @@ jobs:
                   "--out", str(icons / entry["filename"]),
               ], check=True, stdout=subprocess.DEVNULL)
 
-          version = re.search(r"^version:\s*(\S+)", Path("pubspec.yaml").read_text(encoding="utf-8"), re.MULTILINE)[1]
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as file:
-              file.write(f"version={version}\n")
           PY
 
       - name: Install dependencies
@@ -89,27 +135,51 @@ jobs:
       # bundle directly; it still needs signing before installation on iOS.
       - name: Package unsigned IPA
         env:
-          APP_VERSION: ${{ steps.app.outputs.version }}
+          APP_VERSION: ${{ steps.meta.outputs.app_version }}
         run: |
           set -euo pipefail
           mkdir -p build/ios/unsigned/Payload dist
           cp -R build/ios/iphoneos/Runner.app build/ios/unsigned/Payload/
           cd build/ios/unsigned
-          zip -qry "$GITHUB_WORKSPACE/dist/EasyCopy-${APP_VERSION}-ios-unsigned.ipa" Payload
+          zip -qry "$GITHUB_WORKSPACE/dist/EasyCopy-${APP_VERSION}-ios-arm64.ipa" Payload
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: EasyCopy-${{ steps.app.outputs.version }}-ios-unsigned
+          name: EasyCopy-${{ steps.meta.outputs.release_tag }}-ios-release
           path: dist/*.ipa
           if-no-files-found: error
           retention-days: 14
+
+      - name: Create or update GitHub Release with custom notes
+        if: steps.meta.outputs.has_custom_notes == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: ${{ steps.meta.outputs.release_title }}
+          target_commitish: ${{ github.sha }}
+          body_path: ${{ steps.meta.outputs.release_notes_path }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: dist/*.ipa
+          fail_on_unmatched_files: true
+
+      - name: Create or update GitHub Release
+        if: steps.meta.outputs.has_custom_notes != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: ${{ steps.meta.outputs.release_title }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: dist/*.ipa
+          fail_on_unmatched_files: true
 
       - name: Write build summary
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           ### iOS 未签名构建（实验性）
-          - 在本次运行的 **Artifacts** 中下载 IPA，保留 14 天。
+          - IPA 已上传到对应版本的 **GitHub Release**，同时保留本次运行的 **Artifacts**（14 天）。
           - 产物未经签名，普通 iPhone / iPad 需自行签名后才能安装，不能直接用于 App Store / TestFlight。
           - 未做 iOS 功能测试；构建成功仅代表编译通过。
           EOF
