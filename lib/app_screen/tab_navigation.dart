@@ -519,17 +519,7 @@ extension _AppScreenTabNavigation on _AppScreenState {
         _tabSessionStore.currentEntry(index).page != null) {
       _scrollState.persistVisiblePageState();
       if (_activateRestoredPrimaryTab(index)) {
-        unawaited(
-          _loadUri(
-            targetUri,
-            preserveVisiblePage: true,
-            skipPersistVisiblePageState: true,
-            skipIfTargetTabInactive: true,
-            // 恢复标签页时保留该标签自己的栈归属。
-            targetTabIndexOverride: index,
-            historyMode: NavigationIntent.preserve,
-          ),
-        );
+        unawaited(_revalidateRestoredTabIfStale(index, targetUri));
         return;
       }
     }
@@ -540,6 +530,28 @@ extension _AppScreenTabNavigation on _AppScreenState {
       historyMode: shouldResetToRoot
           ? NavigationIntent.resetToRoot
           : NavigationIntent.preserve,
+    );
+  }
+
+  /// 恢复的 Tab 已直接显示缓存页。原先这里立即重走 [_loadUri]：
+  /// 屏蔽过滤每次都产出新的页面对象，整页在切换动画中途再重建一遍并重设滚动。
+  /// 现在等切换动画结束，且缓存确实过期了才重新加载。
+  Future<void> _revalidateRestoredTabIfStale(int index, Uri targetUri) async {
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    if (!mounted || _nav.selectedIndex != index) return;
+    final CachedPageHit? hit = await _pageRepository.readCached(
+      _pageQueryKeyForUri(AppConfig.rewriteToCurrentHost(targetUri)),
+    );
+    if (hit != null && !hit.envelope.isSoftExpired(DateTime.now())) return;
+    if (!mounted || _nav.selectedIndex != index) return;
+    await _loadUri(
+      targetUri,
+      preserveVisiblePage: true,
+      skipPersistVisiblePageState: true,
+      skipIfTargetTabInactive: true,
+      // 恢复标签页时保留该标签自己的栈归属。
+      targetTabIndexOverride: index,
+      historyMode: NavigationIntent.preserve,
     );
   }
 }

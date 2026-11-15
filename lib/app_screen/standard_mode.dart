@@ -305,6 +305,9 @@ extension _AppScreenStandardMode on _AppScreenState {
               );
             },
             child: CustomScrollView(
+              // 每个 Tab 独立的滚动存储：新 Tab 首帧直接按自己的位置布局，
+              // 而不是先在旧 Tab 的偏移上整页构建一次、下一帧再跳转。
+              key: PageStorageKey<String>('standard-tab-${_nav.selectedIndex}'),
               controller: _ui.standardScrollController,
               physics: const AlwaysScrollableScrollPhysics(
                 parent: BouncingScrollPhysics(),

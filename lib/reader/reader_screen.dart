@@ -998,30 +998,37 @@ class ReaderScreenState extends State<ReaderScreen> {
           );
         }
 
+        // 缩放/平移逐帧变化只重建这一层变换，内容子树原样复用。
         readerContent = ClipRect(
-          child: Transform.translate(
-            offset: isZoomed
-                ? Offset(_controller.panOffsetX, _controller.panOffsetY)
-                : Offset.zero,
-            child: Transform.scale(
-              scale: _controller.zoomScale,
-              alignment: Alignment.center,
-              child: readerContent,
-            ),
+          child: ListenableBuilder(
+            listenable: _controller.gestureFrameListenable,
+            child: readerContent,
+            builder: (BuildContext context, Widget? child) {
+              return Transform.translate(
+                offset: _controller.zoomScale > 1.01
+                    ? Offset(_controller.panOffsetX, _controller.panOffsetY)
+                    : Offset.zero,
+                child: Transform.scale(
+                  scale: _controller.zoomScale,
+                  alignment: Alignment.center,
+                  child: child,
+                ),
+              );
+            },
           ),
         );
 
         if (isZoomed) {
-          final Size screenSize = MediaQuery.sizeOf(context);
-          final double maxPanX =
-              screenSize.width * (_controller.zoomScale - 1) / 2;
-          final double maxPanY =
-              screenSize.height * (_controller.zoomScale - 1) / 2;
           readerContent = GestureDetector(
             behavior: HitTestBehavior.opaque,
             dragStartBehavior: DragStartBehavior.down,
             onPanUpdate: (DragUpdateDetails details) {
               if (_controller.isScaleGestureActive) return;
+              final Size screenSize = MediaQuery.sizeOf(context);
+              final double maxPanX =
+                  screenSize.width * (_controller.zoomScale - 1) / 2;
+              final double maxPanY =
+                  screenSize.height * (_controller.zoomScale - 1) / 2;
               final double dy = details.delta.dy;
               final double proposedPanY = _controller.panOffsetY + dy;
               final double clampedPanY = proposedPanY.clamp(-maxPanY, maxPanY);

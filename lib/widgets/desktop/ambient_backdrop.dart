@@ -3,8 +3,11 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';
 
+/// 静态光斑背景，仅随鼠标做轻微视差。
+///
+/// 不再常驻动画：48 秒一圈的漂移肉眼几乎不可见，却让整窗每帧重绘，
+/// 还连带上层 BackdropFilter（Dock）每帧重新模糊。
 class AmbientBackdrop extends StatefulWidget {
   const AmbientBackdrop({required this.child, this.enabled = true, super.key});
 
@@ -15,66 +18,20 @@ class AmbientBackdrop extends StatefulWidget {
   State<AmbientBackdrop> createState() => _AmbientBackdropState();
 }
 
-class _AmbientBackdropState extends State<AmbientBackdrop>
-    with SingleTickerProviderStateMixin, WindowListener {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 48),
-  );
-
-  Offset _pointerTarget = Offset.zero;
-  Offset _pointer = Offset.zero;
-
-  bool _isWindowFocused = true;
-
-  @override
-  void initState() {
-    super.initState();
-    windowManager.addListener(this);
-    _syncAnimation();
-  }
-
-  @override
-  void didUpdateWidget(covariant AmbientBackdrop oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.enabled != oldWidget.enabled) {
-      _syncAnimation();
-    }
-  }
+class _AmbientBackdropState extends State<AmbientBackdrop> {
+  final ValueNotifier<Offset> _pointer = ValueNotifier<Offset>(Offset.zero);
 
   @override
   void dispose() {
-    windowManager.removeListener(this);
-    _controller.dispose();
+    _pointer.dispose();
     super.dispose();
-  }
-
-  @override
-  void onWindowFocus() {
-    _isWindowFocused = true;
-    _syncAnimation();
-  }
-
-  @override
-  void onWindowBlur() {
-    _isWindowFocused = false;
-    _syncAnimation();
-  }
-
-  void _syncAnimation() {
-    final bool shouldRun = widget.enabled && _isWindowFocused;
-    if (shouldRun && !_controller.isAnimating) {
-      _controller.repeat();
-    } else if (!shouldRun && _controller.isAnimating) {
-      _controller.stop();
-    }
   }
 
   void _handleHover(PointerEvent event, Size size) {
     if (size.width <= 0 || size.height <= 0) {
       return;
     }
-    _pointerTarget = Offset(
+    _pointer.value = Offset(
       (event.localPosition.dx / size.width) * 2 - 1,
       (event.localPosition.dy / size.height) * 2 - 1,
     );
@@ -100,20 +57,11 @@ class _AmbientBackdropState extends State<AmbientBackdrop>
             children: <Widget>[
               Positioned.fill(
                 child: RepaintBoundary(
-                  child: AnimatedBuilder(
-                    animation: _controller,
-                    builder: (BuildContext context, Widget? _) {
-                      _pointer = Offset.lerp(_pointer, _pointerTarget, 0.05)!;
-                      return CustomPaint(
-                        isComplex: true,
-                        willChange: true,
-                        painter: _AmbientPainter(
-                          progress: _controller.value,
-                          pointer: _pointer,
-                          colorScheme: colorScheme,
-                        ),
-                      );
-                    },
+                  child: CustomPaint(
+                    painter: _AmbientPainter(
+                      pointer: _pointer,
+                      colorScheme: colorScheme,
+                    ),
                   ),
                 ),
               ),
@@ -127,14 +75,10 @@ class _AmbientBackdropState extends State<AmbientBackdrop>
 }
 
 class _AmbientPainter extends CustomPainter {
-  const _AmbientPainter({
-    required this.progress,
-    required this.pointer,
-    required this.colorScheme,
-  });
+  _AmbientPainter({required this.pointer, required this.colorScheme})
+    : super(repaint: pointer);
 
-  final double progress;
-  final Offset pointer;
+  final ValueNotifier<Offset> pointer;
   final ColorScheme colorScheme;
 
   bool get _isDark => colorScheme.brightness == Brightness.dark;
@@ -147,8 +91,8 @@ class _AmbientPainter extends CustomPainter {
 
     canvas.drawRect(Offset.zero & size, Paint()..color = colorScheme.surface);
 
-    final double t = progress * 2 * math.pi;
     final double alphaBoost = _isDark ? 1.25 : 1.0;
+    final Offset pointerValue = pointer.value;
 
     void blob({
       required Color color,
@@ -157,17 +101,13 @@ class _AmbientPainter extends CustomPainter {
       required double radiusFactor,
       required double driftFactor,
       required double phase,
-      required double speed,
       required double parallaxDepth,
     }) {
       final double drift = size.shortestSide * driftFactor;
-      final Offset parallax = pointer * size.shortestSide * parallaxDepth;
+      final Offset parallax = pointerValue * size.shortestSide * parallaxDepth;
       final Offset center =
           Offset(size.width * anchor.dx, size.height * anchor.dy) +
-          Offset(
-            math.cos(t * speed + phase) * drift,
-            math.sin(t * speed + phase) * drift,
-          ) +
+          Offset(math.cos(phase) * drift, math.sin(phase) * drift) +
           parallax;
       final double radius = size.shortestSide * radiusFactor;
       final Paint paint = Paint()
@@ -185,7 +125,6 @@ class _AmbientPainter extends CustomPainter {
       radiusFactor: 0.62,
       driftFactor: 0.07,
       phase: 0,
-      speed: 1,
       parallaxDepth: 0.030,
     );
     blob(
@@ -195,7 +134,6 @@ class _AmbientPainter extends CustomPainter {
       radiusFactor: 0.68,
       driftFactor: 0.09,
       phase: 1.9,
-      speed: 0.8,
       parallaxDepth: 0.052,
     );
     blob(
@@ -205,7 +143,6 @@ class _AmbientPainter extends CustomPainter {
       radiusFactor: 0.5,
       driftFactor: 0.06,
       phase: 4.1,
-      speed: 1.2,
       parallaxDepth: 0.040,
     );
     blob(
@@ -215,7 +152,6 @@ class _AmbientPainter extends CustomPainter {
       radiusFactor: 0.46,
       driftFactor: 0.08,
       phase: 2.8,
-      speed: 0.6,
       parallaxDepth: 0.024,
     );
 
@@ -231,8 +167,7 @@ class _AmbientPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _AmbientPainter oldDelegate) {
-    return oldDelegate.progress != progress ||
-        oldDelegate.pointer != pointer ||
+    return oldDelegate.pointer != pointer ||
         oldDelegate.colorScheme != colorScheme;
   }
 }

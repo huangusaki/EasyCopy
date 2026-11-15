@@ -249,7 +249,29 @@ class _LibraryCard extends StatelessWidget {
     this.onLongPress,
   });
 
-  static const double _titleHeight = 33.6;
+  static const double _titleFontSize = 14;
+  static const double _subtitleFontSize = 11;
+  static const double _secondaryFontSize = 10;
+  static const double _lineHeight = 1.2;
+  static const double _coverHeightFactor = 1.3;
+
+  /// 卡片总高 = 随宽度缩放的封面 + 按字号缩放的各行文字，
+  /// 避免大字号（尤其安卓非线性缩放）下文字被固定高度裁掉。
+  static double previewHeightFor({
+    required TextScaler textScaler,
+    required double width,
+  }) {
+    const double padding = ComicCardInk.contentPadding * 2;
+    return (width - padding) * _coverHeightFactor +
+        padding +
+        8 +
+        scaledTextBlockHeight(textScaler, _titleFontSize, lines: 2) +
+        4 +
+        scaledTextBlockHeight(textScaler, _subtitleFontSize) +
+        3 +
+        scaledTextBlockHeight(textScaler, _secondaryFontSize) +
+        2;
+  }
 
   final ComicCardData item;
   final VoidCallback onTap;
@@ -257,24 +279,26 @@ class _LibraryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    final TextScaler textScaler = MediaQuery.textScalerOf(context);
+    return ComicCardInk(
       onTap: onTap,
       onLongPress: onLongPress,
-      borderRadius: BorderRadius.circular(20),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Expanded(child: CoverImage(imageUrl: item.coverUrl)),
+          Expanded(
+            child: CoverImage(imageUrl: item.coverUrl, borderRadius: 16),
+          ),
           const SizedBox(height: 8),
           SizedBox(
-            height: MediaQuery.textScalerOf(context).scale(_titleHeight),
+            height: scaledTextBlockHeight(textScaler, _titleFontSize, lines: 2),
             child: Text(
               ChineseConverter.instance.convert(item.title),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 14,
-                height: 1.2,
+                fontSize: _titleFontSize,
+                height: _lineHeight,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -289,7 +313,8 @@ class _LibraryCard extends StatelessWidget {
                 color: Theme.of(
                   context,
                 ).colorScheme.onSurface.withValues(alpha: 0.66),
-                fontSize: 11,
+                fontSize: _subtitleFontSize,
+                height: _lineHeight,
               ),
             ),
           ],
@@ -303,7 +328,8 @@ class _LibraryCard extends StatelessWidget {
                 color: Theme.of(
                   context,
                 ).colorScheme.onSurface.withValues(alpha: 0.5),
-                fontSize: 10,
+                fontSize: _secondaryFontSize,
+                height: _lineHeight,
               ),
             ),
           ],
@@ -322,12 +348,8 @@ class _HistoryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    // 条目直接落在卡片上，不再自带一层底：同页的 _LibraryCard 就是这么画的，
-    // 而原来那层 surfaceContainerLow 在亮色下和卡片同色（等于没画），
-    // 暗色下又比卡片更暗，变成卡片上的一个洞。
-    return InkWell(
+    return ComicCardInk(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(

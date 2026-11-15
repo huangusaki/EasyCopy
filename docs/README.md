@@ -14,20 +14,20 @@
 
 ---
 
-基于 Flutter 开发，通过后台 WebView 提取站点数据并交由原生 UI 渲染，兼顾数据源的扩展性与原生页面的流畅体验。支持 **Android** 和 **Windows** 平台。
+基于 Flutter 开发的第三方漫画客户端，采用后台 WebView 抓取数据 + 原生 UI 渲染的方案，支持 **Android** 和 **Windows**。
 
-## ✨ 特性
+## 功能特性
 
-- **阅读**：纵向/横向翻页、双指缩放、进度记忆、音量键翻页。
-- **发现**：分类筛选、排行榜、全局搜索及本地书架管理。
-- **缓存**：离线下载、断点续传与缓存目录迁移。
-- **网络**：节点自动探测切换，支持原生与网页双重登录方案。
-- **外观**：内置多套主题，支持深浅色跟随系统与 Material You。
-- **桌面端**：Windows 版专属响应式布局、全局快捷键及沉浸式全屏。
+- **阅读**：支持条漫/翻页模式、双指缩放、音量键翻页、自动记录阅读进度。
+- **浏览**：分类筛选、排行榜、全局搜索、本地书架管理。
+- **缓存**：支持漫画离线下载、断点续传、自定义及迁移缓存目录。
+- **网络**：支持节点测速与自动切换，提供原生登录与网页登录两种方式。
+- **界面**：多套主题配色，支持深浅色模式跟随系统及 Material You 动态取色。
+- **桌面端**：针对 Windows 端适配了宽屏布局、快捷键操作与全屏阅读。
 
-## 📸 截图
+## 截图预览
 
-### 📱 Android 端
+### Android
 
 <div align="center">
 
@@ -52,7 +52,7 @@
 
 </div>
 
-### 💻 Windows 端
+### Windows
 
 <div align="center">
 
@@ -69,68 +69,40 @@
 
 </div>
 
-## 📥 下载
+## 下载安装
 
-前往 [**Releases**](https://github.com/huangusaki/EasyCopy/releases/latest) 获取最新版本：
+前往 [**Releases**](https://github.com/huangusaki/EasyCopy/releases/latest) 页面下载最新版本：
 
 | 平台 | 文件 | 说明 |
 | --- | --- | --- |
-| Android | `<版本>-android-<abi>.apk` | 按 CPU 架构分包，新手机一般选 `arm64-v8a` |
-| Windows | `<版本>-windows-x64.zip` | 解压后运行exe，免安装 |
+| Android | `*-android-<abi>.apk` | 主流设备请下载 `arm64-v8a` 版本 |
+| Windows | `*-windows-x64.zip` | 绿色版，解压后直接运行 exe |
+| iOS | `*-ios-unsigned.ipa` | **实验性构建**：未签名且未经完整测试，需自签安装 |
 
-> Windows 端的网页登录依赖 **WebView2 Runtime**（Windows 11 已内置；Windows 10 如缺失，应用会提示安装）。
+> **注意**：Windows 端的网页登录功能依赖 **WebView2 Runtime**（Win11 已内置；Win10 若缺失，启动时会提示安装）。
 
-## 🛠️ 从源码构建
+## 编译构建
 
-环境要求：Flutter stable（CI 使用 3.41.4）、Dart 3.9+；Android 端额外需要 Android SDK 与 Java 17。
+确保本地已配置好 Flutter 环境（要求 Dart 3.9+，Android 端需 Java 17）：
 
 ```bash
+# 获取依赖
 flutter pub get
 
 # 调试运行
-flutter run -d android      # Android
-flutter run -d windows      # Windows
-```
+flutter run -d android
+flutter run -d windows
 
-发布构建：
-
-```bash
-# Android（按 ABI 分包）
-flutter build apk --release \
-  --target-platform=android-arm,android-arm64,android-x64 --split-per-abi
-
-# Windows
+# 构建发布包
+flutter build apk --release --split-per-abi
 flutter build windows --release
 ```
 
-推送 `v*` tag 会触发 GitHub Actions 自动构建并发布 Android 与 Windows 产物。tag 必须与 `pubspec.yaml` 的 `version` 一致（如 `v2.6.0`）；若存在 `.github/release-notes/v<版本>.md`，其内容会作为该次 Release Note。
+## 许可证与声明
 
-### iOS 实验性构建
+本项目基于 [GPL-3.0](../LICENSE) 协议开源。第三方依赖及 OpenCC 字典的相关声明见 [NOTICE](../NOTICE)。
 
-在 GitHub 的 **Actions → iOS Unsigned Build → Run workflow** 手动构建，完成后从该次运行的 **Artifacts** 下载 `EasyCopy-<版本>-ios-unsigned`（保留 14 天）。无需配置 Apple 证书或 Secrets，工作流会临时生成 iOS 工程，并将未签名的 Release 应用封装为 IPA，不自动发布到 Releases。
-
-**未签名 IPA 不能直接安装到普通 iPhone / iPad，也不能直接用于 App Store / TestFlight，安装需自行签名。** iOS 尚未做功能测试，编译成功不代表所有功能可用。
-
-## 🧱 项目结构
-
-Flutter 工程，核心代码位于 `lib/`：
-
-- `app_screen/` — 主界面状态、导航、WebView 数据管线与页面缓存
-- `reader/` — 阅读器界面、控制器、滚动与进度逻辑
-- `services/` — 网络、解析、缓存、下载、进度、登录、节点等服务
-- `models/` · `widgets/` · `webview/` — 数据模型、复用组件、页面提取脚本
-
-## 📄 许可证
-
-Copyright (C) 2026 huangusaki and contributors.
-
-本项目采用 [GNU General Public License v3.0](../LICENSE)（`GPL-3.0-only`）。你可以按协议使用、修改和分发本项目；分发基于本项目的修改版时，须按 GPL-3.0 提供对应的完整源码，保留版权及许可证声明，并标明修改。
-
-本项目不提供任何担保。第三方依赖与资源保留各自的许可证，OpenCC 字典数据的声明见 [NOTICE](../NOTICE)。
-
-## ⚠️ 声明
-
-本项目为第三方客户端，与任何漫画站点无关。上述许可证仅涉及软件及相应授权材料，不授予漫画等第三方内容的权利。请支持正版，下架及侵权内容请联系对应站点处理。
+**免责声明**：本项目仅为第三方客户端，与任何漫画站点无关，不提供也不存储任何漫画内容。请支持正版。
 
 ---
 

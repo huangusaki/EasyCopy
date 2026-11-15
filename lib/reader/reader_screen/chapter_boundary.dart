@@ -8,17 +8,31 @@ extension _ReaderChapterBoundary on ReaderScreenState {
     return SizedBox(
       height: _controller.isPaged ? 72 : 80,
       child: Center(
-        child: _buildReaderChapterBoundaryCue(
-          context,
-          isPrevious: false,
-          compact: false,
-          forceVisible: true,
+        child: ListenableBuilder(
+          listenable: _controller.gestureFrameListenable,
+          builder: (BuildContext context, Widget? _) =>
+              _buildReaderChapterBoundaryCue(
+                context,
+                isPrevious: false,
+                compact: false,
+                forceVisible: true,
+              ),
         ),
       ),
     );
   }
 
   Widget _buildNextChapterCue(BuildContext context, ReaderPageData page) {
+    return Positioned.fill(
+      child: ListenableBuilder(
+        listenable: _controller.gestureFrameListenable,
+        builder: (BuildContext context, Widget? _) =>
+            _buildNextChapterCueStack(context),
+      ),
+    );
+  }
+
+  Widget _buildNextChapterCueStack(BuildContext context) {
     final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
     final bool showPreviousCue =
         _controller.previousChapterPullDistance > 0 ||
@@ -28,25 +42,23 @@ extension _ReaderChapterBoundary on ReaderScreenState {
         _controller.nextChapterPullDistance > 0 ||
         (_controller.isNextChapterLoading &&
             _controller.nextChapterPullDistance > 0);
-    return Positioned.fill(
-      child: Stack(
-        children: <Widget>[
-          if (showPreviousCue)
-            _buildBoundaryCueOverlayEntry(
-              context,
-              isPrevious: true,
-              forceVisible: showPreviousCue,
-              viewPadding: viewPadding,
-            ),
-          if (showNextCue)
-            _buildBoundaryCueOverlayEntry(
-              context,
-              isPrevious: false,
-              forceVisible: showNextCue,
-              viewPadding: viewPadding,
-            ),
-        ],
-      ),
+    return Stack(
+      children: <Widget>[
+        if (showPreviousCue)
+          _buildBoundaryCueOverlayEntry(
+            context,
+            isPrevious: true,
+            forceVisible: showPreviousCue,
+            viewPadding: viewPadding,
+          ),
+        if (showNextCue)
+          _buildBoundaryCueOverlayEntry(
+            context,
+            isPrevious: false,
+            forceVisible: showNextCue,
+            viewPadding: viewPadding,
+          ),
+      ],
     );
   }
 
