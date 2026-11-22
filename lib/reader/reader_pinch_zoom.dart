@@ -28,8 +28,10 @@ class _ReaderPinchZoomDetectorState extends State<ReaderPinchZoomDetector> {
     if (_pointers.length < 2) {
       return 0;
     }
-    final List<Offset> positions = _pointers.values.toList();
-    return (positions[0] - positions[1]).distance;
+    final positions = _pointers.values.iterator..moveNext();
+    final first = positions.current;
+    positions.moveNext();
+    return (first - positions.current).distance;
   }
 
   void _handlePointerDown(PointerDownEvent event) {

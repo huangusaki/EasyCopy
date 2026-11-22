@@ -5,9 +5,8 @@ import 'package:reader/services/site_session.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class AuthSessionResult {
-  const AuthSessionResult({required this.cookieHeader, required this.cookies});
+  const AuthSessionResult({required this.cookies});
 
-  final String cookieHeader;
   final Map<String, String> cookies;
 }
 
@@ -79,9 +78,7 @@ class _AuthWebViewScreenState extends State<AuthWebViewScreen> {
         return;
       }
       _completed = true;
-      Navigator.of(
-        context,
-      ).pop(AuthSessionResult(cookieHeader: cookieHeader, cookies: cookies));
+      Navigator.of(context).pop(AuthSessionResult(cookies: cookies));
     } catch (_) {
       // Ignore transient login page script errors.
     }

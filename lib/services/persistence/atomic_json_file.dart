@@ -44,9 +44,20 @@ class AtomicJsonFile<T extends Object> {
     await _run((File file) => _write(file, contents));
   }
 
-  Future<void> update(T Function(T? current) change) {
+  Future<void> update(
+    T Function(T? current) change, {
+    bool Function(T)? whenEitherCopy,
+  }) {
     return _run((File file) async {
-      final T next = change(await _read(file));
+      final current = await _read(file);
+      if (whenEitherCopy != null) {
+        if (current == null) return;
+        if (!whenEitherCopy(current)) {
+          final backup = await _readCandidate(File('${file.path}.bak'));
+          if (backup == null || !whenEitherCopy(backup.value)) return;
+        }
+      }
+      final T next = change(current);
       await _write(file, jsonEncode(_encode(next)));
     });
   }

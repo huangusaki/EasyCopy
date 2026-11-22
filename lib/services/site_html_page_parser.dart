@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:html/dom.dart' as dom;
@@ -7,6 +8,7 @@ import 'package:pointycastle/export.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/js_literal_utils.dart';
+import 'package:reader/services/site_html_rules.dart';
 import 'package:reader/services/site_json_utils.dart';
 
 part 'site_html_page_parser/html_helpers.dart';
@@ -37,6 +39,9 @@ class DetailChapterRequest {
   final String dnt;
 }
 
+Future<dom.Document> _parseDetailDocument(String html) =>
+    Isolate.run(() => html_parser.parse(html));
+
 // 与 WebView 注入脚本共享站点 DOM 约定，选择器变更需同步。
 class SiteHtmlPageParser {
   const SiteHtmlPageParser();
@@ -52,7 +57,9 @@ class SiteHtmlPageParser {
     DetailChapterResultsLoader? loadDetailChapterResults,
   }) async {
     final Uri normalizedUri = AppConfig.rewriteToCurrentHost(uri);
-    final dom.Document document = html_parser.parse(html);
+    final dom.Document document = loadDetailChapterResults == null
+        ? html_parser.parse(html)
+        : await _parseDetailDocument(html);
     final SitePageType pageType = _detectPageType(normalizedUri, document);
 
     switch (pageType) {
@@ -84,25 +91,17 @@ class SiteHtmlPageParser {
     if (path.contains('/chapter/')) {
       return SitePageType.reader;
     }
-    if (document.querySelector('.comicParticulars-title') != null) {
+    if (document.querySelector(SiteHtmlRules.detail) != null) {
       return SitePageType.detail;
     }
-    if (document.querySelector('.ranking-box') != null) {
+    if (document.querySelector(SiteHtmlRules.rank) != null) {
       return SitePageType.rank;
     }
-    if (document.querySelector('.exemptComicList') != null ||
-        document.querySelector('.correlationList .exemptComic_Item') != null ||
-        path.startsWith('/comics') ||
-        path.startsWith('/filter') ||
-        path.startsWith('/recommend') ||
-        path.startsWith('/newest') ||
-        path.startsWith('/author') ||
-        path.startsWith('/search')) {
+    if (document.querySelector(SiteHtmlRules.discover) != null ||
+        SiteHtmlRules.discoverPaths.any(path.startsWith)) {
       return SitePageType.discover;
     }
-    if (document.querySelector('.content-box .swiperList') != null ||
-        document.querySelector('.comicRank') != null ||
-        path == '/') {
+    if (document.querySelector(SiteHtmlRules.home) != null || path == '/') {
       return SitePageType.home;
     }
     if (path.startsWith('/web/login') || path.startsWith('/person')) {
@@ -130,7 +129,7 @@ class SiteHtmlPageParser {
                 return null;
               }
 
-              final dom.Element? container = _parentElement(header);
+              final dom.Element? container = header.parent;
               if (container == null) {
                 return null;
               }
@@ -178,8 +177,7 @@ class SiteHtmlPageParser {
     List<ComicCardData> items = _collectComicCards(
       document,
       uri,
-      '.exemptComic-box a[href*="/comic/"], '
-      '.correlationList a[href*="/comic/"]',
+      SiteHtmlRules.discoverCards,
     );
     if (items.isEmpty) {
       items = _discoverItemsFromInlineList(uri, document);
@@ -219,10 +217,9 @@ class SiteHtmlPageParser {
           'a[href*="/comic/"]',
         );
         final String href = _linkUrl(uri, coverAnchor);
-        final String title =
-            _attr(_querySelector(card, '.threeLines'), 'title').isNotEmpty
-            ? _attr(_querySelector(card, '.threeLines'), 'title')
-            : _queryText(card, '.threeLines');
+        final titleElement = _querySelector(card, '.threeLines');
+        final titleAttr = _attr(titleElement, 'title');
+        final title = titleAttr.isNotEmpty ? titleAttr : _text(titleElement);
         if (title.isEmpty || href.isEmpty) {
           return null;
         }
@@ -250,10 +247,9 @@ class SiteHtmlPageParser {
       (RankEntryData item) => item.href,
     );
 
+    final title = _queryText(document, '.ranking-box-title span');
     return RankPageData(
-      title: _queryText(document, '.ranking-box-title span').isNotEmpty
-          ? _queryText(document, '.ranking-box-title span')
-          : _pageTitle(document),
+      title: title.isNotEmpty ? title : _pageTitle(document),
       uri: uri.toString(),
       categories: _collectFilterGroups(document, uri)
           .expand((FilterGroupData group) => group.options)
@@ -323,12 +319,16 @@ class SiteHtmlPageParser {
         ? titleParts.skip(1).join(' - ')
         : '';
 
+    final String progressLabel = _queryText(
+      document,
+      '.comicContent-footer-txt span',
+    );
     return ReaderPageData(
       title: headerText.isNotEmpty ? headerText : pageTitle,
       uri: uri.toString(),
       comicTitle: comicTitle,
       chapterTitle: chapterTitle,
-      progressLabel: _queryText(document, '.comicContent-footer-txt span'),
+      progressLabel: progressLabel,
       imageUrls: imageUrls,
       prevHref: _linkUrl(
         uri,
@@ -345,7 +345,12 @@ class SiteHtmlPageParser {
         uri,
         _querySelector(document, '.comicContent-prev.list a[href]'),
       ),
-      contentKey: contentKey,
+      contentKey:
+          chapterTitle.isEmpty &&
+              progressLabel.isEmpty &&
+              uri.pathSegments.isEmpty
+          ? contentKey
+          : '',
     );
   }
 
@@ -381,12 +386,13 @@ class SiteHtmlPageParser {
       );
       if (request != null) {
         try {
-          final ParsedDetailChapters parsed = parseEncryptedDetailChapters(
-            pageUri: request.pageUri,
-            slug: request.slug,
-            ccz: request.ccz,
-            encryptedResults: await loadDetailChapterResults(request),
-          );
+          final ParsedDetailChapters parsed =
+              await parseEncryptedDetailChaptersAsync(
+                pageUri: request.pageUri,
+                slug: request.slug,
+                ccz: request.ccz,
+                encryptedResults: await loadDetailChapterResults(request),
+              );
           if (parsed.chapterGroups.isNotEmpty || parsed.chapters.isNotEmpty) {
             chapterGroups = parsed.chapterGroups;
             chapters = parsed.chapters;
@@ -413,20 +419,18 @@ class SiteHtmlPageParser {
       throw SiteHtmlPageParseException('详情页章节解析失败：${uri.path}');
     }
 
+    final title = _attr(_querySelector(document, 'h6[title]'), 'title');
+    final authors = _querySelectorAll(authorRow ?? document, 'a');
     return DetailPageData(
-      title: _attr(_querySelector(document, 'h6[title]'), 'title').isNotEmpty
-          ? _attr(_querySelector(document, 'h6[title]'), 'title')
-          : _pageTitle(document),
+      title: title.isNotEmpty ? title : _pageTitle(document),
       uri: uri.toString(),
       coverUrl: _imageUrl(
         uri,
         _querySelector(document, '.comicParticulars-left-img img'),
       ),
       aliases: _infoValue(infoRows, '別名'),
-      authors: _mapText(
-        _querySelectorAll(authorRow ?? document, 'a').map(_text),
-      ).join(' / '),
-      authorLinks: _querySelectorAll(authorRow ?? document, 'a')
+      authors: _mapText(authors.map(_text)).join(' / '),
+      authorLinks: authors
           .map((dom.Element anchor) {
             final String label = _text(anchor);
             final String href = _linkUrl(uri, anchor);
@@ -461,10 +465,7 @@ class SiteHtmlPageParser {
         _querySelector(document, '.comicParticulars-botton[href*="/chapter/"]'),
       ),
       chapterGroups: chapterGroups,
-      chapters: _uniqueBy<ChapterData>(
-        chapters,
-        (ChapterData chapter) => chapter.href,
-      ),
+      chapters: chapters,
     );
   }
 
@@ -521,6 +522,20 @@ class SiteHtmlPageParser {
     return imageUrls;
   }
 
+  Future<ParsedDetailChapters> parseEncryptedDetailChaptersAsync({
+    required Uri pageUri,
+    required String slug,
+    required String ccz,
+    required String encryptedResults,
+  }) => Isolate.run(
+    () => parseEncryptedDetailChapters(
+      pageUri: pageUri,
+      slug: slug,
+      ccz: ccz,
+      encryptedResults: encryptedResults,
+    ),
+  );
+
   ParsedDetailChapters parseEncryptedDetailChapters({
     required Uri pageUri,
     required String slug,
@@ -545,9 +560,8 @@ class SiteHtmlPageParser {
       (Object? key, Object? value) => MapEntry(key.toString(), value),
     );
     final Map<String, Object?> build = asStringKeyMap(payload['build']);
-    final String pathWord = _stringValue(build['path_word']).isNotEmpty
-        ? _stringValue(build['path_word'])
-        : slug;
+    final buildPath = _stringValue(build['path_word']);
+    final pathWord = buildPath.isNotEmpty ? buildPath : slug;
     final Map<int, String> typeLabels = _chapterTypeLabels(build['type']);
     final List<Map<String, Object?>> groupMaps = _chapterGroupMaps(
       payload['groups'],
@@ -563,8 +577,9 @@ class SiteHtmlPageParser {
               .map(asStringKeyMap)
               .map((Map<String, Object?> chapter) {
                 final String chapterId = _stringValue(chapter['id']);
-                final String label = _stringValue(chapter['name']).isNotEmpty
-                    ? _stringValue(chapter['name'])
+                final name = _stringValue(chapter['name']);
+                final label = name.isNotEmpty
+                    ? name
                     : typeLabels[(chapter['type'] as num?)?.toInt() ?? 0] ??
                           '章节';
                 if (chapterId.isEmpty || label.isEmpty) {
@@ -572,10 +587,9 @@ class SiteHtmlPageParser {
                 }
                 return ChapterData(
                   label: label,
-                  href: AppConfig.resolvePath(
-                    '/comic/$pathWord/chapter/$chapterId',
-                  ).toString(),
-                  subtitle: _stringValue(chapter['datetime_created']),
+                  href: pageUri
+                      .resolve('/comic/$pathWord/chapter/$chapterId')
+                      .toString(),
                 );
               })
               .whereType<ChapterData>()
@@ -658,7 +672,6 @@ class SiteHtmlPageParser {
                   ? _text(control)
                   : '列表 ${entry.key + 1}',
               targets: controlTargets(control),
-              index: entry.key,
             );
           })
           .where((control) {
@@ -775,31 +788,33 @@ class SiteHtmlPageParser {
           'topThree',
           'carousel-item',
         ]) ??
-        _parentElement(anchor) ??
+        anchor.parent ??
         anchor;
-    final String title =
-        _attr(_querySelector(container, '[title]'), 'title').isNotEmpty
-        ? _attr(_querySelector(container, '[title]'), 'title')
-        : _queryText(container, '.edit-txt').isNotEmpty
-        ? _queryText(container, '.edit-txt')
-        : _queryText(container, '.twoLines').isNotEmpty
-        ? _queryText(container, '.twoLines')
-        : _queryText(container, '.dailyRecommendation-txt').isNotEmpty
-        ? _queryText(container, '.dailyRecommendation-txt')
-        : _queryText(container, '.threeLines').isNotEmpty
-        ? _queryText(container, '.threeLines')
-        : _text(anchor);
+    String title = _attr(_querySelector(container, '[title]'), 'title');
+    if (title.isEmpty) {
+      title = _firstNonempty(
+        const [
+          '.edit-txt',
+          '.twoLines',
+          '.dailyRecommendation-txt',
+          '.threeLines',
+        ].map((selector) => _queryText(container, selector)),
+        orElse: () => _text(anchor),
+      );
+    }
     final String href = _linkUrl(uri, anchor);
     if (title.isEmpty || href.isEmpty) {
       return null;
     }
     return ComicCardData(
       title: title,
-      subtitle: _queryText(container, '.exemptComicItem-txt-span').isNotEmpty
-          ? _queryText(container, '.exemptComicItem-txt-span')
-          : _queryText(container, '.dailyRecommendation-span').isNotEmpty
-          ? _queryText(container, '.dailyRecommendation-span')
-          : _queryText(container, '.oneLines'),
+      subtitle: _firstNonempty(
+        const [
+          '.exemptComicItem-txt-span',
+          '.dailyRecommendation-span',
+          '.oneLines',
+        ].map((selector) => _queryText(container, selector)),
+      ),
       secondaryText: _queryText(container, '.update span'),
       coverUrl: _imageUrl(uri, _querySelector(container, 'img')),
       href: href,
@@ -849,36 +864,29 @@ class SiteHtmlPageParser {
             return null;
           }
 
-          final List<Map<String, Object?>> authors = asObjectList(
-            item['author'],
-          ).whereType<Map>().map(asStringKeyMap).toList(growable: false);
-          final List<String> authorNames = authors
-              .map(
-                (Map<String, Object?> author) => _stringValue(author['name']),
-              )
-              .where((String value) => value.isNotEmpty)
-              .toList(growable: false);
-          final List<LinkAction> authorLinks = authors
+          final List<LinkAction> authorLinks = asObjectList(item['author'])
+              .whereType<Map>()
+              .map(asStringKeyMap)
               .map((Map<String, Object?> author) {
                 final String label = _stringValue(author['name']);
-                final String href = _stringValue(author['href']).isNotEmpty
-                    ? _stringValue(author['href'])
-                    : _stringValue(author['path_word']).isEmpty
+                final directHref = _stringValue(author['href']);
+                final authorPath = _stringValue(author['path_word']);
+                final href = directHref.isNotEmpty
+                    ? directHref
+                    : authorPath.isEmpty
                     ? ''
-                    : AppConfig.resolvePath(
-                        '/author/${_stringValue(author['path_word'])}',
-                      ).toString();
+                    : AppConfig.resolvePath('/author/$authorPath').toString();
                 return LinkAction(label: label, href: href);
               })
               .where((LinkAction author) {
                 return author.label.isNotEmpty;
               })
               .toList(growable: false);
-          final String subtitle = authorNames.isEmpty
+          final String subtitle = authorLinks.isEmpty
               ? '作者：--'
-              : authorNames.length == 1
-              ? '作者：${authorNames.first}'
-              : '作者：${authorNames.first} 等${authorNames.length}位';
+              : authorLinks.length == 1
+              ? '作者：${authorLinks.first.label}'
+              : '作者：${authorLinks.first.label} 等${authorLinks.length}位';
 
           return ComicCardData(
             title: title,
@@ -904,15 +912,10 @@ class ParsedDetailChapters {
 }
 
 class _ChapterGroupControl {
-  const _ChapterGroupControl({
-    required this.label,
-    required this.targets,
-    required this.index,
-  });
+  const _ChapterGroupControl({required this.label, required this.targets});
 
   final String label;
   final List<String> targets;
-  final int index;
 }
 
 class _ChapterGroupPane {

@@ -33,14 +33,9 @@ class DownloadTaskExecutionResult {
 
 /// Executes one attempt; scheduling, retries, cleanup and storage stay outside.
 class DownloadTaskExecutor {
-  DownloadTaskExecutor({
-    required DownloadTaskRunner runner,
-    DateTime Function()? now,
-  }) : _runner = runner,
-       _now = now ?? DateTime.now;
+  DownloadTaskExecutor({required DownloadTaskRunner runner}) : _runner = runner;
 
   final DownloadTaskRunner _runner;
-  final DateTime Function() _now;
 
   Future<DownloadTaskExecutionResult> execute(
     DownloadQueueTask task,
@@ -61,8 +56,8 @@ class DownloadTaskExecutor {
           completedImages: 0,
           totalImages: 0,
           errorMessage: '',
-          updatedAt: _now(),
         ),
+        persist: false,
       );
       checkControl();
       final ReaderPageData page = await _runner.prepare(task);
@@ -74,8 +69,8 @@ class DownloadTaskExecutor {
           completedImages: 0,
           totalImages: page.imageUrls.length,
           errorMessage: '',
-          updatedAt: _now(),
         ),
+        persist: false,
       );
       checkControl();
       await _runner.download(
@@ -94,7 +89,6 @@ class DownloadTaskExecutor {
               completedImages: progress.completedCount,
               totalImages: progress.totalCount,
               errorMessage: '',
-              updatedAt: _now(),
             ),
             persist: false,
           );

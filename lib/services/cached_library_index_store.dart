@@ -17,22 +17,10 @@ class CachedLibraryIndexStore {
   final Map<String, AtomicJsonFile<_LibraryIndex>> _files =
       <String, AtomicJsonFile<_LibraryIndex>>{};
 
-  Future<void> ensureInitialized() async {
-    final Directory directory = await _directoryProvider();
-    await Directory(
-      '${directory.path}${Platform.pathSeparator}cached_library_index',
-    ).create(recursive: true);
-  }
-
   Future<List<Map<String, Object?>>?> read(String storageKey) async {
     final _LibraryIndex? index = await _fileForKey(storageKey).read();
     return index?.storageKey == storageKey ? index!.entries : null;
   }
-
-  Future<void> write(String storageKey, List<Map<String, Object?>> entries) =>
-      _fileForKey(storageKey).write(_LibraryIndex(storageKey, entries));
-
-  Future<void> clear(String storageKey) => _fileForKey(storageKey).clear();
 
   AtomicJsonFile<_LibraryIndex> _fileForKey(String storageKey) {
     return _files.putIfAbsent(storageKey, () {

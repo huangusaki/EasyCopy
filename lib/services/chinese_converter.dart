@@ -9,13 +9,12 @@ class ChineseConverter extends ChangeNotifier {
   final T2SConverter _converter = T2SConverter();
   ChineseConversionMode _currentMode = ChineseConversionMode.disabled;
 
-  ChineseConversionMode get currentMode => _currentMode;
-
   void setMode(ChineseConversionMode mode) {
     if (_currentMode == mode) {
       return;
     }
     _currentMode = mode;
+    if (mode == ChineseConversionMode.disabled) _converter.clearCache();
     notifyListeners();
   }
 

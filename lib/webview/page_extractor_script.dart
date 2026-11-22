@@ -1,5 +1,19 @@
-// 与 Dart 解析器共享站点 DOM 约定，选择器变更需同步。
-const String _pageExtractionScriptTemplate = r"""
+import 'dart:convert';
+
+import 'package:reader/services/site_html_rules.dart';
+
+final String _encodedHtmlRules = jsonEncode({
+  'detail': SiteHtmlRules.detail,
+  'rank': SiteHtmlRules.rank,
+  'discover': SiteHtmlRules.discover,
+  'home': SiteHtmlRules.home,
+  'discoverCards': SiteHtmlRules.discoverCards,
+  'discoverPaths': SiteHtmlRules.discoverPaths,
+  'startReading': SiteHtmlRules.startReading,
+});
+
+final String _pageExtractionScriptTemplate =
+    r"""
 (() => {
   const loadId = __LOAD_ID__;
   const bridge = window.easyCopyBridge;
@@ -25,8 +39,10 @@ const String _pageExtractionScriptTemplate = r"""
     list
       .map((value) => cleanText(value))
       .filter((value) => value.length > 0);
-  const discoverComicSelector =
-    '.exemptComic-box a[href*="/comic/"], .correlationList a[href*="/comic/"]';
+  const rules = """ +
+    _encodedHtmlRules +
+    r""";
+  const discoverComicSelector = rules.discoverCards;
   const absoluteUrl = (value) => {
     const next = cleanText(value);
     if (!next || next === '#') {
@@ -263,10 +279,9 @@ const String _pageExtractionScriptTemplate = r"""
         .map((anchor) => ({
           label: text(anchor),
           href: linkUrl(anchor),
-          subtitle: '',
         }))
         .filter((chapter) => chapter.label && chapter.href)
-        .filter((chapter) => !chapter.label.includes('開始閱讀')),
+        .filter((chapter) => !rules.startReading.some((label) => chapter.label.includes(label))),
       (chapter) => chapter.href,
     );
   const uniqueStrings = (items) =>
@@ -481,24 +496,19 @@ const String _pageExtractionScriptTemplate = r"""
     if (path.includes('/chapter/')) {
       return 'reader';
     }
-    if (document.querySelector('.comicParticulars-title')) {
+    if (document.querySelector(rules.detail)) {
       return 'detail';
     }
-    if (document.querySelector('.ranking-box')) {
+    if (document.querySelector(rules.rank)) {
       return 'rank';
     }
     if (
-      document.querySelector('.exemptComicList') ||
-      document.querySelector('.correlationList .exemptComic_Item') ||
-      path.startsWith('/comics') ||
-      path.startsWith('/search') ||
-      path.startsWith('/recommend') ||
-      path.startsWith('/newest') ||
-      path.startsWith('/author')
+      document.querySelector(rules.discover) ||
+      rules.discoverPaths.some((prefix) => path.startsWith(prefix))
     ) {
       return 'discover';
     }
-    if (document.querySelector('.content-box .swiperList') || document.querySelector('.comicRank')) {
+    if (document.querySelector(rules.home) || path === '/') {
       return 'home';
     }
     if (path.startsWith('/web/login') || path.startsWith('/person')) {
@@ -576,6 +586,7 @@ const String _pageExtractionScriptTemplate = r"""
   const buildDiscoverPayload = () => {
     const items = collectComicCards(document, discoverComicSelector);
     const pager = document.querySelector('.page-all');
+    const totals = pager?.querySelectorAll('.page-total');
 
     return {
       type: 'discover',
@@ -587,9 +598,7 @@ const String _pageExtractionScriptTemplate = r"""
         currentLabel:
           queryText(pager, '.page-all-item.active a') || '',
         totalLabel:
-          pager && pager.querySelectorAll('.page-total').length > 0
-            ? text(pager.querySelectorAll('.page-total')[pager.querySelectorAll('.page-total').length - 1])
-            : '',
+          totals?.length ? text(totals[totals.length - 1]) : '',
         prevHref: linkUrl(
           pager ? pager.querySelector('.prev a') || pager.querySelector('.prev-all a') : null,
         ),
@@ -659,15 +668,9 @@ const String _pageExtractionScriptTemplate = r"""
     );
     const rowByPrefix = (prefix) =>
       infoRows.find((row) => text(row.querySelector('span')).startsWith(prefix));
-    const authors = mapText(
-      Array.from(
-        (rowByPrefix('作者') || document).querySelectorAll('a'),
-      ).map((author) => text(author)),
-    ).join(' / ');
-    const authorLinks = Array.from(
-      (rowByPrefix('作者') || document).querySelectorAll('a'),
-    )
-      .map((anchor) => ({
+    const authorAnchors = Array.from((rowByPrefix('作者') || document).querySelectorAll('a'));
+    const authors = mapText(authorAnchors.map(text)).join(' / ');
+    const authorLinks = authorAnchors.map((anchor) => ({
         label: text(anchor),
         href: linkUrl(anchor),
         active: false,
@@ -678,7 +681,6 @@ const String _pageExtractionScriptTemplate = r"""
       chapterGroups.flatMap((group) => group.chapters),
       (chapter) => chapter.href,
     );
-    const fallbackChapters = collectChapterLinks(document);
 
     return {
       type: 'detail',
@@ -707,7 +709,7 @@ const String _pageExtractionScriptTemplate = r"""
         document.querySelector('.comicParticulars-botton[href*="/chapter/"]'),
       ),
       chapterGroups,
-      chapters: groupedChapters.length > 0 ? groupedChapters : fallbackChapters,
+      chapters: groupedChapters.length > 0 ? groupedChapters : collectChapterLinks(document),
       detailCipherKey: detailChapterState.cipherKey,
       detailChapterCiphertext: detailChapterState.ciphertext,
     };
@@ -721,14 +723,13 @@ const String _pageExtractionScriptTemplate = r"""
         .filter((url) => url.length > 0),
       (url) => url,
     );
-    const allScriptText = Array.from(document.scripts)
-      .map((script) => script.textContent || '')
-      .join('\n');
+    let allScriptText;
     const scriptStringValue = (name) => {
       const globalValue = window[name];
       if (typeof globalValue === 'string' && cleanText(globalValue)) {
         return cleanText(globalValue);
       }
+      allScriptText ??= Array.from(document.scripts).map((script) => script.textContent || '').join('\n');
       return extractAssignedString(allScriptText, name);
     };
     const contentKey = scriptStringValue('contentKey');
@@ -800,12 +801,8 @@ const String _pageExtractionScriptTemplate = r"""
     return false;
   };
   const postPayload = (payload) => {
-    bridge.postMessage(
-      JSON.stringify({
-        loadId,
-        ...payload,
-      }),
-    );
+    const message = {loadId, ...payload};
+    bridge.postMessage(bridge.acceptsObjects ? message : JSON.stringify(message));
   };
   const buildPayload = (type) => {
     switch (type) {

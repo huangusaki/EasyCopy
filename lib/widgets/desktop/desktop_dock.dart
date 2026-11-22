@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:reader/config/app_config.dart';
+import 'package:reader/widgets/settings_ui.dart';
 
 class DesktopDock extends StatelessWidget {
   const DesktopDock({
@@ -86,7 +87,7 @@ class DesktopDock extends StatelessWidget {
                         top: 0,
                         width: _itemExtent,
                         height: _itemExtent,
-                        child: const _SelectionPill(),
+                        child: const NavigationSelectionPill(),
                       ),
                       Row(
                         mainAxisSize: MainAxisSize.min,
@@ -113,32 +114,6 @@ class DesktopDock extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _SelectionPill extends StatelessWidget {
-  const _SelectionPill();
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[colorScheme.primary, colorScheme.secondary],
-        ),
-        shape: BoxShape.circle,
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: colorScheme.primary.withValues(alpha: 0.38),
-            blurRadius: 14,
-            offset: const Offset(0, 5),
-          ),
-        ],
       ),
     );
   }

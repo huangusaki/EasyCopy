@@ -28,10 +28,9 @@ class _DesktopAuthWebViewScreenState extends State<DesktopAuthWebViewScreen> {
   WebviewController? _controller;
   final List<StreamSubscription<Object?>> _subscriptions =
       <StreamSubscription<Object?>>[];
-  bool _isInitializing = true;
+  bool _isInitializing = false;
   bool _isLoading = true;
   bool _completed = false;
-  bool _controllerInitialized = false;
   String _errorMessage = '';
 
   @override
@@ -46,27 +45,32 @@ class _DesktopAuthWebViewScreenState extends State<DesktopAuthWebViewScreen> {
       unawaited(subscription.cancel());
     }
     final WebviewController? controller = _controller;
-    if (_controllerInitialized && controller != null) {
+    if (controller != null) {
       unawaited(controller.dispose());
     }
     super.dispose();
   }
 
   Future<void> _initialize() async {
+    if (_isInitializing) return;
     setState(() {
       _isInitializing = true;
       _errorMessage = '';
     });
     final WebviewController controller = WebviewController();
+    bool initialized = false;
+    final subscriptions = <StreamSubscription<Object?>>[];
     try {
       await DesktopWebViewEnvironment.instance.ensureReady();
+      if (!mounted) return;
       await controller.initialize();
-      _controllerInitialized = true;
+      initialized = true;
+      if (!mounted) return;
       await controller.setUserAgent(widget.userAgent);
       await controller.setPopupWindowPolicy(
         WebviewPopupWindowPolicy.sameWindow,
       );
-      _subscriptions.add(
+      subscriptions.add(
         controller.loadingState.listen((LoadingState state) {
           if (!mounted || _completed) {
             return;
@@ -79,7 +83,7 @@ class _DesktopAuthWebViewScreenState extends State<DesktopAuthWebViewScreen> {
           }
         }),
       );
-      _subscriptions.add(
+      subscriptions.add(
         controller.onLoadError.listen((WebErrorStatus error) {
           if (!mounted || _completed) {
             return;
@@ -96,12 +100,10 @@ class _DesktopAuthWebViewScreenState extends State<DesktopAuthWebViewScreen> {
       }
       setState(() {
         _controller = controller;
+        _subscriptions.addAll(subscriptions);
         _isInitializing = false;
       });
     } catch (error) {
-      if (_controllerInitialized) {
-        await controller.dispose();
-      }
       if (!mounted) {
         return;
       }
@@ -112,6 +114,13 @@ class _DesktopAuthWebViewScreenState extends State<DesktopAuthWebViewScreen> {
             ? error.message
             : '网页登录不可用';
       });
+    } finally {
+      if (!identical(_controller, controller)) {
+        for (final subscription in subscriptions) {
+          await subscription.cancel();
+        }
+        if (initialized) await controller.dispose();
+      }
     }
   }
 
@@ -138,9 +147,7 @@ class _DesktopAuthWebViewScreenState extends State<DesktopAuthWebViewScreen> {
         return;
       }
       _completed = true;
-      Navigator.of(
-        context,
-      ).pop(AuthSessionResult(cookieHeader: cookieHeader, cookies: cookies));
+      Navigator.of(context).pop(AuthSessionResult(cookies: cookies));
     } catch (_) {
       return;
     }
@@ -171,7 +178,9 @@ class _DesktopAuthWebViewScreenState extends State<DesktopAuthWebViewScreen> {
         title: const Text('登录'),
         actions: <Widget>[
           IconButton(
-            onPressed: controller == null
+            onPressed: _isInitializing
+                ? null
+                : controller == null
                 ? _initialize
                 : () => unawaited(controller.reload()),
             icon: const Icon(Icons.refresh_rounded),

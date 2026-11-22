@@ -100,12 +100,7 @@ class _NativeLoginScreenState extends State<NativeLoginScreen> {
       if (!mounted) {
         return;
       }
-      Navigator.of(context).pop(
-        AuthSessionResult(
-          cookieHeader: result.cookieHeader,
-          cookies: result.cookies,
-        ),
-      );
+      Navigator.of(context).pop(AuthSessionResult(cookies: result.cookies));
     } catch (error) {
       if (!mounted) {
         return;

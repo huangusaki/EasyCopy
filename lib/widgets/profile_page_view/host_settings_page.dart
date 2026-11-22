@@ -2,11 +2,7 @@ part of '../profile_page_view.dart';
 
 class _HostSettingsEntryRow extends StatelessWidget {
   const _HostSettingsEntryRow({
-    required this.currentHost,
-    required this.knownHosts,
-    required this.candidateHosts,
-    required this.candidateHostAliases,
-    required this.snapshot,
+    required this.manager,
     required this.isRefreshing,
     this.onRefresh,
     this.onUseAutomaticSelection,
@@ -15,11 +11,7 @@ class _HostSettingsEntryRow extends StatelessWidget {
     this.onDeleteHost,
   });
 
-  final String currentHost;
-  final List<String> knownHosts;
-  final List<String> candidateHosts;
-  final Map<String, List<String>> candidateHostAliases;
-  final HostProbeSnapshot? snapshot;
+  final HostManager manager;
   final bool isRefreshing;
   final FutureOr<void> Function()? onRefresh;
   final FutureOr<void> Function()? onUseAutomaticSelection;
@@ -29,31 +21,30 @@ class _HostSettingsEntryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _SettingsEntryRow(
-      label: '访问域名',
-      valueLabel: currentHost.trim().isEmpty ? '自动选择' : currentHost.trim(),
-      trailing: const Icon(Icons.chevron_right_rounded),
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (BuildContext context) {
-              return _HostSettingsPage(
-                currentHost: currentHost,
-                knownHosts: knownHosts,
-                candidateHosts: candidateHosts,
-                candidateHostAliases: candidateHostAliases,
-                snapshot: snapshot,
-                isRefreshing: isRefreshing,
-                onRefresh: onRefresh,
-                onUseAutomaticSelection: onUseAutomaticSelection,
-                onSelectHost: onSelectHost,
-                onAddHost: onAddHost,
-                onDeleteHost: onDeleteHost,
-              );
-            },
-          ),
-        );
-      },
+    return ListenableBuilder(
+      listenable: manager,
+      builder: (context, _) => _SettingsEntryRow(
+        label: '访问域名',
+        valueLabel: manager.currentHost.isEmpty ? '自动选择' : manager.currentHost,
+        trailing: const Icon(Icons.chevron_right_rounded),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (BuildContext context) {
+                return _HostSettingsPage(
+                  manager: manager,
+                  isRefreshing: isRefreshing,
+                  onRefresh: onRefresh,
+                  onUseAutomaticSelection: onUseAutomaticSelection,
+                  onSelectHost: onSelectHost,
+                  onAddHost: onAddHost,
+                  onDeleteHost: onDeleteHost,
+                );
+              },
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -68,11 +59,7 @@ String _formatCheckedAt(DateTime checkedAt) {
 
 class _HostSettingsPage extends StatefulWidget {
   const _HostSettingsPage({
-    required this.currentHost,
-    required this.knownHosts,
-    required this.candidateHosts,
-    required this.candidateHostAliases,
-    required this.snapshot,
+    required this.manager,
     required this.isRefreshing,
     this.onRefresh,
     this.onUseAutomaticSelection,
@@ -81,11 +68,7 @@ class _HostSettingsPage extends StatefulWidget {
     this.onDeleteHost,
   });
 
-  final String currentHost;
-  final List<String> knownHosts;
-  final List<String> candidateHosts;
-  final Map<String, List<String>> candidateHostAliases;
-  final HostProbeSnapshot? snapshot;
+  final HostManager manager;
   final bool isRefreshing;
   final FutureOr<void> Function()? onRefresh;
   final FutureOr<void> Function()? onUseAutomaticSelection;
@@ -98,24 +81,11 @@ class _HostSettingsPage extends StatefulWidget {
 }
 
 class _HostSettingsPageState extends State<_HostSettingsPage> {
-  static const Object _snapshotSentinel = Object();
-
-  late String _currentHost;
-  late HostProbeSnapshot? _snapshot;
-  late bool _isRefreshing;
   final TextEditingController _customHostController = TextEditingController();
-  final Set<String> _localHosts = <String>{};
-  final Set<String> _deletedHosts = <String>{};
   bool _isBusy = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _currentHost = _normalizeHostValue(widget.currentHost);
-    _snapshot = _normalizeSnapshot(widget.snapshot);
-    _isRefreshing = widget.isRefreshing;
-    _syncLocalHostsFromWidget();
-  }
+  late bool _isRefreshing = widget.isRefreshing;
+  String? _selectingHost;
+  bool _selectingAutomatic = false;
 
   @override
   void dispose() {
@@ -124,93 +94,66 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
   }
 
   @override
-  void didUpdateWidget(covariant _HostSettingsPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (_isBusy) {
-      return;
-    }
-    if (oldWidget.currentHost != widget.currentHost ||
-        oldWidget.snapshot != widget.snapshot) {
-      _currentHost = _normalizeHostValue(widget.currentHost);
-      _snapshot = _normalizeSnapshot(widget.snapshot);
-      _syncLocalHostsFromWidget();
-    }
-    if (oldWidget.isRefreshing != widget.isRefreshing) {
-      _isRefreshing = widget.isRefreshing;
-    }
-  }
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: widget.manager,
+    builder: (context, _) => _buildSettings(context),
+  );
 
-  @override
-  Widget build(BuildContext context) {
-    final String normalizedCurrentHost = _currentHost;
-    final String? pinnedHost = _snapshot?.sessionPinnedHost
-        ?.trim()
-        .toLowerCase();
+  Widget _buildSettings(BuildContext context) {
+    final HostManager manager = widget.manager;
+    final HostProbeSnapshot? snapshot = manager.probeSnapshot;
+    final String recommendedHost = snapshot?.selectedHost ?? '';
+    final String normalizedCurrentHost =
+        _selectingHost ??
+        (_selectingAutomatic && recommendedHost.isNotEmpty
+            ? recommendedHost
+            : manager.currentHost);
+    final String? pinnedHost = _selectingAutomatic
+        ? null
+        : _selectingHost ?? manager.sessionPinnedHost;
     final String normalizedPinnedHost = pinnedHost ?? '';
-    final String recommendedHost =
-        _snapshot?.selectedHost.trim().toLowerCase() ?? '';
-    final Map<String, List<String>> aliasGroups = _normalizedAliasGroups(
-      widget.candidateHosts,
-      widget.candidateHostAliases,
-    );
+    final Map<String, List<String>> aliasGroups = manager.candidateHostAliases;
     final Map<String, String> canonicalHostByAlias = <String, String>{
       for (final MapEntry<String, List<String>> entry in aliasGroups.entries)
         entry.key: entry.key,
       for (final MapEntry<String, List<String>> entry in aliasGroups.entries)
         for (final String alias in entry.value) alias: entry.key,
     };
-    final Map<String, List<HostProbeRecord>> probesByCanonicalHost =
-        <String, List<HostProbeRecord>>{};
-    for (final HostProbeRecord probe
-        in _snapshot?.probes ?? const <HostProbeRecord>[]) {
-      final String normalizedProbeHost = _normalizeHostValue(probe.host);
-      if (normalizedProbeHost.isEmpty || _isDeletedHost(normalizedProbeHost)) {
-        continue;
+    String canonical(String host) => canonicalHostByAlias[host] ?? host;
+    final Map<String, HostProbeRecord> probes = <String, HostProbeRecord>{};
+    for (final probe in snapshot?.probes ?? const <HostProbeRecord>[]) {
+      final key = canonical(probe.host);
+      final current = probes[key];
+      if (current == null ||
+          (probe.success && !current.success) ||
+          (probe.success == current.success &&
+              probe.latencyMs < current.latencyMs)) {
+        probes[key] = probe;
       }
-      final String canonicalHost =
-          canonicalHostByAlias[normalizedProbeHost] ?? normalizedProbeHost;
-      probesByCanonicalHost
-          .putIfAbsent(canonicalHost, () => <HostProbeRecord>[])
-          .add(probe);
     }
-    final Map<String, HostProbeRecord> probes = <String, HostProbeRecord>{
-      for (final MapEntry<String, List<HostProbeRecord>> entry
-          in probesByCanonicalHost.entries)
-        entry.key: _preferredProbeForHostGroup(entry.value),
-    };
-    final String normalizedCurrentKey = _canonicalActiveHost(
-      normalizedCurrentHost,
-      canonicalHostByAlias,
-    );
-    final String normalizedPinnedKey = _canonicalActiveHost(
-      normalizedPinnedHost,
-      canonicalHostByAlias,
-    );
-    final String recommendedKey = _canonicalActiveHost(
-      recommendedHost,
-      canonicalHostByAlias,
-    );
-    final Set<String> seenHosts = <String>{};
-    final List<String> rawHosts = <String>[
-      ...aliasGroups.keys,
-      ..._knownHosts(),
-      if (normalizedCurrentKey.isNotEmpty) normalizedCurrentKey,
-      if (normalizedPinnedKey.isNotEmpty) normalizedPinnedKey,
-      if (recommendedKey.isNotEmpty) recommendedKey,
-    ];
-    final List<String> hosts =
-        <String>[
-          for (final String host in rawHosts)
-            if (seenHosts.add(canonicalHostByAlias[host] ?? host))
-              canonicalHostByAlias[host] ?? host,
-        ]..sort((String left, String right) {
-          final int leftRank = _hostDisplayRank(probes[left]);
-          final int rightRank = _hostDisplayRank(probes[right]);
-          if (leftRank != rightRank) {
-            return leftRank.compareTo(rightRank);
-          }
-          return rawHosts.indexOf(left).compareTo(rawHosts.indexOf(right));
-        });
+    final normalizedCurrentKey = canonical(normalizedCurrentHost);
+    final normalizedPinnedKey = canonical(normalizedPinnedHost);
+    final recommendedKey = canonical(recommendedHost);
+    final hostOrder = <String, int>{};
+    for (final host in [
+      ...manager.candidateHosts,
+      ...manager.knownHosts,
+      ...probes.keys,
+      normalizedCurrentKey,
+      normalizedPinnedKey,
+      recommendedKey,
+    ]) {
+      if (host.isNotEmpty) {
+        hostOrder.putIfAbsent(canonical(host), () => hostOrder.length);
+      }
+    }
+    final hosts = hostOrder.keys.toList()
+      ..sort((left, right) {
+        final rank = _hostDisplayRank(
+          probes[left],
+        ).compareTo(_hostDisplayRank(probes[right]));
+        return rank != 0 ? rank : hostOrder[left]!.compareTo(hostOrder[right]!);
+      });
 
     return SettingsPageScaffold(
       title: '访问域名',
@@ -240,10 +183,10 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
                               label: '模式',
                               value: pinnedHost == null ? '自动选择' : '手动锁定',
                             ),
-                            if (_snapshot != null)
+                            if (snapshot != null)
                               _HostSummaryChip(
                                 label: '最近测速',
-                                value: _formatCheckedAt(_snapshot!.checkedAt),
+                                value: _formatCheckedAt(snapshot.checkedAt),
                               ),
                           ],
                         ),
@@ -357,137 +300,6 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
     );
   }
 
-  String _normalizeHostValue(String value) {
-    return value.trim().toLowerCase();
-  }
-
-  String _activeHostValue(String value) {
-    final String normalizedHost = _normalizeHostValue(value);
-    if (normalizedHost.isEmpty || _isDeletedHost(normalizedHost)) {
-      return '';
-    }
-    return normalizedHost;
-  }
-
-  bool _isDeletedHost(String host) {
-    return _deletedHosts.contains(_normalizeHostValue(host));
-  }
-
-  String _canonicalActiveHost(
-    String host,
-    Map<String, String> canonicalHostByAlias,
-  ) {
-    final String activeHost = _activeHostValue(host);
-    if (activeHost.isEmpty) {
-      return '';
-    }
-    return _activeHostValue(canonicalHostByAlias[activeHost] ?? activeHost);
-  }
-
-  void _syncLocalHostsFromWidget() {
-    _localHosts.addAll(_widgetHosts());
-    _localHosts.removeWhere(_isDeletedHost);
-  }
-
-  Set<String> _widgetHosts() {
-    final Set<String> hosts = <String>{};
-    void addHost(String value) {
-      final String activeHost = _activeHostValue(value);
-      if (activeHost.isNotEmpty) {
-        hosts.add(activeHost);
-      }
-    }
-
-    for (final String host in widget.knownHosts) {
-      addHost(host);
-    }
-    for (final String host in widget.candidateHosts) {
-      addHost(host);
-    }
-    for (final MapEntry<String, List<String>> entry
-        in widget.candidateHostAliases.entries) {
-      addHost(entry.key);
-      for (final String alias in entry.value) {
-        addHost(alias);
-      }
-    }
-    for (final HostProbeRecord probe
-        in _snapshot?.probes ?? const <HostProbeRecord>[]) {
-      addHost(probe.host);
-    }
-    addHost(_currentHost);
-    return hosts;
-  }
-
-  Map<String, List<String>> _normalizedAliasGroups(
-    List<String> candidateHosts,
-    Map<String, List<String>> candidateHostAliases,
-  ) {
-    final Map<String, List<String>> normalizedGroups = <String, List<String>>{};
-    for (final MapEntry<String, List<String>> entry
-        in candidateHostAliases.entries) {
-      final String normalizedPrimary = _activeHostValue(entry.key);
-      if (normalizedPrimary.isEmpty) {
-        continue;
-      }
-      final List<String> aliases = <String>[];
-      final Set<String> seenAliases = <String>{normalizedPrimary};
-      for (final String alias in entry.value) {
-        final String normalizedAlias = _activeHostValue(alias);
-        if (normalizedAlias.isEmpty || !seenAliases.add(normalizedAlias)) {
-          continue;
-        }
-        aliases.add(normalizedAlias);
-      }
-      normalizedGroups[normalizedPrimary] = aliases;
-    }
-    for (final String host in candidateHosts) {
-      final String normalizedHost = _activeHostValue(host);
-      if (normalizedHost.isEmpty ||
-          normalizedGroups.containsKey(normalizedHost)) {
-        continue;
-      }
-      normalizedGroups[normalizedHost] = const <String>[];
-    }
-    return normalizedGroups;
-  }
-
-  HostProbeRecord _preferredProbeForHostGroup(List<HostProbeRecord> probes) {
-    final List<HostProbeRecord> ranked = probes.toList(growable: false)
-      ..sort((HostProbeRecord left, HostProbeRecord right) {
-        if (left.success != right.success) {
-          return left.success ? -1 : 1;
-        }
-        return left.latencyMs.compareTo(right.latencyMs);
-      });
-    return ranked.first;
-  }
-
-  HostProbeSnapshot? _normalizeSnapshot(HostProbeSnapshot? snapshot) {
-    if (snapshot == null) {
-      return null;
-    }
-    return HostProbeSnapshot(
-      selectedHost: _normalizeHostValue(snapshot.selectedHost),
-      checkedAt: snapshot.checkedAt,
-      probes: snapshot.probes,
-      sessionPinnedHost: snapshot.sessionPinnedHost == null
-          ? null
-          : _normalizeHostValue(snapshot.sessionPinnedHost!),
-    );
-  }
-
-  Set<String> _knownHosts() {
-    final Set<String> hosts = _widgetHosts();
-    for (final String host in _localHosts) {
-      final String activeHost = _activeHostValue(host);
-      if (activeHost.isNotEmpty) {
-        hosts.add(activeHost);
-      }
-    }
-    return hosts;
-  }
-
   int _hostDisplayRank(HostProbeRecord? probe) {
     if (probe == null) {
       return 2;
@@ -495,128 +307,49 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
     return probe.success ? 0 : 1;
   }
 
-  HostProbeSnapshot? _copySnapshot({
-    String? selectedHost,
-    Object? pinnedHost = _snapshotSentinel,
-    DateTime? checkedAt,
-  }) {
-    final HostProbeSnapshot? snapshot = _snapshot;
-    final String resolvedSelectedHost = _normalizeHostValue(
-      selectedHost ?? snapshot?.selectedHost ?? _currentHost,
-    );
-    final String? resolvedPinnedHost = switch (pinnedHost) {
-      String value => _normalizeHostValue(value),
-      null => null,
-      _ =>
-        snapshot?.sessionPinnedHost == null
-            ? null
-            : _normalizeHostValue(snapshot!.sessionPinnedHost!),
-    };
-    if (snapshot == null &&
-        resolvedSelectedHost.isEmpty &&
-        resolvedPinnedHost == null) {
-      return null;
-    }
-    return HostProbeSnapshot(
-      selectedHost: resolvedSelectedHost,
-      checkedAt: checkedAt ?? snapshot?.checkedAt ?? DateTime.now(),
-      probes: snapshot?.probes ?? const <HostProbeRecord>[],
-      sessionPinnedHost: resolvedPinnedHost,
-    );
-  }
-
-  void _syncFromHostManager() {
-    final Set<String> knownHosts = _knownHosts();
-    final String managerCurrent = _normalizeHostValue(
-      HostManager.instance.currentHost,
-    );
-    final HostProbeSnapshot? managerSnapshot = _normalizeSnapshot(
-      HostManager.instance.probeSnapshot,
-    );
-    final bool canUseManagerCurrent =
-        managerCurrent.isNotEmpty && knownHosts.contains(managerCurrent);
-    final bool canUseManagerSnapshot =
-        managerSnapshot != null &&
-        (knownHosts.contains(managerSnapshot.selectedHost) ||
-            managerSnapshot.probes.any(
-              (HostProbeRecord probe) =>
-                  knownHosts.contains(_normalizeHostValue(probe.host)),
-            ));
-    if (!canUseManagerCurrent && !canUseManagerSnapshot) {
-      return;
-    }
-    _currentHost = canUseManagerCurrent ? managerCurrent : _currentHost;
-    _snapshot = canUseManagerSnapshot
-        ? managerSnapshot
-        : _copySnapshot(selectedHost: _currentHost);
-  }
-
   Future<void> _runBusyAction(
-    Future<void> Function() action, {
+    FutureOr<void> Function() action, {
     bool refreshing = false,
+    String? selectingHost,
+    bool selectingAutomatic = false,
   }) async {
-    if (_isBusy) {
-      return;
-    }
+    if (_isBusy) return;
     setState(() {
       _isBusy = true;
-      _isRefreshing = refreshing || widget.isRefreshing;
+      _isRefreshing = refreshing;
+      _selectingHost = selectingHost;
+      _selectingAutomatic = selectingAutomatic;
     });
     try {
       await action();
+    } catch (_) {
+      // 操作入口已经向用户展示错误，页面重新读取管理器中的实际状态。
     } finally {
       if (mounted) {
         setState(() {
           _isBusy = false;
           _isRefreshing = false;
+          _selectingHost = null;
+          _selectingAutomatic = false;
         });
-      } else {
-        _isBusy = false;
-        _isRefreshing = false;
       }
     }
   }
 
-  Future<void> _handleRefresh() async {
-    final FutureOr<void> Function()? onRefresh = widget.onRefresh;
-    if (onRefresh == null) {
-      return;
-    }
-    await _runBusyAction(() async {
-      await onRefresh();
-      _syncFromHostManager();
-    }, refreshing: true);
-  }
+  Future<void> _handleRefresh() =>
+      _runBusyAction(() => widget.onRefresh?.call(), refreshing: true);
 
   Future<void> _handleAddHost() async {
-    final FutureOr<String> Function(String value)? onAddHost = widget.onAddHost;
-    if (onAddHost == null) {
-      return;
-    }
-    final String input = _customHostController.text.trim();
-    if (input.isEmpty) {
-      return;
-    }
+    final input = _customHostController.text.trim();
+    if (input.isEmpty || widget.onAddHost == null) return;
     await _runBusyAction(() async {
-      final String normalizedHost = _normalizeHostValue(await onAddHost(input));
-      if (normalizedHost.isEmpty) {
-        return;
-      }
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _deletedHosts.remove(normalizedHost);
-        _localHosts.add(normalizedHost);
-        _customHostController.clear();
-      });
-      _syncFromHostManager();
+      final result = await widget.onAddHost!(input);
+      if (mounted && result.isNotEmpty) _customHostController.clear();
     });
   }
 
   Future<void> _confirmDeleteHost(String host) async {
-    final String normalizedHost = _normalizeHostValue(host);
-    if (normalizedHost.isEmpty || widget.onDeleteHost == null) {
+    if (host.isEmpty || widget.onDeleteHost == null) {
       return;
     }
     final bool confirmed =
@@ -640,130 +373,20 @@ class _HostSettingsPageState extends State<_HostSettingsPage> {
           },
         ) ??
         false;
-    if (!confirmed) {
-      return;
+    if (confirmed && mounted) {
+      await _runBusyAction(() => widget.onDeleteHost!(host));
     }
-    await _handleDeleteHost(normalizedHost);
   }
 
-  Future<void> _handleDeleteHost(String host) async {
-    final FutureOr<void> Function(String value)? onDeleteHost =
-        widget.onDeleteHost;
-    if (onDeleteHost == null) {
-      return;
-    }
-    final String normalizedHost = _normalizeHostValue(host);
-    if (normalizedHost.isEmpty) {
-      return;
-    }
-    final String previousCurrentHost = _currentHost;
-    final HostProbeSnapshot? previousSnapshot = _snapshot;
-    final Set<String> previousLocalHosts = Set<String>.from(_localHosts);
-    await _runBusyAction(() async {
-      try {
-        await onDeleteHost(normalizedHost);
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _deletedHosts.add(normalizedHost);
-          _localHosts.remove(normalizedHost);
-          if (_currentHost == normalizedHost) {
-            _currentHost = _localHosts.isEmpty ? '' : _localHosts.first;
-          }
-          _snapshot = _copySnapshot(
-            selectedHost: _currentHost,
-            pinnedHost: _snapshot?.sessionPinnedHost == normalizedHost
-                ? null
-                : _snapshotSentinel,
-          );
-        });
-        _syncFromHostManager();
-      } catch (_) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _currentHost = previousCurrentHost;
-          _snapshot = previousSnapshot;
-          _localHosts
-            ..clear()
-            ..addAll(previousLocalHosts);
-        });
-      }
-    });
-  }
+  Future<void> _handleUseAutomaticSelection() => _runBusyAction(
+    () => widget.onUseAutomaticSelection?.call(),
+    selectingAutomatic: true,
+  );
 
-  Future<void> _handleUseAutomaticSelection() async {
-    final FutureOr<void> Function()? onUseAutomaticSelection =
-        widget.onUseAutomaticSelection;
-    if (onUseAutomaticSelection == null) {
-      return;
-    }
-    final String previousCurrentHost = _currentHost;
-    final HostProbeSnapshot? previousSnapshot = _snapshot;
-    final String automaticHost = _normalizeHostValue(
-      _snapshot?.selectedHost ?? _currentHost,
-    );
-    setState(() {
-      if (automaticHost.isNotEmpty) {
-        _currentHost = automaticHost;
-      }
-      _snapshot = _copySnapshot(
-        selectedHost: automaticHost.isEmpty ? _currentHost : automaticHost,
-        pinnedHost: null,
-      );
-    });
-    await _runBusyAction(() async {
-      try {
-        await onUseAutomaticSelection();
-        _syncFromHostManager();
-      } catch (_) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _currentHost = previousCurrentHost;
-          _snapshot = previousSnapshot;
-        });
-      }
-    });
-  }
-
-  Future<void> _handleSelectHost(String host) async {
-    final FutureOr<void> Function(String value)? onSelectHost =
-        widget.onSelectHost;
-    if (onSelectHost == null) {
-      return;
-    }
-    final String normalizedHost = _normalizeHostValue(host);
-    if (normalizedHost.isEmpty) {
-      return;
-    }
-    final String previousCurrentHost = _currentHost;
-    final HostProbeSnapshot? previousSnapshot = _snapshot;
-    setState(() {
-      _currentHost = normalizedHost;
-      _snapshot = _copySnapshot(
-        selectedHost: normalizedHost,
-        pinnedHost: normalizedHost,
-      );
-    });
-    await _runBusyAction(() async {
-      try {
-        await onSelectHost(normalizedHost);
-        _syncFromHostManager();
-      } catch (_) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _currentHost = previousCurrentHost;
-          _snapshot = previousSnapshot;
-        });
-      }
-    });
-  }
+  Future<void> _handleSelectHost(String host) => _runBusyAction(
+    () => widget.onSelectHost?.call(host),
+    selectingHost: host,
+  );
 }
 
 class _HostSummaryChip extends StatelessWidget {

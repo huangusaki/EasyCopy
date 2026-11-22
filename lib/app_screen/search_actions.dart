@@ -22,35 +22,33 @@ class AppSearchActions {
     required SearchHistoryStore historyStore,
     required Uri Function() currentUri,
     required int Function() selectedIndex,
-    required bool Function() isMounted,
     required SearchUiUpdater updateUi,
     required void Function(String message) showNotice,
     required SearchUriLoader loadUri,
   }) : _historyStore = historyStore,
        _currentUri = currentUri,
        _selectedIndex = selectedIndex,
-       _isMounted = isMounted,
        _updateUi = updateUi,
        _showNotice = showNotice,
-       _loadUri = loadUri;
+       _loadUri = loadUri {
+    _historyStore.addListener(_historyChanged);
+  }
 
   final SearchHistoryStore _historyStore;
   final Uri Function() _currentUri;
   final int Function() _selectedIndex;
-  final bool Function() _isMounted;
   final SearchUiUpdater _updateUi;
   final void Function(String message) _showNotice;
   final SearchUriLoader _loadUri;
 
   final TextEditingController textController = TextEditingController();
-  List<String> entries = const <String>[];
+  List<String> get entries => _historyStore.items;
+
+  void _historyChanged() => _updateUi();
 
   void dispose() {
+    _historyStore.removeListener(_historyChanged);
     textController.dispose();
-  }
-
-  void replaceHistory(List<String> value) {
-    entries = List<String>.unmodifiable(value);
   }
 
   void syncFromCurrentUri() {
@@ -94,14 +92,6 @@ class AppSearchActions {
     if (normalized.isEmpty) {
       return;
     }
-    final List<String> next = <String>[
-      normalized,
-      ...entries.where((String item) => item != normalized),
-    ];
-    final List<String> limited = next.length <= 10
-        ? next
-        : next.take(10).toList(growable: false);
-    _replaceEntries(limited);
     unawaited(_historyStore.record(normalized));
   }
 
@@ -110,10 +100,6 @@ class AppSearchActions {
     if (normalized.isEmpty || !entries.contains(normalized)) {
       return;
     }
-    final List<String> next = entries
-        .where((String item) => item != normalized)
-        .toList(growable: false);
-    _replaceEntries(next);
     await _historyStore.remove(normalized);
     _showNotice('已删除搜索历史：$normalized');
   }
@@ -131,7 +117,6 @@ class AppSearchActions {
     if (confirmed != true) {
       return;
     }
-    _replaceEntries(const <String>[]);
     await _historyStore.clear();
     _showNotice('已清空搜索历史');
   }
@@ -171,15 +156,5 @@ class AppSearchActions {
       return;
     }
     _updateUi(textController.clear);
-  }
-
-  void _replaceEntries(List<String> next) {
-    if (_isMounted()) {
-      _updateUi(() {
-        entries = next;
-      });
-      return;
-    }
-    entries = next;
   }
 }

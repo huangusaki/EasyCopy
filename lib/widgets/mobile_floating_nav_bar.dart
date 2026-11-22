@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/widgets/responsive_layout.dart';
+import 'package:reader/widgets/settings_ui.dart';
 
 class MobileFloatingNavBar extends StatelessWidget {
   const MobileFloatingNavBar({
@@ -86,7 +87,7 @@ class MobileFloatingNavBar extends StatelessWidget {
                                 top: 0,
                                 bottom: 0,
                                 width: pillExtent,
-                                child: const _SelectionPill(),
+                                child: const NavigationSelectionPill(),
                               ),
                               Row(
                                 children: <Widget>[
@@ -140,32 +141,6 @@ class MobileFloatingNavBar extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-}
-
-class _SelectionPill extends StatelessWidget {
-  const _SelectionPill();
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[colorScheme.primary, colorScheme.secondary],
-        ),
-        shape: BoxShape.circle,
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: colorScheme.primary.withValues(alpha: 0.38),
-            blurRadius: 14,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
     );
   }
 }

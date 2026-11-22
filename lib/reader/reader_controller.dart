@@ -73,7 +73,7 @@ class ReaderController extends ChangeNotifier {
     );
     _zoom = ReaderZoomController();
     _chapterBoundary = ReaderChapterBoundaryController(
-      triggerDistance: () => _nextChapterTriggerDistance,
+      triggerDistance: () => chapterTriggerDistance,
       readingDirection: () => preferences.readingDirection,
       isZoomLocked: () => isZoomGestureLocked,
       flushProgress: flushProgressPersistence,
@@ -115,6 +115,7 @@ class ReaderController extends ChangeNotifier {
   final GlobalKey viewportKey = GlobalKey();
   final Map<int, ScrollController> _pagedScrollControllers =
       <int, ScrollController>{};
+  final Map<int, double> _detachedPageOffsets = {};
   final Map<int, GlobalKey> _imageItemKeys = <int, GlobalKey>{};
   final Map<String, double> _imageAspectRatios = <String, double>{};
   List<BookSpread> _bookPages = const <BookSpread>[BookSpread(0, 0)];
@@ -133,6 +134,7 @@ class ReaderController extends ChangeNotifier {
   bool _disposed = false;
 
   ReaderPageData? _page;
+  late ReaderPrefetchIndex _prefetchIndex;
   int _currentPageIndex = 0;
   int _visibleImageIndex = 0;
   ReaderPosition? _lastPersistedPosition;
@@ -146,7 +148,7 @@ class ReaderController extends ChangeNotifier {
 
   bool _isSettingsOpen = false;
   bool _isChapterControlsVisible = false;
-  int? _batteryLevel;
+  final ValueNotifier<int?> batteryLevel = ValueNotifier(null);
 
   ReaderPageData? get page => _page;
 
@@ -167,6 +169,7 @@ class ReaderController extends ChangeNotifier {
     final ReaderPageData? page = _page;
     if (!preferences.bookMode || page == null || _loadingPosition) {
       _wide = wide;
+      if (page != null && isBook) _updateBookPages();
       return;
     }
     final ReaderRestoreTarget? target = captureCurrentRestoreTarget(
@@ -222,7 +225,7 @@ class ReaderController extends ChangeNotifier {
 
   bool get nextChapterPullReady => _chapterBoundary.nextReady;
 
-  double get _nextChapterTriggerDistance =>
+  double get chapterTriggerDistance =>
       isPaged ? _pagedTriggerDistance : _pullTriggerDistance;
 
   List<ChapterComment> get chapterComments => _comments.items;
@@ -235,16 +238,26 @@ class ReaderController extends ChangeNotifier {
 
   bool get isCommentSubmitting => _comments.isSubmitting;
 
-  int? get batteryLevel => _batteryLevel;
-
   Map<String, double> get imageAspectRatios => _imageAspectRatios;
 
   List<BookSpread> get bookPages => _bookPages;
 
-  int bookIndexFor(int image) =>
-      _bookPages.lastIndexWhere((BookSpread p) => p.start <= image);
+  int bookIndexFor(int image) {
+    int low = 0;
+    int high = _bookPages.length;
+    while (low < high) {
+      final mid = (low + high) ~/ 2;
+      if (_bookPages[mid].start <= image) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    return low - 1;
+  }
 
   void _updateBookPages() {
+    if (!isBook) return;
     if (_bookTurning) {
       _bookLayoutDirty = true;
       return;
@@ -277,20 +290,45 @@ class ReaderController extends ChangeNotifier {
 
   ScrollController pagedScrollControllerFor(int pageIndex) {
     return _pagedScrollControllers.putIfAbsent(pageIndex, () {
-      final ScrollController controller = ScrollController();
+      late final ScrollController controller;
+      controller = ScrollController(
+        initialScrollOffset: _detachedPageOffsets.remove(pageIndex) ?? 0,
+        keepScrollOffset: false,
+        onDetach: (position) {
+          if (!identical(_pagedScrollControllers[pageIndex], controller)) {
+            return;
+          }
+          if (position.hasPixels) {
+            _detachedPageOffsets[pageIndex] = position.pixels;
+          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (identical(_pagedScrollControllers[pageIndex], controller) &&
+                !controller.hasClients) {
+              _pagedScrollControllers.remove(pageIndex);
+              controller.dispose();
+            }
+          });
+        },
+      );
       controller.addListener(() => _handlePagedInnerScroll(pageIndex));
       return controller;
     });
+  }
+
+  double _pagedOffsetFor(int pageIndex) {
+    final controller = _pagedScrollControllers[pageIndex];
+    if (controller != null && controller.hasClients) return controller.offset;
+    return _detachedPageOffsets[pageIndex] ??
+        controller?.initialScrollOffset ??
+        0;
   }
 
   GlobalKey imageItemKeyFor(int index) {
     return _imageItemKeys.putIfAbsent(index, GlobalKey.new);
   }
 
-  bool shouldShowCommentTailPage(ReaderPageData page) {
-    return preferences.showChapterComments &&
-        readerChapterIdForPage(page).isNotEmpty;
-  }
+  bool shouldShowCommentTailPage(ReaderPageData page) =>
+      _comments.shouldShowTailPage(page);
 
   int readerPagedPageCount(ReaderPageData page) {
     return page.imageUrls.length + (shouldShowCommentTailPage(page) ? 1 : 0);
@@ -304,13 +342,10 @@ class ReaderController extends ChangeNotifier {
     if (book || preferences.isPaged) {
       final int maxPageIndex = math.max(0, readerPagedPageCount(page) - 1);
       final int pageIndex = _currentPageIndex.clamp(0, maxPageIndex);
-      final ScrollController? controller = _pagedScrollControllers[pageIndex];
       return ReaderRestoreTarget(
         position: ReaderPosition.paged(
           pageIndex: pageIndex,
-          pageOffset: !book && controller != null && controller.hasClients
-              ? controller.offset
-              : 0,
+          pageOffset: book ? 0 : _pagedOffsetFor(pageIndex),
         ),
         visibleImageIndex: page.imageUrls.isEmpty
             ? null
@@ -332,13 +367,7 @@ class ReaderController extends ChangeNotifier {
 
   void attachPlatformSubscriptions() {
     if (platformBridge.isAndroidSupported) {
-      _batterySubscription = platformBridge.batteryStream.listen((int level) {
-        if (_disposed || _batteryLevel == level) {
-          return;
-        }
-        _batteryLevel = level;
-        notifyListeners();
-      });
+      _syncBatterySubscription();
       _volumeKeySubscription = platformBridge.volumeKeyEventStream.listen(
         _handleVolumeKeyAction,
       );
@@ -349,6 +378,18 @@ class ReaderController extends ChangeNotifier {
     _lastObservedPreferences = preferencesController.readerPreferences;
   }
 
+  void _syncBatterySubscription() {
+    if (!platformBridge.isAndroidSupported) return;
+    if (preferences.showBattery) {
+      _batterySubscription ??= platformBridge.batteryStream.listen((level) {
+        if (!_disposed) batteryLevel.value = level;
+      });
+    } else {
+      _batterySubscription?.cancel();
+      _batterySubscription = null;
+    }
+  }
+
   void setPage(
     ReaderPageData page, {
     String? previousUri,
@@ -356,6 +397,10 @@ class ReaderController extends ChangeNotifier {
     ReaderRestoreTarget? preferredRestoreTarget,
     bool openAtEnd = false,
   }) {
+    if (!identical(_page?.imageUrls, page.imageUrls)) {
+      _prefetchIndex = ReaderPrefetchIndex(page.imageUrls);
+      if (_prefetchIndex.isEmpty) AppImageCaches.clearReaderPrefetchWindow();
+    }
     _page = page;
     _handlePageLoaded(
       page,
@@ -403,6 +448,7 @@ class ReaderController extends ChangeNotifier {
     scrollController.dispose();
     _comments.dispose();
     _gestureFrame.dispose();
+    batteryLevel.dispose();
     super.dispose();
   }
 
@@ -421,7 +467,7 @@ class ReaderController extends ChangeNotifier {
   void setSettingsSheetOpen(bool open) {
     if (_isSettingsOpen == open) return;
     _isSettingsOpen = open;
-    _scheduleReaderPresentationSync();
+    _restartAutoTurn();
     notifyListeners();
   }
 
@@ -619,24 +665,27 @@ class ReaderController extends ChangeNotifier {
       if (page == null) {
         await restoreDefaultEnvironment();
       } else {
-        await platformBridge.applyReaderPresentation(
-          orientation: nextEnvironment.orientation,
-          fullscreen: nextEnvironment.fullscreen,
-        );
-        await platformBridge.setKeepScreenOn(nextEnvironment.keepScreenOn);
-        await platformBridge.setVolumePagingEnabled(
-          nextEnvironment.volumePagingEnabled,
-        );
+        final previous = _appliedEnvironment;
+        if (previous?.isReader != true ||
+            previous?.orientation != nextEnvironment.orientation ||
+            previous?.fullscreen != nextEnvironment.fullscreen) {
+          await platformBridge.applyReaderPresentation(
+            orientation: nextEnvironment.orientation,
+            fullscreen: nextEnvironment.fullscreen,
+          );
+        }
+        if (previous?.keepScreenOn != nextEnvironment.keepScreenOn) {
+          await platformBridge.setKeepScreenOn(nextEnvironment.keepScreenOn);
+        }
+        if (previous?.volumePagingEnabled !=
+            nextEnvironment.volumePagingEnabled) {
+          await platformBridge.setVolumePagingEnabled(
+            nextEnvironment.volumePagingEnabled,
+          );
+        }
         _appliedEnvironment = nextEnvironment;
       }
     }
-
-    if (page == null) {
-      _autoTurnTimer?.cancel();
-      _autoTurnTimer = null;
-      return;
-    }
-    _restartAutoTurn();
   }
 
   void _restartAutoTurn() {
@@ -684,8 +733,8 @@ class ReaderController extends ChangeNotifier {
     ReaderRestoreTarget? preferredRestoreTarget,
     bool openAtEnd = false,
   }) {
-    unawaited(_markChapterVisited(page));
     final bool changedPage = previousUri != page.uri;
+    if (changedPage) unawaited(_markChapterVisited(page));
     if (changedPage || forceRestore) {
       _chapterBoundary.reset();
       _resetZoomState();
@@ -697,6 +746,7 @@ class ReaderController extends ChangeNotifier {
       _visibleIndexUpdateQueued = false;
       _isChapterControlsVisible = false;
       _disposePagedScrollControllers();
+      _detachedPageOffsets.clear();
       _imageItemKeys.clear();
       _imageAspectRatios.clear();
       _bookTurning = false;
@@ -708,6 +758,7 @@ class ReaderController extends ChangeNotifier {
     _updateBookPages();
     _comments.prepare(page, resetForNewChapter: changedPage);
     _scheduleReaderPresentationSync();
+    _restartAutoTurn();
     if (changedPage || forceRestore) {
       unawaited(
         _restorePosition(
@@ -726,8 +777,9 @@ class ReaderController extends ChangeNotifier {
     ReaderPageData page,
     int currentImageIndex,
   ) {
+    if (_prefetchIndex.isEmpty) return;
     AppImageCaches.replaceReaderPrefetchWindow(
-      readerPrefetchUrlsAfter(page.imageUrls, currentIndex: currentImageIndex),
+      _prefetchIndex.after(currentImageIndex),
       referer: page.uri,
     );
   }
@@ -1141,6 +1193,7 @@ class ReaderController extends ChangeNotifier {
         viewportTop + (viewportRenderObject.size.height / 2);
     int bestIndex = _visibleImageIndex;
     double bestDistance = double.infinity;
+    _imageItemKeys.removeWhere((index, key) => key.currentContext == null);
     for (final MapEntry<int, GlobalKey> entry in _imageItemKeys.entries) {
       final BuildContext? itemContext = entry.value.currentContext;
       if (itemContext == null) continue;
@@ -1167,9 +1220,10 @@ class ReaderController extends ChangeNotifier {
     if (_imageAspectRatios[imageUrl] == aspectRatio) return;
     final bool wasWide = isBookWide(_imageAspectRatios[imageUrl]);
     _imageAspectRatios[imageUrl] = aspectRatio;
-    if (wasWide != isBookWide(aspectRatio)) _updateBookPages();
-    if (_bookTurning && isBook) return;
-    if (!_disposed) notifyListeners();
+    if (isBook && wasWide != isBookWide(aspectRatio)) {
+      _updateBookPages();
+      if (!_bookTurning && !_disposed) notifyListeners();
+    }
   }
 
   void handlePinchZoomStart() {
@@ -1325,16 +1379,9 @@ class ReaderController extends ChangeNotifier {
     final ReaderPageData? page = _page;
     if (page == null) return;
     if (isPaged) {
-      final ScrollController? pageScrollController =
-          _pagedScrollControllers[_currentPageIndex];
       final ReaderPosition position = ReaderPosition.paged(
         pageIndex: _currentPageIndex,
-        pageOffset:
-            !isBook &&
-                pageScrollController != null &&
-                pageScrollController.hasClients
-            ? pageScrollController.offset
-            : 0,
+        pageOffset: isBook ? 0 : _pagedOffsetFor(_currentPageIndex),
       );
       _lastPersistedPosition = position;
       _lastScheduledProgressPosition = position;
@@ -1362,20 +1409,14 @@ class ReaderController extends ChangeNotifier {
     final ReaderPreferences previousPreferences =
         _lastObservedPreferences ?? preferences;
     final ReaderPreferences nextPreferences = preferences;
+    if (_disposed || identical(previousPreferences, nextPreferences)) return;
     _lastObservedPreferences = nextPreferences;
-    if (_disposed) return;
+    if (previousPreferences.showBattery != nextPreferences.showBattery) {
+      _syncBatterySubscription();
+    }
 
     final ReaderPageData? page = _page;
     final bool loading = _loadingPosition;
-    final ReaderRestoreTarget? readerRestoreTarget = page != null && !loading
-        ? captureCurrentRestoreTarget(page, preferences: previousPreferences)
-        : null;
-    if (previousPreferences.showChapterComments !=
-        nextPreferences.showChapterComments) {
-      _updateBookPages();
-    }
-    notifyListeners();
-
     final bool requiresReaderRestore =
         previousPreferences.bookMode != nextPreferences.bookMode ||
         previousPreferences.readingDirection !=
@@ -1385,6 +1426,11 @@ class ReaderController extends ChangeNotifier {
             nextPreferences.openingPosition ||
         previousPreferences.showChapterComments !=
             nextPreferences.showChapterComments;
+    final readerRestoreTarget =
+        requiresReaderRestore && page != null && !loading
+        ? captureCurrentRestoreTarget(page, preferences: previousPreferences)
+        : null;
+    notifyListeners();
     if (requiresReaderRestore && page != null && !loading) {
       _handlePageLoaded(
         page,
@@ -1394,7 +1440,18 @@ class ReaderController extends ChangeNotifier {
       );
       return;
     }
-    _scheduleReaderPresentationSync();
+    if (previousPreferences.screenOrientation !=
+            nextPreferences.screenOrientation ||
+        previousPreferences.fullscreen != nextPreferences.fullscreen ||
+        previousPreferences.keepScreenOn != nextPreferences.keepScreenOn ||
+        previousPreferences.useVolumeKeysForPaging !=
+            nextPreferences.useVolumeKeysForPaging) {
+      _scheduleReaderPresentationSync();
+    }
+    if (previousPreferences.autoPageTurnSeconds !=
+        nextPreferences.autoPageTurnSeconds) {
+      _restartAutoTurn();
+    }
   }
 }
 

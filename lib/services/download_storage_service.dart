@@ -29,7 +29,6 @@ class DownloadStorageState {
     required this.isCustom,
     required this.isDocumentTree,
     required this.isWritable,
-    required this.mayBeRemovedOnUninstall,
     this.documentTreeUri = '',
     this.storageIdentity = '',
     this.comparablePath = '',
@@ -44,7 +43,6 @@ class DownloadStorageState {
       isCustom = false,
       isDocumentTree = false,
       isWritable = false,
-      mayBeRemovedOnUninstall = false,
       documentTreeUri = '',
       storageIdentity = '',
       comparablePath = '',
@@ -57,7 +55,6 @@ class DownloadStorageState {
   final bool isCustom;
   final bool isDocumentTree;
   final bool isWritable;
-  final bool mayBeRemovedOnUninstall;
   final String documentTreeUri;
   final String storageIdentity;
   final String comparablePath;
@@ -123,10 +120,6 @@ class DownloadStorageService {
         isCustom: isCustom,
         isDocumentTree: false,
         isWritable: false,
-        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(
-          isCustom: isCustom,
-          basePath: rawBasePath,
-        ),
         errorMessage: isCustom ? '尚未设置自定义缓存目录。' : '默认缓存目录不可用。',
       );
     }
@@ -154,10 +147,6 @@ class DownloadStorageService {
         isWritable: true,
         storageIdentity: 'file:$canonicalPath',
         comparablePath: canonicalPath,
-        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(
-          isCustom: isCustom,
-          basePath: baseDirectory.path,
-        ),
       );
     } on FileSystemException catch (error) {
       return DownloadStorageState(
@@ -167,10 +156,6 @@ class DownloadStorageService {
         isCustom: isCustom,
         isDocumentTree: false,
         isWritable: false,
-        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(
-          isCustom: isCustom,
-          basePath: baseDirectory.path,
-        ),
         errorMessage: error.message,
       );
     } catch (error) {
@@ -181,10 +166,6 @@ class DownloadStorageService {
         isCustom: isCustom,
         isDocumentTree: false,
         isWritable: false,
-        mayBeRemovedOnUninstall: _mayBeRemovedOnUninstall(
-          isCustom: isCustom,
-          basePath: baseDirectory.path,
-        ),
         errorMessage: error.toString(),
       );
     }
@@ -249,7 +230,6 @@ class DownloadStorageService {
         isCustom: true,
         isDocumentTree: true,
         isWritable: false,
-        mayBeRemovedOnUninstall: false,
         documentTreeUri: treeUri,
         errorMessage: '尚未设置自定义缓存目录。',
       );
@@ -275,7 +255,6 @@ class DownloadStorageService {
         isCustom: true,
         isDocumentTree: true,
         isWritable: resolution.isWritable,
-        mayBeRemovedOnUninstall: false,
         documentTreeUri: treeUri,
         storageIdentity: resolution.storageIdentity,
         comparablePath: resolution.comparablePath,
@@ -289,28 +268,10 @@ class DownloadStorageService {
         isCustom: true,
         isDocumentTree: true,
         isWritable: false,
-        mayBeRemovedOnUninstall: false,
         documentTreeUri: treeUri,
         errorMessage: error.toString(),
       );
     }
-  }
-
-  bool _mayBeRemovedOnUninstall({
-    required bool isCustom,
-    required String basePath,
-  }) {
-    if (Platform.isAndroid) {
-      final String normalizedBasePath = _normalizedPath(basePath).toLowerCase();
-      final String appSpecificMarker =
-          '${Platform.pathSeparator}android${Platform.pathSeparator}'
-          'data${Platform.pathSeparator}';
-      if (normalizedBasePath.contains(appSpecificMarker)) {
-        return true;
-      }
-      return !isCustom;
-    }
-    return Platform.isIOS;
   }
 
   Future<void> _verifyWritable(Directory rootDirectory) async {

@@ -35,11 +35,6 @@ class SiteLoginResult {
 
   final String token;
   final Map<String, String> cookies;
-
-  String get cookieHeader => cookies.entries
-      .where((MapEntry<String, String> entry) => entry.value.trim().isNotEmpty)
-      .map((MapEntry<String, String> entry) => '${entry.key}=${entry.value}')
-      .join('; ');
 }
 
 class _PagedProfileSection {
@@ -54,12 +49,6 @@ class _PagedProfileSection {
   final int total;
 }
 
-typedef SearchResponseLoader =
-    Future<DesktopSearchResponse> Function(
-      Uri uri, {
-      required Map<String, String> headers,
-    });
-
 class SiteApiClient {
   SiteApiClient({
     http.Client? client,
@@ -72,17 +61,15 @@ class SiteApiClient {
        _credentialsStore = credentialsStore ?? LoginCredentialsStore.instance,
        _searchEndpointResolver =
            searchEndpointResolver ?? SearchEndpointResolver.instance,
-       _searchResponseLoader =
-           searchResponseLoader ??
-           (PlatformCapabilities.supportsDesktopWebView
-               ? DesktopSearchApiBridge.instance.get
-               : null);
+       _searchResponseLoader = searchResponseLoader;
 
   static final SiteApiClient instance = SiteApiClient();
   static const String _chapterCommentApiHost = 'api.mangacopy.com';
 
   final http.Client _client;
   final SiteSession _session;
+  ({int generation, ProfileUserData user})? _lastProfileUser;
+  bool _reuseUserAfterLogin = false;
   final LoginCredentialsStore _credentialsStore;
   ({int generation, String token, Future<bool> result})? _sessionRecovery;
   final SearchResponseLoader? _searchResponseLoader;
@@ -139,9 +126,15 @@ class SiteApiClient {
       return ProfilePageData.loggedOut(uri: targetUri.toString());
     }
 
-    final Future<Map<String, Object?>> userFuture = _getJson(
-      '/api/v2/web/user/info',
-    );
+    final cachedUser = _lastProfileUser;
+    final reuseUser =
+        cachedUser != null &&
+        cachedUser.generation == generation &&
+        (_reuseUserAfterLogin || activeSubview != ProfileSubview.root);
+    _reuseUserAfterLogin = false;
+    final Future<ProfileUserData> userFuture = reuseUser
+        ? Future.value(cachedUser.user)
+        : loadUserInfo();
     final Future<_PagedProfileSection> collectionsFuture =
         activeSubview == ProfileSubview.history
         ? Future<_PagedProfileSection>.value(const _PagedProfileSection())
@@ -166,15 +159,12 @@ class SiteApiClient {
       historyFuture,
     ]);
     _checkSessionGeneration(generation);
-    final Map<String, Object?> userPayload = results[0] as Map<String, Object?>;
+    final ProfileUserData user = results[0] as ProfileUserData;
     final _PagedProfileSection collectionsPayload =
         results[1] as _PagedProfileSection;
     final _PagedProfileSection historyPayload =
         results[2] as _PagedProfileSection;
 
-    final ProfileUserData user = _parseUser(userPayload);
-    await _session.bindUserId(user.userId, expectedGeneration: generation);
-    _checkSessionGeneration(generation);
     final List<ProfileLibraryItem> collections = _parseCollections(
       collectionsPayload.items,
       sort: collectionSort,
@@ -198,7 +188,7 @@ class SiteApiClient {
     );
   }
 
-  Future<ProfileUserData> loadUserInfo() async {
+  Future<ProfileUserData> loadUserInfo({bool forLogin = false}) async {
     await _session.ensureInitialized();
     final int generation = _session.generation;
     if (!_session.isAuthenticated || (_session.token ?? '').isEmpty) {
@@ -211,6 +201,8 @@ class SiteApiClient {
     _checkSessionGeneration(generation);
     await _session.bindUserId(user.userId, expectedGeneration: generation);
     _checkSessionGeneration(generation);
+    _lastProfileUser = (generation: generation, user: user);
+    _reuseUserAfterLogin = forLogin;
     return user;
   }
 
@@ -228,7 +220,7 @@ class SiteApiClient {
       throw SiteApiException('漫画收藏信息缺失，请刷新详情页后重试。');
     }
 
-    final http.Response response = await _withSessionRecovery(
+    final response = await _withSessionRecovery(
       () => NetworkClient.post(
         _client,
         AppConfig.resolvePath('/api/v2/web/collect'),
@@ -248,13 +240,10 @@ class SiteApiClient {
       ),
     );
 
-    final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    if (decoded is! Map) {
+    final payload = response.payload;
+    if (payload == null) {
       throw SiteApiException('收藏接口返回格式异常。');
     }
-    final Map<String, Object?> payload = decoded.map(
-      (Object? key, Object? value) => MapEntry(key.toString(), value),
-    );
     final int code = (payload['code'] as num?)?.toInt() ?? response.statusCode;
     if (code != 200) {
       throw SiteApiException((payload['message'] as String?) ?? '收藏失败：$code');
@@ -417,7 +406,7 @@ class SiteApiClient {
               ...queryParameters,
             },
           );
-    final http.Response response = await _withSessionRecovery(
+    final response = await _withSessionRecovery(
       () => NetworkClient.get(
         _client,
         uri,
@@ -432,13 +421,10 @@ class SiteApiClient {
         label: 'api.json',
       ),
     );
-    final Object? decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    if (decoded is! Map) {
+    final payload = response.payload;
+    if (payload == null) {
       throw SiteApiException('接口返回格式异常。');
     }
-    final Map<String, Object?> payload = decoded.map(
-      (Object? key, Object? value) => MapEntry(key.toString(), value),
-    );
     final int code = (payload['code'] as num?)?.toInt() ?? response.statusCode;
     if (code != 200) {
       throw SiteApiException((payload['message'] as String?) ?? '接口请求失败：$code');
@@ -457,7 +443,7 @@ class SiteApiClient {
     for (final String host in _chapterCommentApiHosts()) {
       final Uri uri = Uri.https(host, path, queryParameters);
       try {
-        final http.Response response = await _withSessionRecovery(
+        final response = await _withSessionRecovery(
           () => NetworkClient.get(
             _client,
             uri,
@@ -466,7 +452,7 @@ class SiteApiClient {
             label: 'api.comments',
           ),
         );
-        final Map<String, Object?>? payload = _tryDecodeJsonMap(response);
+        final Map<String, Object?>? payload = response.payload;
         if (payload == null) {
           lastError = SiteApiException(malformedMessage);
           continue;
@@ -498,7 +484,7 @@ class SiteApiClient {
     for (final String host in _chapterCommentApiHosts()) {
       final Uri uri = Uri.https(host, path);
       try {
-        final http.Response response = await _withSessionRecovery(
+        final response = await _withSessionRecovery(
           () => NetworkClient.post(
             _client,
             uri,
@@ -511,7 +497,7 @@ class SiteApiClient {
             label: 'api.comment.submit',
           ),
         );
-        final Map<String, Object?>? payload = _tryDecodeJsonMap(response);
+        final Map<String, Object?>? payload = response.payload;
         if (payload == null) {
           lastError = SiteApiException(malformedMessage);
           continue;
@@ -537,12 +523,44 @@ class SiteApiClient {
   }) async {
     await _session.ensureInitialized();
     final Uri baseUri = AppConfig.baseUri;
+    final generation = _session.generation;
+    Future<Map<String, Object?>> resolve(SearchResponseLoader load) {
+      return _resolveSearch(
+        baseUri,
+        query: query,
+        page: page,
+        qType: qType,
+        load: (uri, {required headers}) async {
+          _checkSessionGeneration(generation);
+          final response = await load(uri, headers: headers);
+          _checkSessionGeneration(generation);
+          return response;
+        },
+      );
+    }
+
+    final injected = _searchResponseLoader;
+    if (injected != null) return resolve(injected);
+    if (PlatformCapabilities.supportsDesktopWebView) {
+      return DesktopSearchApiBridge.instance.withOrigin(baseUri, resolve);
+    }
+    return resolve(_loadSearchResponse);
+  }
+
+  Future<Map<String, Object?>> _resolveSearch(
+    Uri baseUri, {
+    required String query,
+    required int page,
+    required String qType,
+    required SearchResponseLoader load,
+  }) async {
     try {
       final String? suffix = await _searchEndpointResolver.suffixFor(
         baseUri.host,
       );
       Future<Map<String, Object?>> search(String candidate) =>
           _requestSearchJson(
+            load: load,
             baseUri: baseUri,
             suffix: candidate,
             query: query,
@@ -568,7 +586,7 @@ class SiteApiClient {
         host: baseUri.host,
         previousSuffix: suffix,
         loadPage: () async {
-          final DesktopSearchResponse response = await _loadSearchResponse(
+          final DesktopSearchResponse response = await load(
             baseUri.replace(
               path: '/search',
               queryParameters: <String, String>{'q': query, 'q_type': qType},
@@ -603,6 +621,7 @@ class SiteApiClient {
   }
 
   Future<Map<String, Object?>> _requestSearchJson({
+    required SearchResponseLoader load,
     required Uri baseUri,
     required String suffix,
     required String query,
@@ -620,7 +639,7 @@ class SiteApiClient {
         'q_type': qType,
       },
     );
-    final DesktopSearchResponse response = await _loadSearchResponse(
+    final DesktopSearchResponse response = await load(
       uri,
       headers: _searchHeaders('application/json'),
     );
@@ -654,10 +673,6 @@ class SiteApiClient {
     Uri uri, {
     required Map<String, String> headers,
   }) async {
-    final SearchResponseLoader? loader = _searchResponseLoader;
-    if (loader != null) {
-      return loader(uri, headers: headers);
-    }
     final http.Response response = await NetworkClient.get(
       _client,
       uri,
@@ -792,9 +807,7 @@ class SiteApiClient {
       queryParameters: queryParameters,
     );
     final Map<String, Object?> results = asStringKeyMap(payload['results']);
-    final List<Map<String, Object?>> items = <Map<String, Object?>>[
-      ..._extractList(results),
-    ];
+    final List<Map<String, Object?>> items = _extractList(results);
     final int total = pickInt(results, const <String>[
       'total',
       'count',
@@ -815,7 +828,7 @@ class SiteApiClient {
     return _PagedProfileSection(
       items: items,
       total: total,
-      pager: _buildProfilePager(
+      pager: AppConfig.buildProfilePager(
         view: view,
         currentPage: clampedPage,
         totalPages: totalPages,
@@ -833,52 +846,13 @@ class SiteApiClient {
   }) {
     final int normalizedPage = page < 1 ? 1 : page;
     return _PagedProfileSection(
-      pager: _buildProfilePager(
+      pager: AppConfig.buildProfilePager(
         view: view,
         currentPage: normalizedPage,
         totalPages: 1,
         totalItems: 0,
         collectionSort: collectionSort,
       ),
-    );
-  }
-
-  PagerData _buildProfilePager({
-    required ProfileSubview view,
-    required int currentPage,
-    required int totalPages,
-    required int totalItems,
-    ProfileCollectionSort collectionSort =
-        AppConfig.defaultProfileCollectionSort,
-  }) {
-    final int normalizedCurrentPage = currentPage < 1 ? 1 : currentPage;
-    final int normalizedTotalPages = totalPages < 1 ? 1 : totalPages;
-    final String itemUnit = switch (view) {
-      ProfileSubview.collections => '部',
-      ProfileSubview.history => '条',
-      _ => '条',
-    };
-    return PagerData(
-      currentLabel: '$normalizedCurrentPage',
-      totalLabel: '共$normalizedTotalPages页 · $totalItems$itemUnit',
-      prevHref: normalizedCurrentPage > 1
-          ? AppConfig.buildProfileUri(
-              view: view,
-              page: normalizedCurrentPage - 1,
-              collectionSort: view == ProfileSubview.collections
-                  ? collectionSort
-                  : null,
-            ).toString()
-          : '',
-      nextHref: normalizedCurrentPage < normalizedTotalPages
-          ? AppConfig.buildProfileUri(
-              view: view,
-              page: normalizedCurrentPage + 1,
-              collectionSort: view == ProfileSubview.collections
-                  ? collectionSort
-                  : null,
-            ).toString()
-          : '',
     );
   }
 

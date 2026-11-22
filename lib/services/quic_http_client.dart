@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:reader/services/debug_trace.dart';
@@ -24,6 +25,8 @@ class QuicHttpClient extends http.BaseClient {
   static const String _engineUnavailableCode = 'engine_unavailable';
 
   final http.Client _fallbackClient;
+  static int _nextRequestId = 0;
+  final Set<int> _activeRequests = {};
   bool _closed = false;
 
   /// Cronet 引擎不可用是本机永久状态（native 库缺失 / provider 不可用），
@@ -40,9 +43,16 @@ class QuicHttpClient extends http.BaseClient {
     if (_engineUnavailable) {
       return _sendWithFallback(request, body);
     }
+    final id = ++_nextRequestId;
+    _activeRequests.add(id);
+    if (request case http.Abortable(:final abortTrigger?)) {
+      unawaited(abortTrigger.then((_) => _cancel(id)));
+    }
     try {
       final Object? rawResponse = await _channel
           .invokeMethod<Object?>('request', <String, Object?>{
+            'id': id,
+            'debug': kDebugMode,
             'url': request.url.toString(),
             'method': request.method,
             'headers': request.headers,
@@ -62,16 +72,33 @@ class QuicHttpClient extends http.BaseClient {
         _engineUnavailable = true;
         return _sendWithFallback(request, body);
       }
+      if (error.code == 'request_aborted') {
+        throw http.RequestAbortedException(request.url);
+      }
       throw http.ClientException(
         error.message?.trim().isNotEmpty == true ? error.message! : error.code,
         request.url,
       );
+    } finally {
+      _activeRequests.remove(id);
+    }
+  }
+
+  Future<void> _cancel(int id) async {
+    if (!_activeRequests.contains(id)) return;
+    try {
+      await _channel.invokeMethod<void>('cancel', id);
+    } on MissingPluginException {
+      // Requests fallback to the platform HTTP client using the same trigger.
     }
   }
 
   @override
   void close() {
     _closed = true;
+    for (final id in _activeRequests) {
+      unawaited(_cancel(id));
+    }
     _fallbackClient.close();
     super.close();
   }
@@ -92,7 +119,8 @@ class QuicHttpClient extends http.BaseClient {
         );
     final String protocol = (rawResponse['protocol'] as String? ?? '').trim();
     final String url = (rawResponse['url'] as String? ?? '').trim();
-    if (protocol.isNotEmpty &&
+    if (kDebugMode &&
+        protocol.isNotEmpty &&
         (protocol.toLowerCase().contains('h3') ||
             protocol.toLowerCase().contains('quic'))) {
       DebugTrace.log('net.cronet_http3', <String, Object?>{
@@ -117,15 +145,17 @@ class QuicHttpClient extends http.BaseClient {
     http.BaseRequest source,
     Uint8List body,
   ) async {
-    final http.StreamedRequest fallbackRequest =
-        http.StreamedRequest(source.method, source.url)
+    final fallbackRequest =
+        http.AbortableRequest(
+            source.method,
+            source.url,
+            abortTrigger: source is http.Abortable ? source.abortTrigger : null,
+          )
           ..headers.addAll(source.headers)
           ..followRedirects = source.followRedirects
           ..maxRedirects = source.maxRedirects
           ..persistentConnection = source.persistentConnection
-          ..contentLength = body.length;
-    fallbackRequest.sink.add(body);
-    await fallbackRequest.sink.close();
+          ..bodyBytes = body;
     return _fallbackClient.send(fallbackRequest);
   }
 }

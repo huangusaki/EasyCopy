@@ -1,14 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:reader/config/app_config.dart';
 import 'package:reader/services/debug_trace.dart';
 import 'package:reader/services/desktop_webview_environment.dart';
 import 'package:reader/services/site_session.dart';
-import 'package:reader/utils/platform_capabilities.dart';
 import 'package:webview_windows/webview_windows.dart';
 
 typedef DesktopSearchResponse = ({String body, int statusCode});
+
+typedef SearchResponseLoader =
+    Future<DesktopSearchResponse> Function(
+      Uri uri, {
+      required Map<String, String> headers,
+    });
 
 class DesktopSearchApiBridge {
   DesktopSearchApiBridge._();
@@ -18,135 +24,81 @@ class DesktopSearchApiBridge {
   static const Duration _timeout = Duration(seconds: 30);
   static const String _messageKind = 'easy-copy-search-response';
 
-  Future<DesktopSearchResponse> get(
-    Uri uri, {
-    required Map<String, String> headers,
-  }) async {
-    if (!PlatformCapabilities.supportsDesktopWebView) {
-      throw UnsupportedError('当前平台不支持 WebView2 搜索请求');
-    }
-    if (uri.scheme != 'https' || uri.port != 443) {
-      throw ArgumentError.value(uri, 'uri', '搜索接口仅允许 HTTPS 443');
-    }
-
+  Future<T> withOrigin<T>(
+    Uri origin,
+    Future<T> Function(SearchResponseLoader) search,
+  ) async {
     await AppConfig.hostManager.ensureInitialized();
-    if (!AppConfig.hostManager.allowedHosts.contains(uri.host.toLowerCase())) {
-      throw ArgumentError.value(uri, 'uri', '搜索接口域名不在允许列表中');
+    if (origin.scheme != 'https' ||
+        origin.port != 443 ||
+        !AppConfig.hostManager.allowedHosts.contains(
+          origin.host.toLowerCase(),
+        )) {
+      throw ArgumentError.value(origin, 'origin', '搜索接口域名不在允许列表中');
     }
     await DesktopWebViewEnvironment.instance.ensureReady();
-
-    final WebviewController controller = WebviewController();
-    final Completer<DesktopSearchResponse> completer =
-        Completer<DesktopSearchResponse>();
-    final List<StreamSubscription<Object?>> subscriptions =
-        <StreamSubscription<Object?>>[];
-    final String requestId = DateTime.now().microsecondsSinceEpoch.toString();
-    bool initialized = false;
-    bool requestStarted = false;
-
+    final controller = WebviewController();
+    await controller.initialize();
+    final subscriptions = <StreamSubscription<Object?>>[];
     try {
-      await controller.initialize();
-      initialized = true;
       await controller.setUserAgent(AppConfig.desktopUserAgent);
       await controller.setPopupWindowPolicy(
         WebviewPopupWindowPolicy.sameWindow,
       );
-
+      final ready = Completer<void>();
+      Completer<DesktopSearchResponse>? pending;
+      int sequence = 0;
       subscriptions.add(
-        controller.webMessage.listen(
-          (Object? message) {
-            _handleMessage(message, requestId: requestId, completer: completer);
-          },
-          onError: (Object error, StackTrace stackTrace) {
-            if (!completer.isCompleted) {
-              completer.completeError(error, stackTrace);
-            }
-          },
-        ),
-      );
-      subscriptions.add(
-        controller.onLoadError.listen((WebErrorStatus error) {
-          if (!completer.isCompleted) {
-            completer.completeError(StateError('搜索页面加载失败：${error.name}'));
+        controller.loadingState.listen((state) {
+          if (state == LoadingState.navigationCompleted && !ready.isCompleted) {
+            ready.complete();
           }
         }),
       );
       subscriptions.add(
-        controller.loadingState.listen((LoadingState state) {
-          if (state != LoadingState.navigationCompleted ||
-              requestStarted ||
-              completer.isCompleted) {
-            return;
+        controller.onLoadError.listen((error) {
+          final failure = StateError('搜索页面加载失败：${error.name}');
+          if (!ready.isCompleted) {
+            ready.completeError(failure);
+          } else if (pending != null && !pending!.isCompleted) {
+            pending!.completeError(failure);
           }
-          requestStarted = true;
-          unawaited(
-            _executeRequest(
-              controller,
-              uri: uri,
-              headers: headers,
-              requestId: requestId,
-              completer: completer,
-            ),
-          );
         }),
       );
-
-      final Uri originUri = uri.replace(path: '/', query: null, fragment: null);
-      await controller.loadUrl(originUri.toString());
-      return await completer.future.timeout(
-        _timeout,
-        onTimeout: () => throw TimeoutException('搜索请求超时'),
+      subscriptions.add(
+        controller.webMessage.listen((message) {
+          final result = pending;
+          if (result != null) {
+            _handleMessage(message, requestId: '$sequence', completer: result);
+          }
+        }),
       );
+      await Future.wait<void>([
+        controller.loadUrl(origin.resolve('/').toString()),
+        ready.future,
+      ], eagerError: true).timeout(_timeout);
+      return await search((uri, {required headers}) async {
+        if (uri.origin != origin.origin) throw StateError('搜索接口域名已变化');
+        sequence++;
+        final result = pending = Completer<DesktopSearchResponse>();
+        final reply = result.future;
+        final script = _buildFetchScript(
+          uri,
+          headers: headers,
+          requestId: '$sequence',
+        );
+        final values = await Future.wait<Object?>([
+          controller.executeScript(script),
+          reply,
+        ], eagerError: true).timeout(_timeout);
+        return values.last! as DesktopSearchResponse;
+      });
     } finally {
-      for (final StreamSubscription<Object?> subscription in subscriptions) {
+      for (final subscription in subscriptions) {
         await subscription.cancel();
       }
-      if (initialized) {
-        await controller.dispose();
-      }
+      await controller.dispose();
     }
-  }
-
-  Future<void> _executeRequest(
-    WebviewController controller, {
-    required Uri uri,
-    required Map<String, String> headers,
-    required String requestId,
-    required Completer<DesktopSearchResponse> completer,
-  }) async {
-    try {
-      final String cookieScript = _buildCookieScript(
-        SiteSession.parseCookieHeader(headers['Cookie'] ?? ''),
-      );
-      if (cookieScript.isNotEmpty) {
-        await controller.executeScript(cookieScript);
-      }
-      await controller.executeScript(
-        _buildFetchScript(uri, headers: headers, requestId: requestId),
-      );
-    } catch (error, stackTrace) {
-      if (!completer.isCompleted) {
-        completer.completeError(error, stackTrace);
-      }
-    }
-  }
-
-  String _buildCookieScript(Map<String, String> cookies) {
-    final String statements = cookies.entries
-        .where(
-          (MapEntry<String, String> cookie) =>
-              cookie.key.trim().isNotEmpty && cookie.value.trim().isNotEmpty,
-        )
-        .map((MapEntry<String, String> cookie) {
-          final String value =
-              '${cookie.key}=${cookie.value}; path=/; max-age=2592000';
-          return 'document.cookie = ${jsonEncode(value)};';
-        })
-        .join('\n');
-    if (statements.isEmpty) {
-      return '';
-    }
-    return '(() => {$statements})();';
   }
 
   String _buildFetchScript(
@@ -162,6 +114,11 @@ class DesktopSearchApiBridge {
 (() => {
   const requestId = ${jsonEncode(requestId)};
   const requestUrl = ${jsonEncode(uri.toString())};
+  if (location.origin !== new URL(requestUrl).origin) {
+    chrome.webview.postMessage({kind: ${jsonEncode(_messageKind)}, requestId, error: '搜索来源域名发生变化'});
+    return;
+  }
+  ${SiteSession.cookieScript(SiteSession.parseCookieHeader(headers['Cookie'] ?? ''))}
   fetch(requestUrl, {
     method: 'GET',
     credentials: 'include',
@@ -169,16 +126,12 @@ class DesktopSearchApiBridge {
     headers: ${jsonEncode(browserHeaders)},
   })
     .then(async (response) => {
-      const entries = performance.getEntriesByName(requestUrl);
-      const protocol = entries.length === 0
-        ? ''
-        : String(entries[entries.length - 1].nextHopProtocol || '');
       chrome.webview.postMessage({
         kind: ${jsonEncode(_messageKind)},
         requestId,
         statusCode: response.status,
         body: await response.text(),
-        protocol,
+        ${kDebugMode ? "protocol: performance.getEntriesByName(requestUrl).slice(-1)[0]?.nextHopProtocol || ''," : ''}
       });
     })
     .catch((error) => {

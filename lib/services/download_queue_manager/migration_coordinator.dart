@@ -161,19 +161,13 @@ class DownloadMigrationCoordinator {
         return true;
       }
       await _storage.verifyMigrationSource(currentPreferences);
-      final String fromStorageKey = await _storage.storageKeyForPreferences(
-        currentPreferences,
-      );
-      final String toStorageKey = await _storage.storageKeyForPreferences(
-        nextPreferences,
-        verifyWritable: true,
-      );
       final PendingDownloadStorageMigration pendingMigration =
           PendingDownloadStorageMigration(
             from: currentPreferences,
             to: nextPreferences,
             createdAt: DateTime.now(),
-            storageKey: '$fromStorageKey->$toStorageKey',
+            storageKey:
+                '${fromState.storageIdentity}->${toState.storageIdentity}',
             phase: DownloadStorageMigrationStep.copying,
             resumeQueueAfterMigration: _queue.hasActiveDownloads,
           );
@@ -256,7 +250,13 @@ class DownloadMigrationCoordinator {
         }
         _checkActive();
         if (currentMigration.phase == DownloadStorageMigrationStep.switching) {
-          currentMigration = await _runMigrationSwitchPhase(currentMigration);
+          currentMigration = await _runMigrationSwitchPhase(
+            currentMigration,
+            // A saved switching phase can outlive either directory's contents.
+            verifySavedCopy:
+                pendingMigration.phase ==
+                DownloadStorageMigrationStep.switching,
+          );
         }
         _checkActive();
         if (currentMigration.phase == DownloadStorageMigrationStep.cleaning) {
@@ -375,19 +375,22 @@ class DownloadMigrationCoordinator {
   }
 
   Future<PendingDownloadStorageMigration> _runMigrationSwitchPhase(
-    PendingDownloadStorageMigration pendingMigration,
-  ) async {
+    PendingDownloadStorageMigration pendingMigration, {
+    required bool verifySavedCopy,
+  }) async {
     _checkActive();
     final DownloadStorageState toState = await _storage.resolveStorageState(
       preferences: pendingMigration.to,
       verifyWritable: true,
     );
     _requireReady(toState);
-    await _storage.verifyMigratedCache(
-      from: pendingMigration.from,
-      to: pendingMigration.to,
-      relativePaths: pendingMigration.copiedPaths!,
-    );
+    if (verifySavedCopy) {
+      await _storage.verifyMigratedCache(
+        from: pendingMigration.from,
+        to: pendingMigration.to,
+        relativePaths: pendingMigration.copiedPaths!,
+      );
+    }
     _checkActive();
     await _storage.copyCachedLibraryIndex(
       from: pendingMigration.from,

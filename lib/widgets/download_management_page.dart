@@ -127,6 +127,113 @@ class DownloadManagementPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    Widget content = CustomScrollView(
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+          sliver: SliverMainAxisGroup(
+            slivers: <Widget>[
+              SliverToBoxAdapter(
+                child: ListenableBuilder(
+                  listenable: Listenable.merge([
+                    queueListenable,
+                    queueLoadingListenable,
+                    storageBusyListenable,
+                    ChineseConverter.instance,
+                  ]),
+                  builder: (context, _) => _CurrentTaskSection(
+                    snapshot: queueListenable.value,
+                    isLoading: queueLoadingListenable.value,
+                    storageBusy: storageBusyListenable.value,
+                    onPauseQueue: onPauseQueue,
+                    onResumeQueue: onResumeQueue,
+                  ),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+              ValueListenableBuilder<List<CachedComicLibraryEntry>>(
+                valueListenable: cachedComicsListenable,
+                builder: (context, cachedComics, _) {
+                  final cachedKeys = _cachedComicKeys(cachedComics);
+                  return ListenableBuilder(
+                    listenable: Listenable.merge([
+                      queueListenable,
+                      queueLoadingListenable,
+                      ChineseConverter.instance,
+                    ]),
+                    builder: (context, _) => _QueueSection(
+                      snapshot: queueListenable.value,
+                      isLoading: queueLoadingListenable.value,
+                      cachedComicKeys: cachedKeys,
+                      onClearQueue: onClearQueue,
+                      onStopComicTasks: onStopComicTasks,
+                      onRemoveComic: onRemoveComic,
+                      onRemoveTask: onRemoveTask,
+                      onRetryTask: onRetryTask,
+                    ),
+                  );
+                },
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+              SliverToBoxAdapter(
+                child: ListenableBuilder(
+                  listenable: Listenable.merge([
+                    cachedComicsListenable,
+                    cachedComicsLoadingListenable,
+                    cachedComicsFailedListenable,
+                    storageBusyListenable,
+                    migrationProgressListenable,
+                    ChineseConverter.instance,
+                  ]),
+                  builder: (context, _) => _CachedLibrarySection(
+                    comics: cachedComicsListenable.value,
+                    isLoading: cachedComicsLoadingListenable.value,
+                    failed: cachedComicsFailedListenable.value,
+                    canExport:
+                        !storageBusyListenable.value &&
+                        migrationProgressListenable.value == null,
+                    onOpenCachedComic: (item) {
+                      Navigator.of(context).pop();
+                      onOpenCachedComic(item);
+                    },
+                    onDeleteCachedComic: onDeleteCachedComic,
+                    onExportComic: onExportComic,
+                  ),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+              SliverToBoxAdapter(
+                child: ListenableBuilder(
+                  listenable: Listenable.merge([
+                    storageStateListenable,
+                    storageBusyListenable,
+                    migrationProgressListenable,
+                  ]),
+                  builder: (context, _) => _StorageSection(
+                    state: storageStateListenable.value,
+                    busy: storageBusyListenable.value,
+                    migrationProgress: migrationProgressListenable.value,
+                    supportsCustomDirs: supportsCustomDirs,
+                    onPickStorageDirectory: onPickStorageDirectory,
+                    onResetStorageDirectory: onResetStorageDirectory,
+                    onRescanStorageDirectory: onRescanStorageDirectory,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (usesWideLayout(context)) {
+      content = Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 920),
+          child: content,
+        ),
+      );
+    }
     return Scaffold(
       backgroundColor: opaquePageBackground(context),
       appBar: AppBar(
@@ -150,84 +257,7 @@ class DownloadManagementPage extends StatelessWidget {
           const SizedBox(width: 8),
         ],
       ),
-      body: SafeArea(
-        child: ListenableBuilder(
-          listenable: Listenable.merge(<Listenable>[
-            queueListenable,
-            queueLoadingListenable,
-            storageStateListenable,
-            storageBusyListenable,
-            migrationProgressListenable,
-            cachedComicsListenable,
-            cachedComicsLoadingListenable,
-            cachedComicsFailedListenable,
-            ChineseConverter.instance,
-          ]),
-          builder: (BuildContext context, Widget? _) {
-            final DownloadQueueSnapshot snapshot = queueListenable.value;
-            final List<CachedComicLibraryEntry> cachedComics =
-                cachedComicsListenable.value;
-            Widget content = ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-              children: <Widget>[
-                _CurrentTaskSection(
-                  snapshot: snapshot,
-                  isLoading: queueLoadingListenable.value,
-                  storageBusy: storageBusyListenable.value,
-                  onPauseQueue: onPauseQueue,
-                  onResumeQueue: onResumeQueue,
-                ),
-                const SizedBox(height: 16),
-                _QueueSection(
-                  snapshot: snapshot,
-                  isLoading: queueLoadingListenable.value,
-                  cachedComicMap: _cachedComicMap(cachedComics),
-                  onClearQueue: onClearQueue,
-                  onStopComicTasks: onStopComicTasks,
-                  onRemoveComic: onRemoveComic,
-                  onRemoveTask: onRemoveTask,
-                  onRetryTask: onRetryTask,
-                ),
-                const SizedBox(height: 16),
-                _CachedLibrarySection(
-                  comics: cachedComics,
-                  isLoading: cachedComicsLoadingListenable.value,
-                  failed: cachedComicsFailedListenable.value,
-                  canExport:
-                      !storageBusyListenable.value &&
-                      migrationProgressListenable.value == null,
-                  onOpenCachedComic: (CachedComicLibraryEntry item) {
-                    Navigator.of(context).pop();
-                    onOpenCachedComic(item);
-                  },
-                  onDeleteCachedComic: onDeleteCachedComic,
-                  onExportComic: onExportComic,
-                ),
-                const SizedBox(height: 16),
-                _StorageSection(
-                  state: storageStateListenable.value,
-                  busy: storageBusyListenable.value,
-                  migrationProgress: migrationProgressListenable.value,
-                  supportsCustomDirs: supportsCustomDirs,
-                  onPickStorageDirectory: onPickStorageDirectory,
-                  onResetStorageDirectory: onResetStorageDirectory,
-                  onRescanStorageDirectory: onRescanStorageDirectory,
-                ),
-              ],
-            );
-            if (usesWideLayout(context)) {
-              content = Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 920),
-                  child: content,
-                ),
-              );
-            }
-            return content;
-          },
-        ),
-      ),
+      body: SafeArea(child: content),
     );
   }
 }

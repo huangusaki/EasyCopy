@@ -17,53 +17,19 @@ class AppSurfaceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final bool isLight = colorScheme.brightness == Brightness.light;
-    final bool isWideLayout = usesWideLayout(context);
-    final bool useGlassEffect =
-        isWideLayout &&
-        Theme.of(context).scaffoldBackgroundColor == Colors.transparent;
-
-    final Color cardColor = useGlassEffect
-        ? colorScheme.surface.withValues(alpha: 0.58)
-        : isLight
-        ? colorScheme.surfaceContainerLow
-        : colorScheme.surfaceContainerHigh;
-
+    final decoration = _surfaceDecoration(context);
     // InkWell 需要最近的 Material 层。
     return Material(
-      color: cardColor,
+      color: decoration.color,
       clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-        side: useGlassEffect
-            ? BorderSide(
-                color: colorScheme.outlineVariant.withValues(alpha: 0.22),
-                width: 1.2,
-              )
-            : BorderSide.none,
-      ),
+      shape: decoration.shape,
       child: Padding(
         padding: padding,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             if (title != null || action != null) ...<Widget>[
-              Row(
-                children: <Widget>[
-                  if (title != null)
-                    Expanded(
-                      child: Text(
-                        title!,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
-                  if (action != null) action!,
-                ],
-              ),
+              _SurfaceHeader(title: title, action: action),
               const SizedBox(height: 14),
             ],
             child,
@@ -72,6 +38,89 @@ class AppSurfaceCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SurfaceHeader extends StatelessWidget {
+  const _SurfaceHeader({this.title, this.action});
+  final String? title;
+  final Widget? action;
+  @override
+  Widget build(BuildContext context) => Row(
+    children: <Widget>[
+      if (title != null)
+        Expanded(
+          child: Text(
+            title!,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+        ),
+      if (action != null) action!,
+    ],
+  );
+}
+
+ShapeDecoration _surfaceDecoration(BuildContext context) {
+  final ColorScheme colorScheme = Theme.of(context).colorScheme;
+  final bool isLight = colorScheme.brightness == Brightness.light;
+  final bool isWideLayout = usesWideLayout(context);
+  final bool useGlassEffect =
+      isWideLayout &&
+      Theme.of(context).scaffoldBackgroundColor == Colors.transparent;
+
+  final Color cardColor = useGlassEffect
+      ? colorScheme.surface.withValues(alpha: 0.58)
+      : isLight
+      ? colorScheme.surfaceContainerLow
+      : colorScheme.surfaceContainerHigh;
+
+  return ShapeDecoration(
+    color: cardColor,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(24),
+      side: useGlassEffect
+          ? BorderSide(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.22),
+              width: 1.2,
+            )
+          : BorderSide.none,
+    ),
+  );
+}
+
+class AppSliverSurface extends StatelessWidget {
+  const AppSliverSurface({
+    required this.sliver,
+    this.title,
+    this.action,
+    this.padding = const EdgeInsets.all(18),
+    super.key,
+  });
+
+  final Widget sliver;
+  final String? title;
+  final Widget? action;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) => DecoratedSliver(
+    decoration: _surfaceDecoration(context),
+    sliver: SliverPadding(
+      padding: padding,
+      sliver: title == null && action == null
+          ? sliver
+          : SliverMainAxisGroup(
+              slivers: [
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: _SurfaceHeader(title: title, action: action),
+                  ),
+                ),
+                sliver,
+              ],
+            ),
+    ),
+  );
 }
 
 class SettingsSection extends StatelessWidget {
@@ -312,4 +361,30 @@ class _SelectItem<T> {
 
   final T value;
   final String label;
+}
+
+class NavigationSelectionPill extends StatelessWidget {
+  const NavigationSelectionPill({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[colorScheme.primary, colorScheme.secondary],
+        ),
+        shape: BoxShape.circle,
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: colorScheme.primary.withValues(alpha: 0.38),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+    );
+  }
 }

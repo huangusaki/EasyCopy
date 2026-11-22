@@ -37,6 +37,8 @@ class DownloadCleanupGuard {
   void reserve(DownloadCleanupScope scope) => _reservations.add(scope);
   void release(DownloadCleanupScope scope) => _reservations.remove(scope);
 
+  bool get hasReservations => _reservations.isNotEmpty;
+
   bool blocks({
     required String comicKey,
     required String comicPath,

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SliverConstraints;
 import 'package:reader/app_screen/models.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
@@ -24,13 +25,13 @@ class DetailChapterController {
   final VoidCallback onViewportInteraction;
   final void Function(VoidCallback mutation) onChanged;
 
-  final Map<String, GlobalKey> _itemKeys = <String, GlobalKey>{};
   final DeferredViewportCoordinator _autoScroll = DeferredViewportCoordinator();
 
   String _selectedTabKey = detailAllChapterTabKey;
   bool _sortAscending = false;
   String _routeKey = '';
   String _handledAutoScrollKey = '';
+  ({List<ChapterData> chapters, String lastRead})? _missingPosition;
 
   bool get sortAscending => _sortAscending;
 
@@ -49,11 +50,11 @@ class DetailChapterController {
       }
     }
     fallbackTab ??= tabs.isEmpty ? null : tabs.first;
-    final String? preferredTabKey = _preferredTabKey(page);
     if (forceReset || _routeKey != routeKey) {
       _routeKey = routeKey;
-      _itemKeys.clear();
+      final preferredTabKey = _preferredTabKey(page, tabs);
       _handledAutoScrollKey = '';
+      _missingPosition = null;
       _selectedTabKey =
           preferredTabKey ?? fallbackTab?.key ?? detailAllChapterTabKey;
       _sortAscending = isLocalComic(page.uri);
@@ -67,7 +68,7 @@ class DetailChapterController {
   }
 
   List<DetailChapterTabData> tabs(DetailPageData page) {
-    final List<ChapterData> allChapters = _chapterList(page);
+    final List<ChapterData> allChapters = page.allChapters;
     if (page.chapterGroups.isNotEmpty) {
       final bool hasAllGroup = page.chapterGroups.any(
         (ChapterGroupData group) => _isAllGroupLabel(group.label),
@@ -107,8 +108,7 @@ class DetailChapterController {
     ];
   }
 
-  DetailChapterTabData? activeTab(DetailPageData page) {
-    final List<DetailChapterTabData> tabs = this.tabs(page);
+  DetailChapterTabData? activeTab(List<DetailChapterTabData> tabs) {
     if (tabs.isEmpty) {
       return null;
     }
@@ -125,8 +125,10 @@ class DetailChapterController {
     return tabs.first;
   }
 
-  List<ChapterData> visibleChapters(DetailPageData page) {
-    final DetailChapterTabData? active = activeTab(page);
+  List<ChapterData> visibleChapters(
+    DetailPageData page,
+    DetailChapterTabData? active,
+  ) {
     if (active == null || active.chapters.isEmpty) {
       return const <ChapterData>[];
     }
@@ -168,52 +170,53 @@ class DetailChapterController {
     });
   }
 
-  GlobalKey itemKeyFor(String chapterPathKey) {
-    return _itemKeys.putIfAbsent(chapterPathKey, GlobalKey.new);
-  }
-
   void scheduleAutoPosition(
     DetailPageData page,
-    List<ChapterData> visibleChapters,
-    String lastReadChapterPathKey,
+    List<ChapterData> chapters,
+    String lastRead,
+    SliverConstraints constraints,
+    SliverGridDelegateWithFixedCrossAxisCount delegate,
+    ScrollController scroll,
   ) {
-    if (lastReadChapterPathKey.isEmpty) {
+    if (lastRead.isEmpty) return;
+    final signature = '${page.uri}::$lastRead';
+    final attempt = (chapters: chapters, lastRead: lastRead);
+    if (_handledAutoScrollKey == signature || _missingPosition == attempt) {
       return;
     }
-    final bool hasVisibleLastRead = visibleChapters.any(
-      (ChapterData chapter) =>
-          chapterPathKey(chapter.href) == lastReadChapterPathKey,
+    final index = chapters.indexWhere(
+      (chapter) => chapterPathKey(chapter.href) == lastRead,
     );
-    if (!hasVisibleLastRead) {
+    if (index < 0) {
+      _missingPosition = attempt;
       return;
     }
-    final String routeKey = AppConfig.routeKeyForUri(Uri.parse(page.uri));
-    final String signature = '$routeKey::$lastReadChapterPathKey';
-    if (_handledAutoScrollKey == signature) {
-      return;
-    }
-    final DeferredViewportTicket ticket = _autoScroll.beginRequest();
+    _missingPosition = null;
     _handledAutoScrollKey = signature;
+    final geometry = delegate
+        .getLayout(constraints)
+        .getGeometryForChildIndex(index);
+    final target =
+        constraints.precedingScrollExtent +
+        geometry.scrollOffset -
+        (constraints.viewportMainAxisExtent - geometry.mainAxisExtent) * 0.12;
+    final routeKey = AppConfig.routeKeyForUri(Uri.parse(page.uri));
+    final ticket = _autoScroll.beginRequest();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _ensureVisible(
-        lastReadChapterPathKey,
-        routeKey: routeKey,
-        attempts: 12,
-        ticket: ticket,
+      if (!scroll.hasClients ||
+          !_autoScroll.isActive(ticket) ||
+          !isActiveRoute(routeKey)) {
+        return;
+      }
+      final pos = scroll.position;
+      unawaited(
+        scroll.animateTo(
+          target.clamp(pos.minScrollExtent, pos.maxScrollExtent).toDouble(),
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+        ),
       );
     });
-  }
-
-  List<ChapterData> _chapterList(DetailPageData page) {
-    if (page.chapters.isNotEmpty) {
-      return page.chapters;
-    }
-    if (page.chapterGroups.isEmpty) {
-      return const <ChapterData>[];
-    }
-    return page.chapterGroups
-        .expand((ChapterGroupData group) => group.chapters)
-        .toList(growable: false);
   }
 
   bool _isAllGroupLabel(String label) {
@@ -244,12 +247,15 @@ class DetailChapterController {
     return label.trim();
   }
 
-  String? _preferredTabKey(DetailPageData page) {
+  String? _preferredTabKey(
+    DetailPageData page,
+    List<DetailChapterTabData> tabs,
+  ) {
     final String lastReadChapterPathKey = lastReadChapterKey(page);
     if (lastReadChapterPathKey.isEmpty) {
       return null;
     }
-    for (final DetailChapterTabData tab in tabs(page)) {
+    for (final DetailChapterTabData tab in tabs) {
       if (!tab.enabled) {
         continue;
       }
@@ -261,38 +267,5 @@ class DetailChapterController {
       }
     }
     return null;
-  }
-
-  void _ensureVisible(
-    String chapterPathKey, {
-    required String routeKey,
-    required int attempts,
-    required DeferredViewportTicket ticket,
-  }) {
-    if (!_autoScroll.isActive(ticket) || !isActiveRoute(routeKey)) {
-      return;
-    }
-    final BuildContext? targetContext =
-        _itemKeys[chapterPathKey]?.currentContext;
-    if (targetContext == null) {
-      if (attempts > 0) {
-        Future<void>.delayed(
-          const Duration(milliseconds: 100),
-          () => _ensureVisible(
-            chapterPathKey,
-            routeKey: routeKey,
-            attempts: attempts - 1,
-            ticket: ticket,
-          ),
-        );
-      }
-      return;
-    }
-    Scrollable.ensureVisible(
-      targetContext,
-      alignment: 0.12,
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-    );
   }
 }

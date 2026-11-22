@@ -22,13 +22,8 @@ class DesktopPageExtractor {
   static const String _bridgeBootstrap = '''
 (() => {
   window.easyCopyBridge = {
-    postMessage: (message) => {
-      try {
-        chrome.webview.postMessage(JSON.parse(message));
-      } catch (_) {
-        chrome.webview.postMessage(message);
-      }
-    },
+    acceptsObjects: true,
+    postMessage: (message) => chrome.webview.postMessage(message),
   };
 })();
 ''';
@@ -118,7 +113,8 @@ class DesktopPageExtractor {
     if (cookies.isEmpty) {
       return;
     }
-    final String fingerprint = _cookieFingerprint(cookies);
+    final origin = AppConfig.baseUri.origin;
+    final fingerprint = '$origin::${SiteSession.cookieFingerprint(cookies)}';
     if (fingerprint == _lastPrimedCookieFingerprint) {
       return;
     }
@@ -128,44 +124,22 @@ class DesktopPageExtractor {
             (LoadingState state) => state == LoadingState.navigationCompleted,
           )
           .timeout(const Duration(seconds: 8));
-      await controller.loadUrl(AppConfig.baseUri.toString());
+      await controller.loadUrl(origin);
       await loaded;
       if (generation != _cookieGeneration) return;
-      await controller.executeScript(_buildCookieScript(cookies));
-      if (generation == _cookieGeneration) {
+      final applied = await controller.executeScript("""
+        (() => {
+          if (location.origin !== ${jsonEncode(origin)}) return false;
+          ${SiteSession.cookieScript(cookies)}
+          return true;
+        })()
+      """);
+      if (applied == true && generation == _cookieGeneration) {
         _lastPrimedCookieFingerprint = fingerprint;
       }
     } catch (_) {
       return;
     }
-  }
-
-  String _cookieFingerprint(Map<String, String> cookies) {
-    final List<String> entries =
-        cookies.entries
-            .map(
-              (MapEntry<String, String> cookie) =>
-                  '${cookie.key}=${cookie.value}',
-            )
-            .toList()
-          ..sort();
-    return entries.join(';');
-  }
-
-  String _buildCookieScript(Map<String, String> cookies) {
-    final String statements = cookies.entries
-        .where(
-          (MapEntry<String, String> cookie) =>
-              cookie.key.trim().isNotEmpty && cookie.value.trim().isNotEmpty,
-        )
-        .map((MapEntry<String, String> cookie) {
-          // WebView2 进程重启会丢会话 Cookie。
-          final String value =
-              '${cookie.key}=${cookie.value}; path=/; max-age=2592000';
-          return 'document.cookie = ${jsonEncode(value)};';
-        })
-        .join('\n');
-    return '(() => {$statements})();';
   }
 
   void _handleMessage(

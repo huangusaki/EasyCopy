@@ -47,6 +47,11 @@ class _MobileSearchFieldState extends State<MobileSearchField>
       oldWidget.focusNode.removeListener(_syncHistory);
       widget.focusNode.addListener(_syncHistory);
     }
+    if (oldWidget.focusNode == widget.focusNode &&
+        oldWidget.history.isEmpty == widget.history.isEmpty &&
+        oldWidget.navigationKey == widget.navigationKey) {
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (oldWidget.navigationKey != widget.navigationKey) {
@@ -80,14 +85,10 @@ class _MobileSearchFieldState extends State<MobileSearchField>
     super.dispose();
   }
 
-  void _syncHistory() {
-    final bool show = widget.focusNode.hasFocus && widget.history.isNotEmpty;
-    if (show && !_overlay.isShowing) {
-      _overlay.show();
-    } else if (!show && _overlay.isShowing) {
-      _overlay.hide();
-    }
-  }
+  void _syncHistory() => syncSearchHistoryOverlay(
+    _overlay,
+    visible: widget.focusNode.hasFocus && widget.history.isNotEmpty,
+  );
 
   void _dismiss() {
     if (_overlay.isShowing) _overlay.hide();

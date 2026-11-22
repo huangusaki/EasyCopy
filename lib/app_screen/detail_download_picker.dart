@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:reader/app_screen/models.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/chinese_converter.dart';
 import 'package:reader/services/comic_download_service.dart';
@@ -8,7 +7,7 @@ import 'package:reader/services/uri_keys.dart';
 import 'package:reader/theme/app_theme.dart';
 
 class ChapterPathResolver {
-  const ChapterPathResolver(this._readerProgressStore);
+  ChapterPathResolver(this._readerProgressStore);
 
   final ReaderProgressStore _readerProgressStore;
 
@@ -20,11 +19,39 @@ class ChapterPathResolver {
     );
   }
 
+  String? _visitedCatalog;
+  int? _visitedRevision;
+  Set<String> _visited = const {};
   Set<String> visitedKeys(DetailPageData page) {
-    return _readerProgressStore
-        .visitedChapterPathKeysForCatalog(page.uri)
-        .map(pathKey)
-        .toSet();
+    final revision = _readerProgressStore.chapterRevision.value;
+    if (_visitedCatalog != page.uri || _visitedRevision != revision) {
+      _visitedCatalog = page.uri;
+      _visitedRevision = revision;
+      _visited = _readerProgressStore
+          .visitedChapterPathKeysForCatalog(page.uri)
+          .map(pathKey)
+          .toSet();
+    }
+    return _visited;
+  }
+
+  String? _downloadCatalog;
+  List<CachedComicLibraryEntry>? _library;
+  Set<String> _downloaded = const {};
+  Set<String> downloadedKeys(
+    DetailPageData page,
+    List<CachedComicLibraryEntry> comics,
+  ) {
+    if (_downloadCatalog != page.uri || !identical(comics, _library)) {
+      _downloadCatalog = page.uri;
+      _library = comics;
+      _downloaded = downloadedChapterKeysForDetail(
+        page,
+        cachedComics: comics,
+        chapterPathKey: pathKey,
+      );
+    }
+    return _downloaded;
   }
 }
 
@@ -51,44 +78,13 @@ Set<String> downloadedChapterKeysForDetail(
       .toSet();
 }
 
-List<ChapterPickerSection> chapterPickerSections(
-  DetailPageData page, {
-  required String Function(String href) chapterPathKey,
-}) {
-  final List<ChapterData> allChapters = page.chapters.isNotEmpty
-      ? page.chapters
-      : page.chapterGroups
-            .expand((ChapterGroupData group) => group.chapters)
-            .fold<Map<String, ChapterData>>(<String, ChapterData>{}, (
-              Map<String, ChapterData> chaptersByKey,
-              ChapterData chapter,
-            ) {
-              final String key = chapterPathKey(chapter.href);
-              if (key.isNotEmpty && !chaptersByKey.containsKey(key)) {
-                chaptersByKey[key] = chapter;
-              }
-              return chaptersByKey;
-            })
-            .values
-            .toList(growable: false);
-  if (allChapters.isEmpty) {
-    return const <ChapterPickerSection>[];
-  }
-  return <ChapterPickerSection>[
-    ChapterPickerSection(label: '全部章节', chapters: allChapters),
-  ];
-}
-
 Future<List<ChapterData>?> showDetailChapterDownloadPicker({
   required BuildContext context,
   required DetailPageData page,
   required Set<String> downloadedKeys,
   required String Function(String href) chapterPathKey,
 }) {
-  final List<ChapterPickerSection> sections = chapterPickerSections(
-    page,
-    chapterPathKey: chapterPathKey,
-  );
+  final chapters = page.allChapters;
   return showModalBottomSheet<List<ChapterData>>(
     context: context,
     isScrollControlled: true,
@@ -98,8 +94,7 @@ Future<List<ChapterData>?> showDetailChapterDownloadPicker({
       return StatefulBuilder(
         builder: (BuildContext context, StateSetter setModalState) {
           List<ChapterData> selectedChapterValues() {
-            return sections
-                .expand((ChapterPickerSection section) => section.chapters)
+            return chapters
                 .where(
                   (ChapterData chapter) =>
                       selectedKeys.contains(chapterPathKey(chapter.href)),
@@ -131,15 +126,10 @@ Future<List<ChapterData>?> showDetailChapterDownloadPicker({
                               selectedKeys
                                 ..clear()
                                 ..addAll(
-                                  sections
-                                      .expand(
-                                        (ChapterPickerSection section) =>
-                                            section.chapters,
-                                      )
-                                      .map(
-                                        (ChapterData chapter) =>
-                                            chapterPathKey(chapter.href),
-                                      ),
+                                  chapters.map(
+                                    (ChapterData chapter) =>
+                                        chapterPathKey(chapter.href),
+                                  ),
                                 );
                             });
                           },
@@ -158,69 +148,62 @@ Future<List<ChapterData>?> showDetailChapterDownloadPicker({
                       child: ListenableBuilder(
                         listenable: ChineseConverter.instance,
                         builder: (BuildContext context, Widget? _) {
-                          return ListView(
-                            shrinkWrap: true,
-                            children: sections
-                                .expand((ChapterPickerSection section) {
-                                  return <Widget>[
-                                    Padding(
-                                      padding: const EdgeInsets.fromLTRB(
-                                        4,
-                                        10,
-                                        4,
-                                        4,
-                                      ),
-                                      child: Text(
-                                        ChineseConverter.instance.convert(
-                                          section.label,
-                                        ),
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                                    ),
-                                    ...section.chapters.map((
-                                      ChapterData chapter,
-                                    ) {
-                                      final String key = chapterPathKey(
-                                        chapter.href,
-                                      );
-                                      final bool isDownloaded = downloadedKeys
-                                          .contains(key);
-                                      final bool selected = selectedKeys
-                                          .contains(key);
-                                      final Color downloadedColor = Theme.of(
-                                        context,
-                                      ).extension<AppSemanticColors>()!.success;
-                                      return CheckboxListTile(
-                                        value: selected,
-                                        controlAffinity:
-                                            ListTileControlAffinity.leading,
-                                        onChanged: (bool? nextValue) {
-                                          setModalState(() {
-                                            if (nextValue ?? false) {
-                                              selectedKeys.add(key);
-                                            } else {
-                                              selectedKeys.remove(key);
-                                            }
-                                          });
-                                        },
-                                        secondary: isDownloaded
-                                            ? Icon(
-                                                Icons.check_circle_rounded,
-                                                color: downloadedColor,
-                                              )
-                                            : null,
-                                        title: Text(
-                                          ChineseConverter.instance.convert(
-                                            chapter.label,
-                                          ),
-                                        ),
-                                      );
-                                    }),
-                                  ];
-                                })
-                                .toList(growable: false),
+                          return ListView.builder(
+                            itemCount: chapters.isEmpty
+                                ? 0
+                                : chapters.length + 1,
+                            itemBuilder: (context, i) {
+                              if (i == 0) {
+                                return Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    4,
+                                    10,
+                                    4,
+                                    4,
+                                  ),
+                                  child: Text(
+                                    '全部章节',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleSmall,
+                                  ),
+                                );
+                              }
+                              final chapter = chapters[i - 1];
+                              final String key = chapterPathKey(chapter.href);
+                              final bool isDownloaded = downloadedKeys.contains(
+                                key,
+                              );
+                              final bool selected = selectedKeys.contains(key);
+                              final Color downloadedColor = Theme.of(
+                                context,
+                              ).extension<AppSemanticColors>()!.success;
+                              return CheckboxListTile(
+                                value: selected,
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                onChanged: (bool? nextValue) {
+                                  setModalState(() {
+                                    if (nextValue ?? false) {
+                                      selectedKeys.add(key);
+                                    } else {
+                                      selectedKeys.remove(key);
+                                    }
+                                  });
+                                },
+                                secondary: isDownloaded
+                                    ? Icon(
+                                        Icons.check_circle_rounded,
+                                        color: downloadedColor,
+                                      )
+                                    : null,
+                                title: Text(
+                                  ChineseConverter.instance.convert(
+                                    chapter.label,
+                                  ),
+                                ),
+                              );
+                            },
                           );
                         },
                       ),

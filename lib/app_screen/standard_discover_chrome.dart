@@ -35,16 +35,7 @@ extension _AppScreenDiscoverChrome on _AppScreenState {
       href,
       currentUri: _currentUri,
     );
-    if (_currentEntry.routeKey == AppConfig.routeKeyForUri(targetUri)) {
-      return;
-    }
-    await _loadUri(
-      targetUri,
-      preserveVisiblePage: true,
-      historyMode: NavigationIntent.preserve,
-      targetTabIndexOverride: _nav.selectedIndex,
-    );
-    _movePagerToDiscoverList(targetUri);
+    await _openDiscoverPage(targetUri);
   }
 
   Future<void> _jumpDiscoverToPage(
@@ -65,6 +56,10 @@ extension _AppScreenDiscoverChrome on _AppScreenState {
       pager: page.pager,
       page: targetPage,
     );
+    await _openDiscoverPage(targetUri);
+  }
+
+  Future<void> _openDiscoverPage(Uri targetUri) async {
     if (_currentEntry.routeKey == AppConfig.routeKeyForUri(targetUri)) {
       return;
     }
@@ -95,15 +90,12 @@ extension _AppScreenDiscoverChrome on _AppScreenState {
     );
   }
 
-  GlobalKey<State<StatefulWidget>> _discoverListAnchorKey(
-    DiscoverPageData page,
-  ) {
-    final String routeKey = AppConfig.routeKeyForUri(Uri.parse(page.uri));
-    return _ui.discoverListAnchorKeys.putIfAbsent(
-      routeKey,
-      () => GlobalKey<State<StatefulWidget>>(
-        debugLabel: 'discover-list:$routeKey',
-      ),
-    );
+  GlobalKey _discoverListAnchorKey(DiscoverPageData page) {
+    final route = AppConfig.routeKeyForUri(Uri.parse(page.uri));
+    if (_ui.discoverAnchorRoute != route) {
+      _ui.discoverAnchorRoute = route;
+      _ui.discoverAnchor = GlobalKey(debugLabel: 'discover-list:$route');
+    }
+    return _ui.discoverAnchor!;
   }
 }

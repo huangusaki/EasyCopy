@@ -1,8 +1,9 @@
-import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:reader/services/persistence/serial_executor.dart';
 import 'package:reader/services/uri_keys.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 
@@ -146,9 +147,9 @@ class ReaderProgressStore {
   final sqflite.DatabaseFactory? _databaseFactory;
 
   Future<void>? _initialization;
-  Future<void> _writeQueue = Future<void>.value();
+  final SerialExecutor _writes = SerialExecutor();
   sqflite.Database? _database;
-  List<ReaderProgressEntry> _entries = <ReaderProgressEntry>[];
+  final Map<String, ReaderProgressEntry> _entries = {};
   final Map<String, Set<String>> _visitedChapters = <String, Set<String>>{};
   final ValueNotifier<int> chapterRevision = ValueNotifier<int>(0);
 
@@ -169,7 +170,7 @@ class ReaderProgressStore {
     if (comicPathKey.isEmpty || chapterPathKey.isEmpty) {
       return null;
     }
-    final ReaderProgressEntry? entry = _entryForComicPathKey(comicPathKey);
+    final ReaderProgressEntry? entry = _entries[comicPathKey];
     if (entry == null || entry.chapterPathKey != chapterPathKey) {
       return null;
     }
@@ -181,9 +182,7 @@ class ReaderProgressStore {
     if (targetComicPathKey.isEmpty) {
       return null;
     }
-    final ReaderProgressEntry? entry = _entryForComicPathKey(
-      targetComicPathKey,
-    );
+    final ReaderProgressEntry? entry = _entries[targetComicPathKey];
     if (entry == null || entry.chapterPathKey.isEmpty) {
       return null;
     }
@@ -191,7 +190,7 @@ class ReaderProgressStore {
   }
 
   Set<String> visitedChapterPathKeysForCatalog(String catalogHref) {
-    return Set<String>.unmodifiable(
+    return UnmodifiableSetView<String>(
       _visitedChapters[_pathKey(catalogHref)] ?? const <String>{},
     );
   }
@@ -209,11 +208,9 @@ class ReaderProgressStore {
     if (comicPathKey.isEmpty || chapterPathKey.isEmpty) {
       return;
     }
-    await _runWrite(() async {
+    await _writes.run(() async {
       final DateTime now = _now();
-      final ReaderProgressEntry? existingEntry = _entryForComicPathKey(
-        comicPathKey,
-      );
+      final ReaderProgressEntry? existingEntry = _entries[comicPathKey];
       final bool isSameChapter =
           existingEntry != null &&
           existingEntry.chapterPathKey == chapterPathKey;
@@ -250,11 +247,9 @@ class ReaderProgressStore {
       return;
     }
     final ReaderPosition normalizedPosition = _normalizePosition(position);
-    await _runWrite(() async {
+    await _writes.run(() async {
       final DateTime now = _now();
-      final ReaderProgressEntry? existingEntry = _entryForComicPathKey(
-        comicPathKey,
-      );
+      final ReaderProgressEntry? existingEntry = _entries[comicPathKey];
       final ReaderProgressEntry nextEntry = existingEntry != null
           ? existingEntry.copyWith(
               chapterPathKey: chapterPathKey,
@@ -277,7 +272,7 @@ class ReaderProgressStore {
     if (comicPathKey.isEmpty) {
       return;
     }
-    await _runWrite(() async {
+    await _writes.run(() async {
       await _database!.transaction((sqflite.Transaction transaction) async {
         for (final String table in <String>[_tableName, _visitedTableName]) {
           await transaction.delete(
@@ -287,24 +282,18 @@ class ReaderProgressStore {
           );
         }
       });
-      _entries.removeWhere(
-        (ReaderProgressEntry entry) => entry.comicPathKey == comicPathKey,
-      );
+      _entries.remove(comicPathKey);
       _visitedChapters.remove(comicPathKey);
       chapterRevision.value += 1;
     });
   }
 
   Future<void> close() async {
-    try {
-      await _writeQueue;
-    } catch (_) {
-      // 清理失败不影响后续流程。
-    }
+    await _writes.run(() {});
     final sqflite.Database? database = _database;
     _database = null;
     _initialization = null;
-    _entries = <ReaderProgressEntry>[];
+    _entries.clear();
     _visitedChapters.clear();
     if (database == null) {
       return;
@@ -316,31 +305,22 @@ class ReaderProgressStore {
     }
   }
 
-  ReaderProgressEntry? _entryForComicPathKey(String comicPathKey) {
-    final String normalizedComicPathKey = comicPathKey.trim();
-    if (normalizedComicPathKey.isEmpty) {
-      return null;
-    }
-    return _entries.cast<ReaderProgressEntry?>().firstWhere(
-      (ReaderProgressEntry? entry) =>
-          entry?.comicPathKey == normalizedComicPathKey,
-      orElse: () => null,
-    );
-  }
-
   Future<void> _initialize() async {
     final String path = await _databasePath();
     final sqflite.DatabaseFactory databaseFactory =
         _databaseFactory ?? sqflite.databaseFactory;
+    bool schemaChecked = false;
     _database = await databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
         version: 3,
         onCreate: (sqflite.Database db, int version) async {
           await _ensureDatabaseSchema(db);
+          schemaChecked = true;
         },
         onUpgrade: (sqflite.Database db, int oldVersion, int newVersion) async {
           await _ensureDatabaseSchema(db);
+          schemaChecked = true;
           await db.execute('''
             INSERT OR IGNORE INTO $_visitedTableName (comic_path_key, chapter_path_key)
             SELECT comic_path_key, chapter_path_key FROM $_tableName
@@ -348,17 +328,16 @@ class ReaderProgressStore {
           ''');
         },
         onOpen: (sqflite.Database db) async {
-          await _ensureDatabaseSchema(db);
+          if (!schemaChecked) await _ensureDatabaseSchema(db);
         },
       ),
     );
 
-    final List<Map<String, Object?>> rows = await _database!.query(
-      _tableName,
-      orderBy: 'updated_at DESC',
-    );
-    _entries = rows.map(ReaderProgressEntry.fromRow).toList(growable: true);
-    _sortEntries();
+    final List<Map<String, Object?>> rows = await _database!.query(_tableName);
+    for (final row in rows) {
+      final entry = ReaderProgressEntry.fromRow(row);
+      _entries[entry.comicPathKey] = entry;
+    }
     final List<Map<String, Object?>> visitedRows = await _database!.query(
       _visitedTableName,
     );
@@ -407,30 +386,9 @@ class ReaderProgressStore {
     return _pathKey(chapterHref);
   }
 
-  void _replaceEntry(ReaderProgressEntry nextEntry) {
-    final int existingIndex = _entries.indexWhere(
-      (ReaderProgressEntry entry) =>
-          entry.comicPathKey == nextEntry.comicPathKey,
-    );
-    if (existingIndex >= 0) {
-      _entries[existingIndex] = nextEntry;
-    } else {
-      _entries.add(nextEntry);
-    }
-    _sortEntries();
-  }
-
-  void _sortEntries() {
-    _entries.sort(
-      (ReaderProgressEntry left, ReaderProgressEntry right) =>
-          right.updatedAt.compareTo(left.updatedAt),
-    );
-  }
-
   Future<void> _persistEntry(ReaderProgressEntry entry) async {
     final bool chapterChanged =
-        _entryForComicPathKey(entry.comicPathKey)?.chapterPathKey !=
-        entry.chapterPathKey;
+        _entries[entry.comicPathKey]?.chapterPathKey != entry.chapterPathKey;
     final bool firstVisit =
         !(_visitedChapters[entry.comicPathKey]?.contains(
               entry.chapterPathKey,
@@ -449,29 +407,11 @@ class ReaderProgressStore {
         }, conflictAlgorithm: sqflite.ConflictAlgorithm.ignore);
       }
     });
-    _replaceEntry(entry);
+    _entries[entry.comicPathKey] = entry;
     _visitedChapters
         .putIfAbsent(entry.comicPathKey, () => <String>{})
         .add(entry.chapterPathKey);
     if (firstVisit || chapterChanged) chapterRevision.value += 1;
-  }
-
-  Future<T> _runWrite<T>(Future<T> Function() action) async {
-    final Future<void> previousWrite = _writeQueue;
-    final Completer<void> nextWrite = Completer<void>();
-    _writeQueue = nextWrite.future;
-    try {
-      try {
-        await previousWrite;
-      } catch (_) {
-        // 前一次写入失败也不能阻塞后续写入。
-      }
-      return await action();
-    } finally {
-      if (!nextWrite.isCompleted) {
-        nextWrite.complete();
-      }
-    }
   }
 
   Future<void> _ensureDatabaseSchema(sqflite.Database db) async {
@@ -489,19 +429,12 @@ class ReaderProgressStore {
       return;
     }
     await db.execute(_createTableStatement);
-    await db.execute('''
-      CREATE INDEX IF NOT EXISTS $_updatedAtIndexName
-      ON $_tableName (updated_at DESC)
-    ''');
+    await db.execute('DROP INDEX IF EXISTS $_updatedAtIndexName');
   }
 
   Future<void> _recreateDatabaseSchema(sqflite.Database db) async {
     await db.execute('DROP TABLE IF EXISTS $_tableName');
     await db.execute(_createTableStatement);
-    await db.execute('''
-      CREATE INDEX IF NOT EXISTS $_updatedAtIndexName
-      ON $_tableName (updated_at DESC)
-    ''');
   }
 
   Future<Set<String>> _tableColumns(sqflite.Database db) async {

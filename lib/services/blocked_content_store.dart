@@ -17,12 +17,6 @@ class BlockedContentStore {
 
   List<BlockedContentItem> get items => _libraryStore.blockedItems;
 
-  List<BlockedContentItem> itemsOfType(BlockedContentType type) {
-    return items
-        .where((BlockedContentItem item) => item.type == type)
-        .toList(growable: false);
-  }
-
   Future<void> blockComic({required String href, required String title}) async {
     final String key = UriKeys.rawPathKey(href);
     if (key.isEmpty) {
@@ -58,10 +52,6 @@ class BlockedContentStore {
 
   Future<void> unblock(BlockedContentItem item) {
     return _libraryStore.removeBlocked(item.type, item.key);
-  }
-
-  bool isBlocked(BlockedContentType type, String key) {
-    return _libraryStore.isBlocked(type, key);
   }
 
   static String normalizeLabel(String value) {

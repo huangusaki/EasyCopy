@@ -16,7 +16,6 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       '[load] background refresh start '
       'route=${requestContext.routeKey}',
     );
-    _markTabEntryLoading(requestContext);
     await refresh();
     perfLog('[load] background refresh done route=${requestContext.routeKey}');
   }
@@ -68,7 +67,6 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     required int targetTabIndex,
     required NavigationIntent intent,
     required bool preserveVisiblePage,
-    required NavigationRequestSourceKind sourceKind,
   }) {
     final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
     final int tabIndex = targetTabIndex;
@@ -76,9 +74,8 @@ extension _AppScreenPageLoadActions on _AppScreenState {
         _createNavigationRequestContext(
           targetUri,
           targetTabIndex: tabIndex,
-          intent: intent,
+
           preserveVisiblePage: preserveVisiblePage,
-          sourceKind: sourceKind,
         );
     final bool shouldActivateTab = shouldActivateTargetTab(
       currentSelectedIndex: _nav.selectedIndex,
@@ -180,9 +177,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
         _createNavigationRequestContext(
           targetUri,
           targetTabIndex: resolveNavigationTabIndex(targetUri),
-          intent: NavigationIntent.preserve,
           preserveVisiblePage: false,
-          sourceKind: NavigationRequestSourceKind.navigation,
         );
     final int loadId = ++_nav.activeLoadId;
     final StandardPageLoadHandle<SitePage> pendingLoad =
@@ -282,6 +277,8 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     int? targetTabIndex,
     bool switchToTab = true,
     Uri? visibleUri,
+    DateTime? validatedAt,
+    bool backgroundRefresh = false,
   }) {
     final SitePage resolvedPage = _pageForVisibleUri(page, visibleUri);
     final Uri pageUri = AppConfig.rewriteToCurrentHost(
@@ -297,6 +294,13 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     }
     final SitePage? previousPage =
         (switchToTab || tabIndex == _nav.selectedIndex) ? _page : null;
+    final keepsViewport =
+        backgroundRefresh &&
+        tabIndex == _nav.selectedIndex &&
+        previousPage != null &&
+        previousPage is! ReaderPageData &&
+        _currentEntry.routeKey == AppConfig.routeKeyForUri(pageUri);
+    if (keepsViewport) _scrollState.persistVisiblePageState();
 
     _mutateSessionState(() {
       if (switchToTab) {
@@ -304,6 +308,11 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       }
       _tabSessionStore.updatePage(tabIndex, resolvedPage);
       if (resolvedPage is DetailPageData) {
+        _navigationRepairer.rememberCatalog(
+          resolvedPage,
+          _authScopeForUri(pageUri),
+          validatedAt ?? DateTime.now(),
+        );
         _detailChapters.sync(
           resolvedPage,
           forceReset:
@@ -327,7 +336,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
         ),
       );
     }
-    if (resolvedPage is ReaderPageData) {
+    if (resolvedPage is ReaderPageData || keepsViewport) {
       return true;
     }
     final PrimaryTabRouteEntry entry = _tabSessionStore.currentEntry(tabIndex);
@@ -435,7 +444,6 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       targetTabIndex: resolvedTargetTabIndex,
       intent: historyMode,
       preserveVisiblePage: preserveVisiblePage,
-      sourceKind: NavigationRequestSourceKind.navigation,
     );
     if (isLocalComic(targetUri.toString())) {
       await _loadLocalComicPage(targetUri, requestContext: requestContext);
@@ -471,9 +479,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       } else {
         final bool openedFromCache = await _tryOpenCachedChapterReader(
           targetUri,
-          requestContext: requestContext.copyWith(
-            sourceKind: NavigationRequestSourceKind.cachedReader,
-          ),
+          requestContext: requestContext,
           context: cachedChapterContext,
         );
         if (openedFromCache) {
@@ -520,6 +526,7 @@ extension _AppScreenPageLoadActions on _AppScreenState {
           if (preparedPage == null || !preparation.isCurrent) return;
           _applyLoadedPage(
             preparedPage,
+            validatedAt: cachedHit.envelope.validatedAt,
             requestContext: requestContext,
             switchToTab: _shouldActivateAsyncResultTab(
               requestContext.targetTabIndex,
@@ -561,15 +568,13 @@ extension _AppScreenPageLoadActions on _AppScreenState {
           if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
             return;
           }
-          final NavigationRequestContext revalidateContext = requestContext
-              .copyWith(sourceKind: NavigationRequestSourceKind.revalidate);
           unawaited(
-            _runDeferredBackgroundRefresh(revalidateContext, () {
+            _runDeferredBackgroundRefresh(requestContext, () {
               return _revalidateCachedPage(
                 targetUri,
                 key: key,
                 cachedEntry: cachedHit.envelope,
-                requestContext: revalidateContext,
+                requestContext: requestContext,
                 preparation: preparation,
               );
             }),
@@ -691,9 +696,11 @@ extension _AppScreenPageLoadActions on _AppScreenState {
     required PagePreparation preparation,
     Uri? visibleUri,
   }) async {
+    if (!preparation.isCurrent) return;
+    final showLoading = !_pageRepository.renewsWithoutFetch(uri, cachedEntry);
+    if (showLoading) _markTabEntryLoading(requestContext);
     try {
-      if (!preparation.isCurrent) return;
-      await _pageRepository.revalidate(
+      final SitePage? refreshed = await _pageRepository.revalidate(
         uri,
         key: key,
         envelope: cachedEntry,
@@ -703,12 +710,8 @@ extension _AppScreenPageLoadActions on _AppScreenState {
         _recordDiscardedMutation(requestContext, phase: 'revalidate-complete');
         return;
       }
-      final CachedPageHit? refreshedHit = await _pageRepository.readCached(key);
-      if (!preparation.isCurrent) return;
-      if (refreshedHit != null) {
-        final SitePage? preparedPage = await preparation.prepare(
-          refreshedHit.page,
-        );
+      if (refreshed != null) {
+        final SitePage? preparedPage = await preparation.prepare(refreshed);
         if (preparedPage == null || !preparation.isCurrent) return;
         _applyLoadedPage(
           preparedPage,
@@ -717,14 +720,13 @@ extension _AppScreenPageLoadActions on _AppScreenState {
             requestContext.targetTabIndex,
           ),
           visibleUri: visibleUri,
+          backgroundRefresh: true,
         );
         return;
       }
-      _finishTabEntryLoading(requestContext);
-    } on SupersededPageLoadException {
-      _finishTabEntryLoading(requestContext);
+      if (showLoading) _finishTabEntryLoading(requestContext);
     } catch (_) {
-      _finishTabEntryLoading(requestContext);
+      if (showLoading) _finishTabEntryLoading(requestContext);
     }
   }
 
@@ -753,7 +755,6 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       targetTabIndex: profileTabIndex,
       intent: historyMode,
       preserveVisiblePage: preserveVisiblePage,
-      sourceKind: NavigationRequestSourceKind.profile,
     );
     // 先恢复会话，避免个人页按 guest 缓存。
     await _services.session.ensureInitialized();
@@ -862,15 +863,13 @@ extension _AppScreenPageLoadActions on _AppScreenState {
       if (!cachedHit.envelope.isSoftExpired(DateTime.now())) {
         return true;
       }
-      final NavigationRequestContext revalidateContext = requestContext
-          .copyWith(sourceKind: NavigationRequestSourceKind.revalidate);
       unawaited(
-        _runDeferredBackgroundRefresh(revalidateContext, () {
+        _runDeferredBackgroundRefresh(requestContext, () {
           return _revalidateCachedPage(
             targetUri,
             key: key,
             cachedEntry: cachedHit.envelope,
-            requestContext: revalidateContext,
+            requestContext: requestContext,
             preparation: preparation,
             visibleUri: targetUri,
           );

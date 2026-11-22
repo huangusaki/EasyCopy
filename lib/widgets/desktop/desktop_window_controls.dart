@@ -1,6 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+Future<void> toggleDesktopMaximize() async {
+  if (await windowManager.isMaximized()) {
+    await windowManager.unmaximize();
+  } else {
+    await windowManager.maximize();
+  }
+}
+
 class DesktopWindowControls extends StatefulWidget {
   const DesktopWindowControls({super.key});
 
@@ -46,33 +54,25 @@ class _DesktopWindowControlsState extends State<DesktopWindowControls>
     }
   }
 
-  Future<void> _toggleMaximize() async {
-    if (await windowManager.isMaximized()) {
-      await windowManager.unmaximize();
-    } else {
-      await windowManager.maximize();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        _CaptionButton(
+        DesktopTitleBarButton(
           tooltip: '最小化',
           icon: Icons.horizontal_rule_rounded,
           onTap: windowManager.minimize,
         ),
-        _CaptionButton(
+        DesktopTitleBarButton(
           tooltip: _isMaximized ? '向下还原' : '最大化',
           icon: _isMaximized
               ? Icons.filter_none_rounded
               : Icons.crop_square_rounded,
           iconSize: _isMaximized ? 13 : 15,
-          onTap: _toggleMaximize,
+          onTap: toggleDesktopMaximize,
         ),
-        _CaptionButton(
+        DesktopTitleBarButton(
           tooltip: '关闭',
           icon: Icons.close_rounded,
           isClose: true,
@@ -83,26 +83,31 @@ class _DesktopWindowControlsState extends State<DesktopWindowControls>
   }
 }
 
-class _CaptionButton extends StatefulWidget {
-  const _CaptionButton({
+class DesktopTitleBarButton extends StatefulWidget {
+  const DesktopTitleBarButton({
     required this.tooltip,
     required this.icon,
     required this.onTap,
     this.iconSize = 16,
     this.isClose = false,
+    this.foreground,
+    this.iconBuilder,
+    super.key,
   });
 
   final String tooltip;
   final IconData icon;
-  final Future<void> Function() onTap;
+  final VoidCallback? onTap;
+  final Color? foreground;
+  final Widget Function(Widget icon)? iconBuilder;
   final double iconSize;
   final bool isClose;
 
   @override
-  State<_CaptionButton> createState() => _CaptionButtonState();
+  State<DesktopTitleBarButton> createState() => _DesktopTitleBarButtonState();
 }
 
-class _CaptionButtonState extends State<_CaptionButton> {
+class _DesktopTitleBarButtonState extends State<DesktopTitleBarButton> {
   static const Color _closeHoverColor = Color(0xFFE81123);
 
   bool _isHovered = false;
@@ -111,12 +116,13 @@ class _CaptionButtonState extends State<_CaptionButton> {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
+    final bool enabled = widget.onTap != null;
     final Color background;
     if (widget.isClose && _isHovered) {
       background = _isPressed
           ? _closeHoverColor.withValues(alpha: 0.78)
           : _closeHoverColor;
-    } else if (_isHovered) {
+    } else if (_isHovered && enabled) {
       background = colorScheme.onSurface.withValues(
         alpha: _isPressed ? 0.14 : 0.08,
       );
@@ -125,12 +131,15 @@ class _CaptionButtonState extends State<_CaptionButton> {
     }
     final Color foreground = widget.isClose && _isHovered
         ? Colors.white
-        : colorScheme.onSurface.withValues(alpha: _isHovered ? 0.92 : 0.6);
+        : widget.foreground?.withValues(alpha: enabled ? 1 : .55) ??
+              colorScheme.onSurface.withValues(alpha: _isHovered ? 0.92 : 0.6);
+    final icon = Icon(widget.icon, size: widget.iconSize, color: foreground);
 
     return Tooltip(
       message: widget.tooltip,
       waitDuration: const Duration(milliseconds: 600),
       child: MouseRegion(
+        cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
         onEnter: (_) => setState(() => _isHovered = true),
         onExit: (_) => setState(() {
           _isHovered = false;
@@ -138,12 +147,14 @@ class _CaptionButtonState extends State<_CaptionButton> {
         }),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTapDown: (_) => setState(() => _isPressed = true),
+          onTapDown: !enabled ? null : (_) => setState(() => _isPressed = true),
           onTapCancel: () => setState(() => _isPressed = false),
-          onTap: () {
-            setState(() => _isPressed = false);
-            widget.onTap();
-          },
+          onTap: !enabled
+              ? null
+              : () {
+                  setState(() => _isPressed = false);
+                  widget.onTap!();
+                },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
             curve: Curves.easeOut,
@@ -154,7 +165,7 @@ class _CaptionButtonState extends State<_CaptionButton> {
               color: background,
               borderRadius: BorderRadius.circular(9),
             ),
-            child: Icon(widget.icon, size: widget.iconSize, color: foreground),
+            child: Center(child: widget.iconBuilder?.call(icon) ?? icon),
           ),
         ),
       ),

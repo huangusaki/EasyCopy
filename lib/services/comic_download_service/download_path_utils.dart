@@ -19,11 +19,7 @@ extension _DownloadPathUtils on ComicDownloadService {
   }
 
   String _sanitizePathSegment(String rawValue) {
-    final String normalized = rawValue
-        .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim()
-        .replaceAll(RegExp(r'[. ]+$'), '');
+    final String normalized = cleanComicPathSegment(rawValue);
     if (normalized.isEmpty) {
       return 'untitled';
     }
@@ -48,25 +44,6 @@ extension _DownloadPathUtils on ComicDownloadService {
 
   String _stringValue(Object? value) {
     return value is String ? value.trim() : '';
-  }
-
-  String _formatCachedChapterSubtitle(CachedChapterEntry chapter) {
-    final String timestamp = _formatDownloadedAt(chapter.downloadedAt);
-    if (timestamp.isEmpty) {
-      return '';
-    }
-    return '已缓存 $timestamp';
-  }
-
-  String _formatDownloadedAt(DateTime value) {
-    if (value == DateTime.fromMillisecondsSinceEpoch(0)) {
-      return '';
-    }
-    final String month = value.month.toString().padLeft(2, '0');
-    final String day = value.day.toString().padLeft(2, '0');
-    final String hour = value.hour.toString().padLeft(2, '0');
-    final String minute = value.minute.toString().padLeft(2, '0');
-    return '${value.year}-$month-$day $hour:$minute';
   }
 
   String _cachedComicDetailUri(CachedComicLibraryEntry entry) {

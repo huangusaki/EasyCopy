@@ -9,6 +9,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -26,7 +27,8 @@ class QuicHttpBridge(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor: ExecutorService = Executors.newCachedThreadPool()
     private val channel = MethodChannel(binaryMessenger, CHANNEL_NAME)
-    private val engine: CronetEngine by lazy { buildEngine() }
+    private val engine = lazy { runCatching { buildEngine() } }
+    private val active = ConcurrentHashMap<Int, UrlRequest>()
 
     init {
         channel.setMethodCallHandler(::handleMethodCall)
@@ -34,13 +36,18 @@ class QuicHttpBridge(
 
     fun dispose() {
         channel.setMethodCallHandler(null)
-        runCatching { engine.shutdown() }
+        active.values.forEach { it.cancel() }
+        if (engine.isInitialized()) runCatching { engine.value.getOrNull()?.shutdown() }
         executor.shutdownNow()
     }
 
     private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "request" -> executeRequest(call, result)
+            "cancel" -> {
+                (call.arguments as? Number)?.toInt()?.let { active[it]?.cancel() }
+                result.success(null)
+            }
             else -> result.notImplemented()
         }
     }
@@ -62,9 +69,12 @@ class QuicHttpBridge(
         val followRedirects = arguments["followRedirects"] as? Boolean ?: true
         val maxRedirects = (arguments["maxRedirects"] as? Number)?.toInt() ?: 5
 
+        val id = (arguments["id"] as Number).toInt()
         val callback =
             RequestCallback(
                 result = result,
+                debug = arguments["debug"] == true,
+                onDone = { active.remove(id) },
                 mainHandler = mainHandler,
                 followRedirects = followRedirects,
                 maxRedirects = maxRedirects.coerceAtLeast(0),
@@ -74,7 +84,7 @@ class QuicHttpBridge(
         // 一个畸形 URL 或非法 header 名不该让整个 App 永久丢掉 QUIC。
         val activeEngine =
             try {
-                engine
+                engine.value.getOrThrow()
             } catch (error: Throwable) {
                 result.error(ENGINE_UNAVAILABLE_CODE, error.message ?: error.toString(), null)
                 return
@@ -94,9 +104,10 @@ class QuicHttpBridge(
                 )
             }
             val request = builder.build()
-            callback.attach(request)
+            active[id] = request
             request.start()
         } catch (error: Throwable) {
+            active.remove(id)
             result.error("network_error", error.message ?: error.toString(), null)
         }
     }
@@ -133,18 +144,16 @@ class QuicHttpBridge(
 
     private class RequestCallback(
         private val result: MethodChannel.Result,
+        private val debug: Boolean,
+        private val onDone: () -> Unit,
         private val mainHandler: Handler,
         private val followRedirects: Boolean,
         private val maxRedirects: Int,
     ) : UrlRequest.Callback() {
         private val completed = AtomicBoolean(false)
         private val responseBytes = ByteArrayOutputStream()
+        private val scratch by lazy { ByteArray(BUFFER_SIZE) }
         private var redirectCount = 0
-        private var request: UrlRequest? = null
-
-        fun attach(request: UrlRequest) {
-            this.request = request
-        }
 
         override fun onRedirectReceived(
             request: UrlRequest,
@@ -170,9 +179,9 @@ class QuicHttpBridge(
             byteBuffer: ByteBuffer,
         ) {
             byteBuffer.flip()
-            val chunk = ByteArray(byteBuffer.remaining())
-            byteBuffer.get(chunk)
-            responseBytes.write(chunk)
+            val size = byteBuffer.remaining()
+            byteBuffer.get(scratch, 0, size)
+            responseBytes.write(scratch, 0, size)
             byteBuffer.clear()
             request.read(byteBuffer)
         }
@@ -190,7 +199,7 @@ class QuicHttpBridge(
         }
 
         override fun onCanceled(request: UrlRequest, info: UrlResponseInfo?) {
-            completeError("Request canceled.")
+            completeError("Request canceled.", "request_aborted")
         }
 
         private fun complete(info: UrlResponseInfo, body: ByteArray) {
@@ -198,23 +207,26 @@ class QuicHttpBridge(
                 return
             }
             val payload =
-                mapOf(
+                mutableMapOf<String, Any>(
                     "statusCode" to info.httpStatusCode,
                     "reasonPhrase" to info.httpStatusText,
                     "headers" to flattenHeaders(info),
                     "body" to body,
-                    "protocol" to info.negotiatedProtocol,
-                    "url" to info.url,
                 )
+            if (debug) {
+                payload["protocol"] = info.negotiatedProtocol
+                payload["url"] = info.url
+            }
+            onDone()
             mainHandler.post { result.success(payload) }
         }
 
-        private fun completeError(message: String) {
+        private fun completeError(message: String, code: String = "network_error") {
             if (!completed.compareAndSet(false, true)) {
                 return
             }
-            request?.cancel()
-            mainHandler.post { result.error("network_error", message, null) }
+            onDone()
+            mainHandler.post { result.error(code, message, null) }
         }
 
         private fun flattenHeaders(info: UrlResponseInfo): Map<String, String> {

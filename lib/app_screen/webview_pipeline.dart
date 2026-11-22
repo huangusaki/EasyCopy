@@ -201,7 +201,8 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
           },
           onPageFinished: (String _) async {
             final int loadId = _web.downloadActiveLoadId;
-            if (_web.downloadExtractionCompleter == null) {
+            final completer = _web.downloadExtractionCompleter;
+            if (completer == null) {
               _detachDownloadWebViewIfIdle();
               return;
             }
@@ -210,9 +211,12 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
                 buildPageExtractionScript(loadId),
               );
             } catch (error) {
-              _web.downloadExtractionCompleter?.completeError(error);
-              _web.downloadExtractionCompleter = null;
-              _detachDownloadWebViewIfIdle();
+              if (identical(_web.downloadExtractionCompleter, completer) &&
+                  !completer.isCompleted) {
+                completer.completeError(error);
+                _web.downloadExtractionCompleter = null;
+                _detachDownloadWebViewIfIdle();
+              }
             }
           },
           onWebResourceError: (WebResourceError error) {
@@ -229,7 +233,7 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
       );
   }
 
-  void _handleBridgeMessage(JavaScriptMessage message) {
+  Future<void> _handleBridgeMessage(JavaScriptMessage message) async {
     final StandardPageLoadHandle<SitePage>? pendingLoad = _pendingPageLoad;
     if (pendingLoad == null || pendingLoad.completer.isCompleted) {
       _detachPrimaryWebViewIfIdle();
@@ -251,7 +255,11 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
       }
 
       payload.remove('loadId');
-      final SitePage page = WebViewPagePayloadDecoder.restore(payload);
+      final SitePage page = await WebViewPagePayloadDecoder.restore(payload);
+      if (!_standardPageLoadController.isCurrent(pendingLoad) ||
+          pendingLoad.completer.isCompleted) {
+        return;
+      }
       final Uri pageUri = AppConfig.rewriteToCurrentHost(Uri.parse(page.uri));
       if (!pendingLoad.accepts(
         pageUri,
@@ -268,11 +276,14 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
       _standardPageLoadController.clear(pendingLoad);
       _detachPrimaryWebViewIfIdle();
     } catch (_) {
-      _failPendingPageLoad('转换数据解析失败。');
+      if (_standardPageLoadController.isCurrent(pendingLoad) &&
+          !pendingLoad.completer.isCompleted) {
+        _failPendingPageLoad('转换数据解析失败。');
+      }
     }
   }
 
-  void _handleDownloadBridgeMessage(JavaScriptMessage message) {
+  Future<void> _handleDownloadBridgeMessage(JavaScriptMessage message) async {
     final Completer<ReaderPageData>? completer =
         _web.downloadExtractionCompleter;
     if (completer == null || completer.isCompleted) {
@@ -295,39 +306,40 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
       }
 
       payload.remove('loadId');
-      final SitePage page = WebViewPagePayloadDecoder.restore(payload);
+      final SitePage page = await WebViewPagePayloadDecoder.restore(payload);
+      if (!identical(_web.downloadExtractionCompleter, completer) ||
+          completer.isCompleted) {
+        return;
+      }
       if (page is ReaderPageData) {
         completer.complete(page);
       } else {
         completer.completeError('章节解析失败');
       }
     } catch (error) {
-      completer.completeError(error);
+      if (identical(_web.downloadExtractionCompleter, completer) &&
+          !completer.isCompleted) {
+        completer.completeError(error);
+      }
     } finally {
-      _web.downloadExtractionCompleter = null;
-      _detachDownloadWebViewIfIdle();
+      if (identical(_web.downloadExtractionCompleter, completer) &&
+          completer.isCompleted) {
+        _web.downloadExtractionCompleter = null;
+        _detachDownloadWebViewIfIdle();
+      }
     }
   }
 
   Future<ReaderPageData> _extractDownloadPageWithWebView(Uri uri) async {
-    if (!PlatformCapabilities.usesMobileWebView) {
-      final SitePage page = await _services.desktopPageLoader(
-        AppConfig.rewriteToCurrentHost(uri),
-      );
-      if (page is ReaderPageData) {
-        return page;
-      }
-      throw StateError('章节解析失败');
-    }
     if (_web.downloadExtractionCompleter != null) {
       throw StateError('正在准备其他章节下载，请稍后再试。');
     }
-    await _syncHostCookies();
     final Completer<ReaderPageData> completer = Completer<ReaderPageData>();
     _web.downloadExtractionCompleter = completer;
     _web.downloadActiveLoadId += 1;
-    await _ensureDownloadWebViewAttached();
     try {
+      await _syncHostCookies();
+      await _ensureDownloadWebViewAttached();
       await _downloadWebViewController.loadRequest(
         AppConfig.rewriteToCurrentHost(uri),
       );
@@ -380,6 +392,7 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
     if (_web.isPrimaryWebViewAttached) {
       return;
     }
+    _controller ??= _buildController();
     _setPrimaryWebViewAttached(true);
     await WidgetsBinding.instance.endOfFrame;
   }
@@ -391,6 +404,7 @@ extension _AppScreenWebviewPipeline on _AppScreenState {
     if (_web.isDownloadWebViewAttached) {
       return;
     }
+    _downloadController ??= _buildDownloadController();
     _setDownloadWebViewAttached(true);
     await WidgetsBinding.instance.endOfFrame;
   }

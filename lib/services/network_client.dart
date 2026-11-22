@@ -37,7 +37,8 @@ class NetworkClient {
       label: label,
       uri: uri,
       maxRetries: maxRetries,
-      operation: () => client.get(uri, headers: headers).timeout(timeout),
+      operation: () =>
+          _send(client, 'GET', uri, headers: headers, timeout: timeout),
       shouldRetryResult: (http.Response response) =>
           _isRetryableStatus(response.statusCode),
       statusCodeForResult: (http.Response response) => response.statusCode,
@@ -57,8 +58,14 @@ class NetworkClient {
       label: label,
       uri: uri,
       maxRetries: maxRetries,
-      operation: () =>
-          client.post(uri, headers: headers, body: body).timeout(timeout),
+      operation: () => _send(
+        client,
+        'POST',
+        uri,
+        headers: headers,
+        body: body,
+        timeout: timeout,
+      ),
       shouldRetryResult: (http.Response response) =>
           _isRetryableStatus(response.statusCode),
       statusCodeForResult: (http.Response response) => response.statusCode,
@@ -67,34 +74,69 @@ class NetworkClient {
 
   static Future<NetworkResponseBytes> sendForBytes(
     http.Client client,
-    http.BaseRequest Function() requestFactory, {
+    Uri uri, {
+    required Map<String, String> headers,
     Duration timeout = htmlTimeout,
     int maxRetries = 1,
-    required Uri uri,
     String label = 'send',
-  }) {
-    return _withRetry<NetworkResponseBytes>(
+  }) async {
+    final response = await _withRetry<http.Response>(
       label: label,
       uri: uri,
       maxRetries: maxRetries,
-      operation: () async {
-        final http.StreamedResponse response = await client
-            .send(requestFactory())
-            .timeout(timeout);
-        final List<int> bytes = await response.stream.toBytes().timeout(
-          timeout,
-        );
-        return NetworkResponseBytes(
-          statusCode: response.statusCode,
-          headers: response.headers,
-          bytes: bytes,
-        );
-      },
-      shouldRetryResult: (NetworkResponseBytes response) =>
-          _isRetryableStatus(response.statusCode),
-      statusCodeForResult: (NetworkResponseBytes response) =>
-          response.statusCode,
+      operation: () => _send(
+        client,
+        'GET',
+        uri,
+        headers: headers,
+        timeout: timeout,
+        followRedirects: false,
+      ),
+      shouldRetryResult: (response) => _isRetryableStatus(response.statusCode),
+      statusCodeForResult: (response) => response.statusCode,
     );
+    return NetworkResponseBytes(
+      statusCode: response.statusCode,
+      headers: response.headers,
+      bytes: response.bodyBytes,
+    );
+  }
+
+  static Future<http.Response> _send(
+    http.Client client,
+    String method,
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+    required Duration timeout,
+    bool followRedirects = true,
+  }) {
+    final abort = Completer<void>();
+    final request = http.AbortableRequest(
+      method,
+      uri,
+      abortTrigger: abort.future,
+    )..followRedirects = followRedirects;
+    if (headers != null) request.headers.addAll(headers);
+    if (body is String) {
+      request.body = body;
+    } else if (body is List<int>) {
+      request.bodyBytes = body;
+    } else if (body is Map) {
+      request.bodyFields = body.cast<String, String>();
+    } else if (body != null) {
+      throw ArgumentError.value(body, 'body');
+    }
+    return client
+        .send(request)
+        .then(http.Response.fromStream)
+        .timeout(
+          timeout,
+          onTimeout: () {
+            abort.complete();
+            throw TimeoutException('Request timed out: $uri', timeout);
+          },
+        );
   }
 
   static Future<T> _withRetry<T>({

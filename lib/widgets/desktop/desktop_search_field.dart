@@ -51,6 +51,10 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
       _disposeFocusNode();
       _adoptFocusNode();
     }
+    if (oldWidget.focusNode == widget.focusNode &&
+        oldWidget.history.isEmpty == widget.history.isEmpty) {
+      return;
+    }
     // 避免在 build 阶段触碰 OverlayPortal。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -85,14 +89,10 @@ class _DesktopSearchFieldState extends State<DesktopSearchField> {
     setState(_syncFlyoutVisibility);
   }
 
-  void _syncFlyoutVisibility() {
-    final bool shouldShow = _isFocused && widget.history.isNotEmpty;
-    if (shouldShow && !_flyoutController.isShowing) {
-      _flyoutController.show();
-    } else if (!shouldShow && _flyoutController.isShowing) {
-      _flyoutController.hide();
-    }
-  }
+  void _syncFlyoutVisibility() => syncSearchHistoryOverlay(
+    _flyoutController,
+    visible: _isFocused && widget.history.isNotEmpty,
+  );
 
   void _submit(String value) {
     final String query = value.trim();

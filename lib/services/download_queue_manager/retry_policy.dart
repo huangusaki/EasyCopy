@@ -31,13 +31,11 @@ class DownloadRetryPolicy {
       autoRetryCount: count,
       nextRetryAt: retry ? now.add(delay) : null,
       clearNextRetryAt: !retry,
-      updatedAt: now,
     );
   }
 
   DownloadQueueTask queuedTask(
-    DownloadQueueTask task,
-    DateTime now, {
+    DownloadQueueTask task, {
     bool resetAttempts = false,
   }) {
     return task.copyWith(
@@ -48,7 +46,6 @@ class DownloadRetryPolicy {
       totalImages: 0,
       autoRetryCount: resetAttempts ? 0 : task.autoRetryCount,
       clearNextRetryAt: true,
-      updatedAt: now,
     );
   }
 }

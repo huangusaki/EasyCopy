@@ -115,6 +115,8 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // Android uses SQLiteDatabase via sqflite. Only desktop opens SQLite through Dart FFI.
+            excludes += "**/libsqlite3.so"
         }
     }
 

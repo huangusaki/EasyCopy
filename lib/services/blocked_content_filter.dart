@@ -4,14 +4,53 @@ import 'package:reader/services/blocked_content_store.dart';
 import 'package:reader/services/uri_keys.dart';
 
 class BlockedContentFilter {
-  const BlockedContentFilter(this.store);
+  BlockedContentFilter(this.store);
 
   final BlockedContentStore store;
 
+  List<BlockedContentItem>? _rules;
+  final Set<String> _comics = {};
+  final Set<String> _authorPaths = {};
+  final Set<String> _authorNames = {};
+  final Set<String> _namesWithoutPath = {};
+  SitePage? _lastPage;
+  SitePage? _lastView;
+
   SitePage apply(SitePage page) {
-    if (store.items.isEmpty) {
+    final rules = store.items;
+    if (!identical(rules, _rules)) {
+      _rules = rules;
+      _lastPage = _lastView = null;
+      _comics.clear();
+      _authorPaths.clear();
+      _authorNames.clear();
+      _namesWithoutPath.clear();
+      for (final rule in rules) {
+        if (rule.type == BlockedContentType.comic) {
+          _comics.add(rule.key);
+        } else {
+          final path = UriKeys.rawPathKey(rule.href);
+          final name = BlockedContentStore.normalizeLabel(rule.label);
+          if (path.isNotEmpty) _authorPaths.add(path);
+          if (name.isNotEmpty) {
+            _authorNames.add(name);
+            if (path.isEmpty) _namesWithoutPath.add(name);
+          }
+        }
+      }
+    }
+    if (rules.isEmpty) return page;
+    if (page is! HomePageData &&
+        page is! DiscoverPageData &&
+        page is! RankPageData) {
       return page;
     }
+    if (identical(_lastPage, page)) return _lastView!;
+    _lastPage = page;
+    return _lastView = _filter(page);
+  }
+
+  SitePage _filter(SitePage page) {
     switch (page) {
       case HomePageData home:
         final List<ComicSectionData> sections = home.sections
@@ -42,7 +81,9 @@ class BlockedContentFilter {
               .where(
                 (RankEntryData item) => !_isComicBlocked(
                   href: item.href,
-                  authors: authorLinksFromText(item.authors),
+                  authors: _hasAuthorRules
+                      ? authorLinksFromText(item.authors)
+                      : const [],
                 ),
               )
               .toList(growable: false),
@@ -58,41 +99,31 @@ class BlockedContentFilter {
   List<ComicCardData> _filterCards(List<ComicCardData> items) {
     return items
         .where(
-          (ComicCardData item) =>
-              !_isComicBlocked(href: item.href, authors: item.resolvedAuthors),
+          (ComicCardData item) => !_isComicBlocked(
+            href: item.href,
+            authors: _hasAuthorRules ? item.resolvedAuthors : const [],
+          ),
         )
         .toList(growable: false);
   }
+
+  bool get _hasAuthorRules =>
+      _authorPaths.isNotEmpty || _authorNames.isNotEmpty;
 
   bool _isComicBlocked({
     required String href,
     required List<LinkAction> authors,
   }) {
-    final String comicKey = UriKeys.rawPathKey(href);
-    if (comicKey.isNotEmpty &&
-        store.items.any(
-          (BlockedContentItem item) =>
-              item.type == BlockedContentType.comic && item.key == comicKey,
-        )) {
+    if (_comics.isNotEmpty && _comics.contains(UriKeys.rawPathKey(href))) {
       return true;
     }
-
-    for (final BlockedContentItem rule in store.items) {
-      if (rule.type != BlockedContentType.author) {
-        continue;
-      }
-      final String rulePath = UriKeys.rawPathKey(rule.href);
-      final String ruleName = BlockedContentStore.normalizeLabel(rule.label);
-      for (final LinkAction author in authors) {
-        final String authorPath = UriKeys.rawPathKey(author.href);
-        if (rulePath.isNotEmpty && authorPath.isNotEmpty) {
-          if (rulePath == authorPath) {
-            return true;
-          }
-        } else if (ruleName.isNotEmpty &&
-            ruleName == BlockedContentStore.normalizeLabel(author.label)) {
-          return true;
-        }
+    for (final author in authors) {
+      final path = UriKeys.rawPathKey(author.href);
+      if (path.isNotEmpty && _authorPaths.contains(path)) return true;
+      final names = path.isEmpty ? _authorNames : _namesWithoutPath;
+      if (names.isNotEmpty &&
+          names.contains(BlockedContentStore.normalizeLabel(author.label))) {
+        return true;
       }
     }
     return false;

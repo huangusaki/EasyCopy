@@ -209,15 +209,6 @@ class LocalLibraryStore {
     await _reloadBlockedItems(notify: true);
   }
 
-  bool isBlocked(BlockedContentType type, String key) {
-    final String normalizedKey = key.trim();
-    return normalizedKey.isNotEmpty &&
-        _blockedItems.any(
-          (BlockedContentItem item) =>
-              item.type == type && item.key == normalizedKey,
-        );
-  }
-
   Future<({List<BlockedContentItem> items, int total, int page})>
   readBlockedPage({required int page, int pageSize = 20}) async {
     await ensureInitialized();
@@ -298,13 +289,13 @@ class LocalLibraryStore {
           SELECT c.*
           FROM $_collectionsTable c
           LEFT JOIN $_historyTable h
-            ON h.scope = ? AND h.comic_path_key = c.comic_path_key
+            ON h.id = c.id
           WHERE c.scope = ?
           ORDER BY COALESCE(h.visited_at_ms, c.added_at_ms) DESC,
                    c.added_at_ms DESC
           LIMIT ? OFFSET ?
         ''',
-          <Object>[scope, scope, limit, offset],
+          <Object>[scope, limit, offset],
         );
       case ProfileCollectionSort.latestUpdate:
         return _database!.query(
@@ -439,17 +430,7 @@ class LocalLibraryStore {
     );
 
     final List<ProfileHistoryItem> items = rows
-        .map((Map<String, Object?> row) {
-          final int visitedAtMs = (row['visited_at_ms'] as num?)?.toInt() ?? 0;
-          return ProfileHistoryItem(
-            title: (row['title'] as String?)?.trim() ?? '',
-            coverUrl: (row['cover_url'] as String?)?.trim() ?? '',
-            comicHref: (row['comic_href'] as String?)?.trim() ?? '',
-            chapterLabel: (row['chapter_label'] as String?)?.trim() ?? '',
-            chapterHref: (row['chapter_href'] as String?)?.trim() ?? '',
-            visitedAt: visitedAtMs <= 0 ? '' : _formatTimestamp(visitedAtMs),
-          );
-        })
+        .map(_historyItem)
         .where((ProfileHistoryItem item) => item.title.isNotEmpty)
         .toList(growable: false);
 
@@ -472,7 +453,10 @@ class LocalLibraryStore {
     if (rows.isEmpty) {
       return null;
     }
-    final Map<String, Object?> row = rows.first;
+    return _historyItem(rows.first);
+  }
+
+  ProfileHistoryItem _historyItem(Map<String, Object?> row) {
     final int visitedAtMs = (row['visited_at_ms'] as num?)?.toInt() ?? 0;
     return ProfileHistoryItem(
       title: (row['title'] as String?)?.trim() ?? '',

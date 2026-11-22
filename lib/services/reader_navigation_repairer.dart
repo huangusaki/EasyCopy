@@ -1,24 +1,53 @@
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
 import 'package:reader/services/local_comic.dart';
-import 'package:reader/services/uri_keys.dart';
+import 'package:reader/services/page_cache_store.dart';
 
 typedef ReaderNavigationPageLoader =
     Future<ReaderPageData?> Function(Uri uri, {required String authScope});
+typedef RepairCatalog = ({DetailPageData page, DateTime validatedAt});
 typedef ReaderNavigationDetailLoader =
-    Future<DetailPageData?> Function(Uri uri, {required String authScope});
+    Future<RepairCatalog?> Function(Uri uri, {required String authScope});
 
 class ReaderNavigationRepairer {
-  const ReaderNavigationRepairer._();
+  DetailPageData? _catalog;
+  String? _scope;
+  DateTime? _expires;
 
-  static Future<ReaderPageData> repair(
+  void rememberCatalog(
+    DetailPageData page,
+    String authScope,
+    DateTime validatedAt,
+  ) {
+    _catalog = page;
+    _scope = authScope;
+    _expires = validatedAt.add(PageCachePolicy.detailPage.softTtl);
+  }
+
+  bool hasConfirmedNavigation(ReaderPageData page, String scope) {
+    final catalog = _catalog;
+    if (catalog == null ||
+        _scope != scope ||
+        !DateTime.now().isBefore(_expires!) ||
+        catalog.uri != page.catalogHref) {
+      return false;
+    }
+    final links = catalog.adjacentTo(page.uri);
+    return links != null &&
+        (page.prevHref.isNotEmpty || links.prevHref.isEmpty) &&
+        (page.nextHref.isNotEmpty || links.nextHref.isEmpty);
+  }
+
+  Future<ReaderPageData> repair(
     ReaderPageData page, {
     required String authScope,
     required ReaderNavigationPageLoader loadReaderPage,
     required ReaderNavigationDetailLoader loadDetailPage,
     String preferredCatalogHref = '',
   }) async {
-    if (isLocalComic(page.uri) || !page.hasMissingChapterNavigation) {
+    if (isLocalComic(page.uri) ||
+        !page.hasMissingChapterNavigation ||
+        hasConfirmedNavigation(page, authScope)) {
       return page;
     }
 
@@ -28,15 +57,20 @@ class ReaderNavigationRepairer {
     );
     if (detailUri != null) {
       try {
-        final DetailPageData? detailPage = await loadDetailPage(
-          detailUri,
-          authScope: authScope,
-        );
+        var detailPage = _catalog;
+        if (detailPage == null ||
+            _scope != authScope ||
+            !DateTime.now().isBefore(_expires!) ||
+            detailPage.uri != detailUri.toString() ||
+            detailPage.adjacentTo(page.uri) == null) {
+          final result = await loadDetailPage(detailUri, authScope: authScope);
+          detailPage = result?.page;
+          if (result != null) {
+            rememberCatalog(result.page, authScope, result.validatedAt);
+          }
+        }
         if (detailPage != null) {
-          final _AdjacentChapterLinks? links = _adjacentChapterLinks(
-            detailPage,
-            page.uri,
-          );
+          final links = detailPage.adjacentTo(page.uri);
           if (links != null) {
             return page.mergeMissingNavigation(
               prevHref: links.prevHref,
@@ -84,7 +118,7 @@ class ReaderNavigationRepairer {
         trimmed,
         currentUri: Uri.parse(page.uri),
       );
-      if (_isDetailUri(resolved)) {
+      if (AppConfig.isDetailCatalogUri(resolved)) {
         return resolved;
       }
     }
@@ -101,40 +135,4 @@ class ReaderNavigationRepairer {
       fragment: null,
     );
   }
-
-  static bool _isDetailUri(Uri uri) {
-    final String path = uri.path.toLowerCase();
-    return path.startsWith('/comic/') && !path.contains('/chapter/');
-  }
-
-  static _AdjacentChapterLinks? _adjacentChapterLinks(
-    DetailPageData page,
-    String currentChapterHref,
-  ) {
-    final List<ChapterData> chapters = page.chapters.isNotEmpty
-        ? page.chapters
-        : page.chapterGroups
-              .expand((ChapterGroupData group) => group.chapters)
-              .toList(growable: false);
-    final String currentKey = _chapterPathKey(currentChapterHref);
-    final int index = chapters.indexWhere(
-      (ChapterData chapter) => _chapterPathKey(chapter.href) == currentKey,
-    );
-    if (index == -1) {
-      return null;
-    }
-    return _AdjacentChapterLinks(
-      prevHref: index > 0 ? chapters[index - 1].href : '',
-      nextHref: index + 1 < chapters.length ? chapters[index + 1].href : '',
-    );
-  }
-
-  static String _chapterPathKey(String href) => UriKeys.pathKey(href);
-}
-
-class _AdjacentChapterLinks {
-  const _AdjacentChapterLinks({this.prevHref = '', this.nextHref = ''});
-
-  final String prevHref;
-  final String nextHref;
 }

@@ -4,8 +4,6 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
-import 'package:reader/services/blocked_content_filter.dart';
-import 'package:reader/services/blocked_content_store.dart';
 import 'package:reader/services/navigation_request_guard.dart';
 import 'package:reader/services/page_cache_store.dart';
 import 'package:reader/services/site_page_source.dart';
@@ -69,37 +67,31 @@ class PageRepository {
   PageRepository({
     PageCacheStore? cacheStore,
     required SitePageSource source,
-    BlockedContentStore? blockedContentStore,
     this.memoryCapacity = 48,
   }) : _cacheStore = cacheStore ?? PageCacheStore.instance,
        _source = source,
-       _blockedFilter = BlockedContentFilter(
-         blockedContentStore ?? BlockedContentStore.instance,
-       ),
        assert(memoryCapacity >= 0);
 
   final PageCacheStore _cacheStore;
   final SitePageSource _source;
-  final BlockedContentFilter _blockedFilter;
   final int memoryCapacity;
 
   final LinkedHashMap<PageQueryKey, CachedPageHit> _memoryCache =
       LinkedHashMap<PageQueryKey, CachedPageHit>();
   final Map<PageQueryKey, Future<SitePage>> _inFlightLoads =
       <PageQueryKey, Future<SitePage>>{};
-  final Map<PageQueryKey, Future<void>> _inFlightRevalidations =
-      <PageQueryKey, Future<void>>{};
+  final Map<PageQueryKey, Future<SitePage?>> _inFlightRevalidations =
+      <PageQueryKey, Future<SitePage?>>{};
   int _authenticatedGeneration = 0;
 
   Future<CachedPageHit?> readCached(PageQueryKey key) async {
-    await _blockedFilter.store.ensureInitialized();
     final int generation = _generationFor(key.authScope);
     final CachedPageHit? inMemory = _memoryCache.remove(key);
     if (inMemory != null &&
         _isSupportedCache(inMemory.envelope) &&
         !inMemory.envelope.isHardExpired(DateTime.now())) {
       _memoryCache[key] = inMemory.copyWith(fromMemory: true);
-      return _filteredHit(_memoryCache[key]!);
+      return _memoryCache[key]!;
     }
 
     final CachedPageEnvelope? envelope = await _cacheStore.read(
@@ -119,7 +111,7 @@ class PageRepository {
       envelope: envelope,
     );
     _putMemory(hit);
-    return _filteredHit(hit);
+    return hit;
   }
 
   Future<SitePage> loadFresh(
@@ -154,18 +146,18 @@ class PageRepository {
     }
   }
 
-  Future<void> revalidate(
+  Future<SitePage?> revalidate(
     Uri uri, {
     required PageQueryKey key,
     required CachedPageEnvelope envelope,
     NavigationRequestContext? requestContext,
   }) async {
-    final Future<void>? existing = _inFlightRevalidations[key];
+    final Future<SitePage?>? existing = _inFlightRevalidations[key];
     if (existing != null) {
       return existing;
     }
 
-    final Future<void> future = _revalidateInternal(
+    final Future<SitePage?> future = _revalidateInternal(
       AppConfig.rewriteToCurrentHost(uri),
       key: key,
       envelope: envelope,
@@ -175,7 +167,7 @@ class PageRepository {
     _inFlightRevalidations[key] = future;
 
     try {
-      await future;
+      return await future;
     } finally {
       _inFlightRevalidations.removeWhere(
         (pendingKey, pending) =>
@@ -223,14 +215,13 @@ class PageRepository {
     required int generation,
     NavigationRequestContext? requestContext,
   }) async {
-    await _blockedFilter.store.ensureInitialized();
     final SitePage page = await _source.load(
       uri,
       authScope: requestedKey.authScope,
       requestContext: requestContext,
     );
     if (generation != _generationFor(requestedKey.authScope)) {
-      return _blockedFilter.apply(page);
+      return page;
     }
 
     final PageQueryKey finalKey = PageQueryKey.forUri(
@@ -244,7 +235,7 @@ class PageRepository {
     );
     await _cacheStore.writeEnvelope(envelope);
     if (generation != _generationFor(requestedKey.authScope)) {
-      return _blockedFilter.apply(page);
+      return page;
     }
 
     final CachedPageHit hit = CachedPageHit(
@@ -256,21 +247,17 @@ class PageRepository {
     if (finalKey != requestedKey) {
       _memoryCache.remove(requestedKey);
     }
-    return _blockedFilter.apply(page);
+    return page;
   }
 
-  CachedPageHit _filteredHit(CachedPageHit hit) {
-    return hit.copyWith(page: _blockedFilter.apply(hit.page));
-  }
-
-  Future<void> _revalidateInternal(
+  Future<SitePage?> _revalidateInternal(
     Uri uri, {
     required PageQueryKey key,
     required CachedPageEnvelope envelope,
     required int generation,
     NavigationRequestContext? requestContext,
   }) async {
-    if (_canSkipNetworkRevalidate(uri, envelope: envelope)) {
+    if (renewsWithoutFetch(uri, envelope)) {
       await _cacheStore.refreshValidation(
         key.routeKey,
         authScope: key.authScope,
@@ -278,7 +265,7 @@ class PageRepository {
       if (generation == _generationFor(key.authScope)) {
         _refreshMemoryValidation(key);
       }
-      return;
+      return null;
     }
 
     // Use a single fresh request instead of probe + follow-up fetch.
@@ -288,21 +275,12 @@ class PageRepository {
       requestContext: requestContext,
     );
     if (generation != _generationFor(key.authScope)) {
-      return;
+      return null;
     }
-    final PageQueryKey finalKey = PageQueryKey.forUri(
-      Uri.parse(page.uri),
-      authScope: _authScopeForPage(page, key.authScope),
-    );
-    if (finalKey != key) {
-      _memoryCache.remove(key);
-    }
+    return page;
   }
 
-  bool _canSkipNetworkRevalidate(
-    Uri uri, {
-    required CachedPageEnvelope envelope,
-  }) {
+  bool renewsWithoutFetch(Uri uri, CachedPageEnvelope envelope) {
     // Reader content is effectively immutable after publish; avoid reloading
     // large chapter payloads on soft-expiry and just refresh local validation.
     return envelope.pageType == SitePageType.reader &&

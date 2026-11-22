@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -122,17 +123,19 @@ class CachedChapterLocatorStore {
     if (normalizedStorageKey.isEmpty || normalizedTargetPathKey.isEmpty) {
       return null;
     }
-    final List<Map<String, Object?>> rows = await _database!.query(
-      _tableName,
-      where:
-          'storage_key = ? AND (chapter_path_key = ? OR source_path_key = ?)',
-      whereArgs: <Object>[
+    final rows = await _database!.rawQuery(
+      '''
+      SELECT * FROM $_tableName WHERE storage_key = ? AND chapter_path_key = ?
+      UNION ALL
+      SELECT * FROM $_tableName WHERE storage_key = ? AND source_path_key = ?
+      ORDER BY downloaded_at DESC, updated_at DESC LIMIT 1
+    ''',
+      [
         normalizedStorageKey,
         normalizedTargetPathKey,
+        normalizedStorageKey,
         normalizedTargetPathKey,
       ],
-      orderBy: 'downloaded_at DESC, updated_at DESC',
-      limit: 1,
     );
     if (rows.isEmpty) {
       return null;
@@ -177,21 +180,34 @@ class CachedChapterLocatorStore {
     );
   }
 
-  Future<void> replaceStorage(
+  Future<void> writeLocators(
     String storageKey,
-    Iterable<CachedChapterLocator> locators,
-  ) async {
+    Iterable<CachedChapterLocator> locators, {
+    required bool replace,
+  }) async {
     await ensureInitialized();
     final String normalizedStorageKey = storageKey.trim();
     if (normalizedStorageKey.isEmpty) {
       return;
     }
     final sqflite.Batch batch = _database!.batch();
-    batch.delete(
-      _tableName,
-      where: 'storage_key = ?',
-      whereArgs: <Object>[normalizedStorageKey],
-    );
+    _queueLocators(batch, normalizedStorageKey, locators, replace: replace);
+    await batch.commit(noResult: true);
+  }
+
+  void _queueLocators(
+    sqflite.Batch batch,
+    String normalizedStorageKey,
+    Iterable<CachedChapterLocator> locators, {
+    required bool replace,
+  }) {
+    if (replace) {
+      batch.delete(
+        _tableName,
+        where: 'storage_key = ?',
+        whereArgs: <Object>[normalizedStorageKey],
+      );
+    }
     final DateTime now = _now();
     for (final CachedChapterLocator locator in locators) {
       final String directoryPath = locator.directoryPath.trim();
@@ -210,7 +226,6 @@ class CachedChapterLocatorStore {
         conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
       );
     }
-    await batch.commit(noResult: true);
   }
 
   Future<void> removeDirectoryPaths({
@@ -230,47 +245,79 @@ class CachedChapterLocatorStore {
     for (final String path in normalizedPaths) {
       batch.delete(
         _tableName,
-        where: 'storage_key = ? AND directory_path = ?',
-        whereArgs: <Object>[normalizedStorageKey, path],
+        where: 'id = ?',
+        whereArgs: <Object>[entryId(normalizedStorageKey, path)],
       );
     }
     await batch.commit(noResult: true);
   }
 
-  Future<void> removeComicDirectory({
-    required String storageKey,
-    required String comicRelativePath,
-  }) async {
+  Future<List<Map<String, Object?>>?> readLibrary(String key) async {
     await ensureInitialized();
-    final String normalizedStorageKey = storageKey.trim();
-    final String normalizedComicRelativePath = comicRelativePath.trim();
-    if (normalizedStorageKey.isEmpty || normalizedComicRelativePath.isEmpty) {
-      return;
-    }
-    await _database!.delete(
-      _tableName,
-      where:
-          'storage_key = ? AND (directory_path = ? OR directory_path LIKE ?)',
-      whereArgs: <Object>[
-        normalizedStorageKey,
-        normalizedComicRelativePath,
-        '$normalizedComicRelativePath/%',
-      ],
-    );
+    return _database!.transaction((tx) async {
+      final roots = await tx.query(
+        'library_roots',
+        columns: ['ordered_keys'],
+        where: 'storage_key=?',
+        whereArgs: [key],
+      );
+      if (roots.isEmpty) return null;
+      final keys = (jsonDecode(roots.single['ordered_keys'] as String) as List)
+          .cast<String>();
+      final rows = await tx.query(
+        'library_comics',
+        columns: ['comic_key', 'payload'],
+        where: 'storage_key=?',
+        whereArgs: [key],
+      );
+      final comics = {
+        for (final row in rows)
+          row['comic_key'] as String:
+              jsonDecode(row['payload'] as String) as Map<String, Object?>,
+      };
+      return [for (final id in keys) comics[id]!];
+    });
   }
 
-  Future<void> clear([String storageKey = '']) async {
+  Future<void> writeLibrary(
+    String key,
+    List<String> order,
+    Map<String, Map<String, Object?>> changed, {
+    required Iterable<String> removedKeys,
+    required bool replace,
+    Iterable<CachedChapterLocator> locators = const [],
+    bool replaceLocators = false,
+    Iterable<String> removedLocatorPaths = const [],
+  }) async {
     await ensureInitialized();
-    final String normalizedStorageKey = storageKey.trim();
-    if (normalizedStorageKey.isEmpty) {
-      await _database!.delete(_tableName);
-      return;
+    final batch = _database!.batch();
+    _queueLocators(batch, key, locators, replace: replaceLocators);
+    for (final path in removedLocatorPaths) {
+      batch.delete(_tableName, where: 'id=?', whereArgs: [entryId(key, path)]);
     }
-    await _database!.delete(
-      _tableName,
-      where: 'storage_key = ?',
-      whereArgs: <Object>[normalizedStorageKey],
-    );
+    if (replace) {
+      batch.delete('library_comics', where: 'storage_key=?', whereArgs: [key]);
+    } else {
+      for (final id in removedKeys) {
+        batch.delete(
+          'library_comics',
+          where: 'storage_key=? AND comic_key=?',
+          whereArgs: [key, id],
+        );
+      }
+    }
+    for (final entry in changed.entries) {
+      batch.insert('library_comics', {
+        'storage_key': key,
+        'comic_key': entry.key,
+        'payload': jsonEncode(entry.value),
+      }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
+    }
+    batch.insert('library_roots', {
+      'storage_key': key,
+      'ordered_keys': jsonEncode(order),
+    }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
+    await batch.commit(noResult: true);
   }
 
   Future<void> close() async {
@@ -309,16 +356,15 @@ class CachedChapterLocatorStore {
               updated_at TEXT NOT NULL
             )
           ''');
-          await db.execute('''
-            CREATE INDEX idx_cached_chapter_locator_storage_chapter_path
-            ON $_tableName (storage_key, chapter_path_key)
-          ''');
-          await db.execute('''
-            CREATE INDEX idx_cached_chapter_locator_storage_source_path
-            ON $_tableName (storage_key, source_path_key)
-          ''');
         },
         onOpen: (sqflite.Database db) async {
+          await db.execute(
+            'CREATE TABLE IF NOT EXISTS library_roots(storage_key TEXT PRIMARY KEY, ordered_keys TEXT NOT NULL)',
+          );
+          await db.execute(
+            'CREATE TABLE IF NOT EXISTS library_comics(storage_key TEXT NOT NULL,comic_key TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(storage_key,comic_key))',
+          );
+
           await db.execute('''
             CREATE INDEX IF NOT EXISTS idx_cached_chapter_locator_storage_chapter_path
             ON $_tableName (storage_key, chapter_path_key)

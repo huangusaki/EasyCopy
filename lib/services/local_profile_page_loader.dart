@@ -13,8 +13,6 @@ class LocalProfilePageLoader {
        _apiClient = apiClient ?? SiteApiClient.instance,
        _session = session ?? SiteSession.instance;
 
-  static final LocalProfilePageLoader instance = LocalProfilePageLoader();
-
   final LocalLibraryStore _libraryStore;
   final SiteApiClient _apiClient;
   final SiteSession _session;
@@ -194,32 +192,12 @@ class LocalProfilePageLoader {
     final int totalPages = (normalizedTotalItems / normalizedPageSize)
         .ceil()
         .clamp(1, 999999);
-    final String unit = switch (view) {
-      ProfileSubview.collections => '部',
-      ProfileSubview.history => '条',
-      _ => '条',
-    };
-    return PagerData(
-      currentLabel: '$normalizedPage',
-      totalLabel: '共$totalPages页 · $normalizedTotalItems$unit',
-      prevHref: normalizedPage > 1
-          ? AppConfig.buildProfileUri(
-              view: view,
-              page: normalizedPage - 1,
-              collectionSort: view == ProfileSubview.collections
-                  ? collectionSort
-                  : null,
-            ).toString()
-          : '',
-      nextHref: normalizedPage < totalPages
-          ? AppConfig.buildProfileUri(
-              view: view,
-              page: normalizedPage + 1,
-              collectionSort: view == ProfileSubview.collections
-                  ? collectionSort
-                  : null,
-            ).toString()
-          : '',
+    return AppConfig.buildProfilePager(
+      view: view,
+      currentPage: normalizedPage,
+      totalPages: totalPages,
+      totalItems: normalizedTotalItems,
+      collectionSort: collectionSort,
     );
   }
 }

@@ -323,61 +323,37 @@ enum _QueueMenuAction { retry, removeCurrent, removeQueue, removeQueueAndCache }
 enum _CachedMenuAction { export, delete }
 
 class _QueuedComicGroup {
-  const _QueuedComicGroup({required this.task, required this.tasks});
+  _QueuedComicGroup(this.task);
 
   final DownloadQueueTask task;
-  final List<DownloadQueueTask> tasks;
+  DownloadQueueTask? activeTask;
+  DownloadQueueTask? failedTask;
+  int taskCount = 0;
+  int queuedCount = 0;
+  int failedCount = 0;
 
-  int get taskCount => tasks.length;
-
-  DownloadQueueTask? get activeTask {
-    return tasks.cast<DownloadQueueTask?>().firstWhere(
-      (DownloadQueueTask? task) =>
-          task != null &&
-          (task.status == DownloadQueueTaskStatus.downloading ||
-              task.status == DownloadQueueTaskStatus.parsing),
-      orElse: () => null,
-    );
-  }
-
-  DownloadQueueTask? get failedTask {
-    return tasks.cast<DownloadQueueTask?>().firstWhere(
-      (DownloadQueueTask? task) =>
-          task?.status == DownloadQueueTaskStatus.failed,
-      orElse: () => null,
-    );
-  }
-
-  DownloadQueueTask? get singleTask => tasks.length == 1 ? tasks.first : null;
-
-  DownloadQueueTaskStatus get status {
-    if (activeTask != null) {
-      return activeTask!.status;
+  void add(DownloadQueueTask value) {
+    taskCount++;
+    switch (value.status) {
+      case DownloadQueueTaskStatus.queued:
+        queuedCount++;
+      case DownloadQueueTaskStatus.parsing:
+      case DownloadQueueTaskStatus.downloading:
+        activeTask ??= value;
+      case DownloadQueueTaskStatus.failed:
+        failedTask ??= value;
+        failedCount++;
+      case DownloadQueueTaskStatus.paused:
+        break;
     }
-    if (failedTask != null) {
-      return DownloadQueueTaskStatus.failed;
-    }
-    return tasks.first.status;
   }
 
-  String get primaryChapterLabel {
-    final DownloadQueueTask referenceTask = activeTask ?? failedTask ?? task;
-    return referenceTask.chapterLabel;
-  }
+  DownloadQueueTask? get singleTask => taskCount == 1 ? task : null;
+  DownloadQueueTask get primaryTask => activeTask ?? failedTask ?? task;
+  DownloadQueueTaskStatus get status => primaryTask.status;
+  String get primaryChapterLabel => primaryTask.chapterLabel;
 
   String get summary {
-    final int queuedCount = tasks
-        .where(
-          (DownloadQueueTask item) =>
-              item.status == DownloadQueueTaskStatus.queued,
-        )
-        .length;
-    final int failedCount = tasks
-        .where(
-          (DownloadQueueTask item) =>
-              item.status == DownloadQueueTaskStatus.failed,
-        )
-        .length;
     final List<String> fragments = <String>[];
     if (queuedCount > 0) {
       fragments.add('$queuedCount 话等待中');
@@ -390,37 +366,28 @@ class _QueuedComicGroup {
       fragments.insert(0, runningTask.progressLabel);
     }
     if (fragments.isEmpty) {
-      return '${tasks.length} 话待处理';
+      return '$taskCount 话待处理';
     }
     return fragments.join(' · ');
   }
 }
 
 List<_QueuedComicGroup> _groupQueue(List<DownloadQueueTask> tasks) {
-  final Map<String, List<DownloadQueueTask>> grouped =
-      <String, List<DownloadQueueTask>>{};
-  for (final DownloadQueueTask task in tasks) {
-    grouped.putIfAbsent(task.comicKey, () => <DownloadQueueTask>[]).add(task);
+  final grouped = <String, _QueuedComicGroup>{};
+  for (final task in tasks) {
+    grouped.putIfAbsent(task.comicKey, () => _QueuedComicGroup(task)).add(task);
   }
-  return grouped.entries
-      .map(
-        (MapEntry<String, List<DownloadQueueTask>> entry) =>
-            _QueuedComicGroup(task: entry.value.first, tasks: entry.value),
-      )
-      .toList(growable: false);
+  return grouped.values.toList(growable: false);
 }
 
-Map<String, CachedComicLibraryEntry> _cachedComicMap(
-  List<CachedComicLibraryEntry> comics,
-) {
-  final Map<String, CachedComicLibraryEntry> result =
-      <String, CachedComicLibraryEntry>{};
+Set<String> _cachedComicKeys(List<CachedComicLibraryEntry> comics) {
+  final result = <String>{};
   for (final CachedComicLibraryEntry entry in comics) {
     final Uri? uri = Uri.tryParse(entry.comicHref);
     if (uri == null) {
       continue;
     }
-    result[Uri(path: uri.path).toString()] = entry;
+    result.add(Uri(path: uri.path).toString());
   }
   return result;
 }

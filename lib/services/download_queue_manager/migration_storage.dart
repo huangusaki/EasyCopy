@@ -8,10 +8,6 @@ abstract interface class DownloadMigrationStorage {
     DownloadPreferences? preferences,
     bool verifyWritable = true,
   });
-  Future<String> storageKeyForPreferences(
-    DownloadPreferences preferences, {
-    bool verifyWritable = false,
-  });
   Future<void> verifyMigrationSource(DownloadPreferences preferences);
   Future<List<String>> migrateCacheRoot({
     required DownloadPreferences from,
@@ -45,14 +41,6 @@ class ComicDownloadMigrationStorage implements DownloadMigrationStorage {
     bool verifyWritable = true,
   }) => service.resolveStorageState(
     preferences: preferences,
-    verifyWritable: verifyWritable,
-  );
-  @override
-  Future<String> storageKeyForPreferences(
-    DownloadPreferences preferences, {
-    bool verifyWritable = false,
-  }) => service.storageKeyForPreferences(
-    preferences,
     verifyWritable: verifyWritable,
   );
   @override

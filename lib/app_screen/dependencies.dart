@@ -156,7 +156,6 @@ class AppScreenServices {
   }) {
     return PageRepository(
       cacheStore: pageCacheStore,
-      blockedContentStore: blockedContentStore,
       source: RoutedSitePageSource(
         apiClient: siteApiClient,
         profileLoader: localProfilePageLoader.loadProfile,

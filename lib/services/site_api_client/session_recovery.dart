@@ -13,12 +13,19 @@ extension _SiteApiSessionRecovery on SiteApiClient {
     if (_session.generation != generation) throw _SessionChangedException();
   }
 
-  Future<http.Response> _withSessionRecovery(
-    Future<http.Response> Function() send,
-  ) async {
+  Future<({int statusCode, Map<String, Object?>? payload})>
+  _withSessionRecovery(Future<http.Response> Function() send) async {
     final int generation = _session.generation;
     final String? token = _session.token;
-    final http.Response response = await send();
+    Future<({int statusCode, Map<String, Object?>? payload})> fetch() async {
+      final response = await send();
+      return (
+        statusCode: response.statusCode,
+        payload: _tryDecodeJsonMap(response),
+      );
+    }
+
+    final response = await fetch();
     _checkSessionGeneration(generation);
     if (!_isExpiredResponse(response)) return response;
 
@@ -29,16 +36,18 @@ extension _SiteApiSessionRecovery on SiteApiClient {
     _checkSessionGeneration(generation);
     if (!recovered) throw _SessionExpiredException();
 
-    final http.Response retried = await send();
+    final retried = await fetch();
     _checkSessionGeneration(generation);
     if (_isExpiredResponse(retried)) throw _SessionExpiredException();
     return retried;
   }
 
-  bool _isExpiredResponse(http.Response response) {
+  bool _isExpiredResponse(
+    ({int statusCode, Map<String, Object?>? payload}) response,
+  ) {
     if (response.statusCode == 401 || response.statusCode == 403) return true;
     if (response.statusCode < 200 || response.statusCode >= 300) return false;
-    final Object? code = _tryDecodeJsonMap(response)?['code'];
+    final Object? code = response.payload?['code'];
     return code == 401 || code == 403;
   }
 

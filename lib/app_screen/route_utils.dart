@@ -16,11 +16,6 @@ bool isReaderChapterUri(Uri uri) {
   return uri.path.toLowerCase().contains('/chapter/');
 }
 
-bool isDetailCatalogUri(Uri uri) {
-  final String path = uri.path.toLowerCase();
-  return path.startsWith('/comic/') && !path.contains('/chapter/');
-}
-
 bool isPrimaryDiscoverUri(Uri uri) {
   final String path = uri.path.toLowerCase();
   return path.startsWith('/comics') ||

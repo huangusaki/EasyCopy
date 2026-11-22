@@ -320,34 +320,19 @@ extension _AppScreenStandardMode on _AppScreenState {
     );
   }
 
-  Widget _hPaddedBox(Widget child) {
-    return SliverLayoutBuilder(
-      builder: (BuildContext context, constraints) {
-        return SliverPadding(
-          padding: standardContentPadding(context),
-          sliver: SliverToBoxAdapter(child: child),
-        );
-      },
-    );
-  }
+  Widget _hPaddedBox(Widget child) =>
+      _hPaddedSliver(SliverToBoxAdapter(child: child));
 
-  Widget _hPaddedSliver(Widget sliver) {
-    return SliverLayoutBuilder(
-      builder: (BuildContext context, constraints) {
-        return SliverPadding(
-          padding: standardContentPadding(context),
-          sliver: sliver,
-        );
-      },
-    );
-  }
+  Widget _hPaddedSliver(Widget sliver) =>
+      SliverPadding(padding: standardContentPadding(context), sliver: sliver);
 
   List<Widget> _buildStandardBodySlivers(BuildContext context) {
     final List<Widget> slivers = <Widget>[
       const SliverToBoxAdapter(child: SizedBox(height: 16)),
     ];
 
-    if (_errorMessage != null && _page == null) {
+    final SitePage? rawPage = _page;
+    if (_errorMessage != null && rawPage == null) {
       slivers.addAll(_buildErrorSections(context));
       slivers.add(_buildBottomInsetSliver(context));
       return slivers;
@@ -355,10 +340,10 @@ extension _AppScreenStandardMode on _AppScreenState {
 
     slivers.addAll(_buildStandardTopContent(context));
 
-    if (_page == null) {
+    if (rawPage == null) {
       slivers.addAll(_buildLoadingSections(context));
     } else {
-      final SitePage page = _page!;
+      final SitePage page = _displayFilter.apply(rawPage);
       if (page is HomePageData) {
         slivers.addAll(_buildHomeSections(page));
       } else if (page is DiscoverPageData) {

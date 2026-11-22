@@ -65,9 +65,21 @@ class DocumentTreeEntry {
   final bool isDirectory;
   final int size;
 
-  factory DocumentTreeEntry.fromMap(Map<Object?, Object?> map) {
+  factory DocumentTreeEntry.fromMap(
+    Map<Object?, Object?> map, {
+    String rootPrefix = '',
+  }) {
+    final path = ((map['relativePath'] as String?)?.trim() ?? '').replaceAll(
+      r'\',
+      '/',
+    );
+    final relative = rootPrefix.isNotEmpty && path.startsWith('$rootPrefix/')
+        ? path.substring(rootPrefix.length + 1)
+        : path == rootPrefix
+        ? ''
+        : path;
     return DocumentTreeEntry(
-      relativePath: (map['relativePath'] as String?)?.trim() ?? '',
+      relativePath: relative,
       name: (map['name'] as String?)?.trim() ?? '',
       isDirectory: (map['isDirectory'] as bool?) ?? false,
       size: ((map['size'] as num?) ?? 0).round(),
@@ -322,10 +334,21 @@ class AndroidDocumentTreeBridge {
     return rawBytes ?? Uint8List(0);
   }
 
+  Future<void> stageFile({
+    required String treeUri,
+    required String relativePath,
+    required String destinationPath,
+  }) => _methodChannel.invokeMethod<void>('stageFile', {
+    'treeUri': treeUri,
+    'relativePath': relativePath,
+    'destinationPath': destinationPath,
+  });
+
   Future<List<DocumentTreeEntry>> listEntries({
     required String treeUri,
     String relativePath = '',
     bool recursive = false,
+    String rootPrefix = '',
   }) async {
     final List<Object?> rawEntries =
         await _methodChannel.invokeListMethod<Object?>(
@@ -339,7 +362,8 @@ class AndroidDocumentTreeBridge {
         const <Object?>[];
     return rawEntries
         .whereType<Map<Object?, Object?>>()
-        .map(DocumentTreeEntry.fromMap)
+        .map((row) => DocumentTreeEntry.fromMap(row, rootPrefix: rootPrefix))
+        .where((entry) => entry.relativePath.isNotEmpty)
         .toList(growable: false);
   }
 
@@ -357,26 +381,10 @@ class AndroidDocumentTreeBridge {
   Future<bool> deletePath({
     required String treeUri,
     required String relativePath,
-    DocumentTreeProgressCallback? onProgress,
-  }) async {
-    final String? operationId = onProgress == null
-        ? null
-        : _allocateOperationId();
-    if (operationId != null) {
-      _progressCallbacks[operationId] = onProgress!;
-    }
-    try {
-      return await _methodChannel
-              .invokeMethod<bool>('deletePath', <String, Object?>{
-                'treeUri': treeUri,
-                'relativePath': relativePath,
-                if (operationId != null) 'operationId': operationId,
-              }) ??
-          false;
-    } finally {
-      if (operationId != null) {
-        _progressCallbacks.remove(operationId);
-      }
-    }
-  }
+  }) async =>
+      await _methodChannel.invokeMethod<bool>('deletePath', {
+        'treeUri': treeUri,
+        'relativePath': relativePath,
+      }) ??
+      false;
 }

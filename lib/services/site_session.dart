@@ -4,13 +4,10 @@ import 'package:crypto/crypto.dart';
 import 'package:reader/services/key_value_store.dart';
 import 'package:reader/services/persistence/serial_executor.dart';
 
-typedef SessionNowProvider = DateTime Function();
-
 class SiteSessionSnapshot {
   const SiteSessionSnapshot({
     required this.token,
     required this.cookies,
-    required this.updatedAt,
     this.userId,
   });
 
@@ -24,46 +21,38 @@ class SiteSessionSnapshot {
                 (Object? key, Object? value) =>
                     MapEntry(key.toString(), value?.toString() ?? ''),
               ),
-      updatedAt:
-          DateTime.tryParse((json['updatedAt'] as String?) ?? '') ??
-          DateTime.fromMillisecondsSinceEpoch(0),
       userId: json['userId'] as String?,
     );
   }
 
   final String token;
   final Map<String, String> cookies;
-  final DateTime updatedAt;
   final String? userId;
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'token': token,
       'cookies': cookies,
-      'updatedAt': updatedAt.toIso8601String(),
       'userId': userId,
     };
   }
 }
 
 class SiteSession {
-  SiteSession({KeyValueStore? store, SessionNowProvider? now})
-    : _store = store ?? SecureKeyValueStore(),
-      _now = now ?? DateTime.now;
+  SiteSession({KeyValueStore? store}) : _store = store ?? SecureKeyValueStore();
 
   static final SiteSession instance = SiteSession();
 
   static const String _sessionKey = 'easy_copy.session';
 
   final KeyValueStore _store;
-  final SessionNowProvider _now;
   final SerialExecutor _writes = SerialExecutor();
 
   Future<void>? _initialization;
   int _generation = 0;
   String? _token;
   String? _userId;
-  Map<String, String> _cookies = <String, String>{};
+  Map<String, String> _cookies = const {};
 
   Future<void> ensureInitialized() {
     return _initialization ??= _initialize().catchError((
@@ -83,9 +72,10 @@ class SiteSession {
 
   bool get isAuthenticated => (_token ?? '').isNotEmpty;
 
-  Map<String, String> get cookies => Map<String, String>.unmodifiable(_cookies);
+  Map<String, String> get cookies => _cookies;
 
-  String get cookieHeader => _cookies.entries
+  String? _cookieHeader;
+  String get cookieHeader => _cookieHeader ??= _cookies.entries
       .where((MapEntry<String, String> entry) => entry.value.trim().isNotEmpty)
       .map((MapEntry<String, String> entry) => '${entry.key}=${entry.value}')
       .join('; ');
@@ -104,12 +94,12 @@ class SiteSession {
     await ensureInitialized();
     _generation += 1;
     _userId = null;
-    _cookies = <String, String>{};
     _token = token;
-    _cookies = <String, String>{
+    _cookieHeader = null;
+    _cookies = Map.unmodifiable({
       if (cookies != null) ...cookies,
       'token': token,
-    };
+    });
     await _persist();
   }
 
@@ -125,7 +115,8 @@ class SiteSession {
       return false;
     }
     _token = token;
-    _cookies = <String, String>{...cookies, 'token': token};
+    _cookieHeader = null;
+    _cookies = Map.unmodifiable({...cookies, 'token': token});
     await _persist();
     return _generation == expectedGeneration;
   }
@@ -133,22 +124,9 @@ class SiteSession {
   Future<void> bindUserId(String? userId, {int? expectedGeneration}) async {
     await ensureInitialized();
     if (expectedGeneration != null && _generation != expectedGeneration) return;
-    _userId = (userId ?? '').trim().isEmpty ? null : userId?.trim();
-    await _persist();
-  }
-
-  Future<void> updateFromCookieHeader(String cookieHeader) async {
-    await ensureInitialized();
-    final Map<String, String> parsedCookies = parseCookieHeader(cookieHeader);
-    if (parsedCookies.isEmpty) {
-      return;
-    }
-    _cookies = <String, String>{..._cookies, ...parsedCookies};
-    final String? nextToken = parsedCookies['token'];
-    if ((nextToken ?? '').isNotEmpty) {
-      if (_token != nextToken) _generation += 1;
-      _token = nextToken;
-    }
+    final String? next = (userId ?? '').trim().isEmpty ? null : userId!.trim();
+    if (_userId == next) return;
+    _userId = next;
     await _persist();
   }
 
@@ -156,7 +134,8 @@ class SiteSession {
     _generation += 1;
     _token = null;
     _userId = null;
-    _cookies = <String, String>{};
+    _cookieHeader = null;
+    _cookies = const {};
     await _writes.run(() => _store.delete(_sessionKey));
   }
 
@@ -176,7 +155,8 @@ class SiteSession {
         ),
       );
       _token = snapshot.token.isEmpty ? null : snapshot.token;
-      _cookies = snapshot.cookies;
+      _cookies = Map.unmodifiable(snapshot.cookies);
+      _cookieHeader = null;
       _userId = snapshot.userId;
     } catch (_) {
       // Ignore corrupted session storage.
@@ -187,11 +167,38 @@ class SiteSession {
     final SiteSessionSnapshot snapshot = SiteSessionSnapshot(
       token: _token ?? '',
       cookies: _cookies,
-      updatedAt: _now(),
       userId: _userId,
     );
     final String encoded = jsonEncode(snapshot.toJson());
     await _writes.run(() => _store.write(_sessionKey, encoded));
+  }
+
+  static String cookieFingerprint(Map<String, String> cookies) {
+    final List<String> entries =
+        cookies.entries
+            .map(
+              (MapEntry<String, String> cookie) =>
+                  '${cookie.key}=${cookie.value}',
+            )
+            .toList()
+          ..sort();
+    return entries.join(';');
+  }
+
+  static String cookieScript(Map<String, String> cookies) {
+    final String statements = cookies.entries
+        .where(
+          (MapEntry<String, String> cookie) =>
+              cookie.key.trim().isNotEmpty && cookie.value.trim().isNotEmpty,
+        )
+        .map((MapEntry<String, String> cookie) {
+          // WebView2 进程重启会丢会话 Cookie。
+          final String value =
+              '${cookie.key}=${cookie.value}; path=/; max-age=2592000';
+          return 'document.cookie = ${jsonEncode(value)};';
+        })
+        .join('\n');
+    return '(() => {$statements})();';
   }
 
   static Map<String, String> parseCookieHeader(String cookieHeader) {

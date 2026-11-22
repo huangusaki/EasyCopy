@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -25,36 +24,23 @@ class WallpaperStorage {
   final WallpaperDirectoryProvider _directoryProvider;
 
   Directory? _cachedWallpaperDir;
-  final Completer<Directory> _wallpaperDirReady = Completer<Directory>();
-  bool _resolutionStarted = false;
+  Future<Directory>? _directoryTask;
 
-  Future<Directory> _resolveWallpaperDir() async {
-    final Directory? cached = _cachedWallpaperDir;
-    if (cached != null) {
-      return cached;
+  Future<Directory> _resolveWallpaperDir() =>
+      _directoryTask ??= _openDirectory();
+
+  Future<Directory> _openDirectory() async {
+    try {
+      final root = await _directoryProvider();
+      final directory = Directory(
+        '${root.path}${Platform.pathSeparator}$_wallpaperDirName',
+      );
+      _cachedWallpaperDir = await directory.create(recursive: true);
+      return directory;
+    } catch (_) {
+      _directoryTask = null;
+      rethrow;
     }
-    if (!_resolutionStarted) {
-      _resolutionStarted = true;
-      try {
-        final Directory root = await _directoryProvider();
-        final Directory wallpaperDir = Directory(
-          '${root.path}${Platform.pathSeparator}$_wallpaperDirName',
-        );
-        if (!await wallpaperDir.exists()) {
-          await wallpaperDir.create(recursive: true);
-        }
-        _cachedWallpaperDir = wallpaperDir;
-        if (!_wallpaperDirReady.isCompleted) {
-          _wallpaperDirReady.complete(wallpaperDir);
-        }
-      } catch (error, stackTrace) {
-        if (!_wallpaperDirReady.isCompleted) {
-          _wallpaperDirReady.completeError(error, stackTrace);
-        }
-        rethrow;
-      }
-    }
-    return _wallpaperDirReady.future;
   }
 
   Future<void> ensureReady() async {
@@ -70,15 +56,6 @@ class WallpaperStorage {
     final Directory? dir = _cachedWallpaperDir;
     if (dir == null) {
       return null;
-    }
-    return '${dir.path}${Platform.pathSeparator}$trimmed';
-  }
-
-  Future<String> resolvePath(String fileName) async {
-    final Directory dir = await _resolveWallpaperDir();
-    final String trimmed = fileName.trim();
-    if (trimmed.isEmpty) {
-      return dir.path;
     }
     return '${dir.path}${Platform.pathSeparator}$trimmed';
   }

@@ -29,8 +29,8 @@ class AppScreenUiState {
   );
 
   double bottomBarScrollAccumulator = 0;
-  final Map<String, GlobalKey<State<StatefulWidget>>> discoverListAnchorKeys =
-      <String, GlobalKey<State<StatefulWidget>>>{};
+  String? discoverAnchorRoute;
+  GlobalKey? discoverAnchor;
   final GlobalKey<ReaderScreenState> readerScreenKey =
       GlobalKey<ReaderScreenState>();
 

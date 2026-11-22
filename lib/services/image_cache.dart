@@ -9,32 +9,40 @@ const int readerPrefetchLimit = 10;
 const int readerPriorityPrefetchLimit = 2;
 const int readerPrefetchConcurrency = 5;
 
-List<String> readerPrefetchUrlsAfter(
-  List<String> urls, {
-  required int currentIndex,
-}) {
-  if (urls.isEmpty) {
-    return const <String>[];
-  }
-  final int startIndex = (currentIndex + 1).clamp(0, urls.length);
-  final List<String> selected = <String>[];
-  final Set<String> seen = <String>{};
-  for (
-    int index = startIndex;
-    index < urls.length && selected.length < readerPrefetchLimit;
-    index++
-  ) {
-    final String normalizedUrl = urls[index].trim();
-    final Uri? uri = Uri.tryParse(normalizedUrl);
-    if (normalizedUrl.isEmpty ||
-        uri == null ||
-        (uri.scheme != 'http' && uri.scheme != 'https') ||
-        !seen.add(normalizedUrl)) {
-      continue;
+/// An ordered index for one chapter, including mixed local and remote images.
+class ReaderPrefetchIndex {
+  ReaderPrefetchIndex(List<String> urls) {
+    for (int i = 0; i < urls.length; i++) {
+      final url = urls[i].trim();
+      final scheme = Uri.tryParse(url)?.scheme;
+      if (scheme == 'http' || scheme == 'https') _remote.add((i, url));
     }
-    selected.add(normalizedUrl);
   }
-  return selected;
+
+  final List<(int, String)> _remote = [];
+  bool get isEmpty => _remote.isEmpty;
+
+  List<String> after(int currentIndex) {
+    int low = 0;
+    int high = _remote.length;
+    while (low < high) {
+      final mid = (low + high) ~/ 2;
+      if (_remote[mid].$1 <= currentIndex) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    final selected = <String>{};
+    for (
+      int i = low;
+      i < _remote.length && selected.length < readerPrefetchLimit;
+      i++
+    ) {
+      selected.add(_remote[i].$2);
+    }
+    return selected.toList(growable: false);
+  }
 }
 
 class AppImageCaches {
@@ -158,9 +166,9 @@ class AppImageCaches {
 
   static Future<void> _runReaderPrefetch(_ReaderPrefetchRequest request) async {
     try {
-      await readerCache.downloadFile(
+      await readerCache.getSingleFile(
         request.url,
-        authHeaders: readerImageHeaders(request.referer),
+        headers: readerImageHeaders(request.referer),
       );
     } catch (_) {
       return;

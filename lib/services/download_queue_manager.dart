@@ -72,8 +72,7 @@ class DownloadQueueManager implements DownloadMigrationQueue {
 
   final DownloadCleanupGuard _cleanupGuard = DownloadCleanupGuard();
   final List<_PendingQueueCleanup> _deferredCleanups = <_PendingQueueCleanup>[];
-  final Map<String, int> _taskGenerations = <String, int>{};
-  int _nextGeneration = 0;
+  _QueueTaskExecutionHost? _activeLease;
   bool _isProcessingQueue = false;
   bool _disposed = false;
   DownloadQueueTask? _runningTask;
@@ -86,8 +85,6 @@ class DownloadQueueManager implements DownloadMigrationQueue {
   @override
   bool get hasActiveDownloads => snapshot.isNotEmpty && !snapshot.isPaused;
 
-  DownloadStorageState get storageState => storageStateNotifier.value;
-
   bool get supportsCustomStorageSelection =>
       _downloadService.supportsCustomStorageSelection;
 
@@ -98,9 +95,7 @@ class DownloadQueueManager implements DownloadMigrationQueue {
     try {
       final DownloadQueueSnapshot restored = await _queueStore.read();
       if (_disposed) return;
-      for (final DownloadQueueTask task in restored.tasks) {
-        _taskGenerations[task.id] = ++_nextGeneration;
-      }
+      _activeLease = null;
       snapshotNotifier.value = restored;
       _retryScheduler.sync(restored);
     } finally {
@@ -122,14 +117,12 @@ class DownloadQueueManager implements DownloadMigrationQueue {
   }
 
   Future<bool> addTasks(Iterable<DownloadQueueTask> newTasks) async {
-    final List<DownloadQueueTask> additions = newTasks.toList(growable: false);
+    final additions = {for (final task in newTasks) task.id: task};
     if (additions.isEmpty) {
       return snapshot.isPaused && snapshot.isNotEmpty;
     }
 
-    for (final DownloadQueueTask task in additions) {
-      _taskGenerations[task.id] = ++_nextGeneration;
-    }
+    if (additions.containsKey(_activeLease?.taskId)) _activeLease = null;
     final DownloadQueueSnapshot currentSnapshot = snapshot;
     final bool keepPaused =
         currentSnapshot.isPaused && currentSnapshot.isNotEmpty;
@@ -138,10 +131,10 @@ class DownloadQueueManager implements DownloadMigrationQueue {
         isPaused: keepPaused,
         tasks: <DownloadQueueTask>[
           ...currentSnapshot.tasks.where(
-            (task) => !additions.any((next) => next.id == task.id),
+            (task) => !additions.containsKey(task.id),
           ),
-          ...{for (final task in additions) task.id: task}.values,
-        ].toList(growable: false),
+          ...additions.values,
+        ],
       ),
     );
     if (!keepPaused) {
@@ -164,14 +157,13 @@ class DownloadQueueManager implements DownloadMigrationQueue {
       return;
     }
 
-    final DateTime now = DateTime.now();
     final List<DownloadQueueTask> tasks = currentSnapshot.tasks
         .map((DownloadQueueTask task) {
           if (task.status == DownloadQueueTaskStatus.failed ||
               task.status == DownloadQueueTaskStatus.paused ||
               task.status == DownloadQueueTaskStatus.parsing ||
               task.status == DownloadQueueTaskStatus.downloading) {
-            return _retryPolicy.queuedTask(task, now, resetAttempts: true);
+            return _retryPolicy.queuedTask(task, resetAttempts: true);
           }
           return task;
         })
@@ -192,15 +184,10 @@ class DownloadQueueManager implements DownloadMigrationQueue {
       return;
     }
 
-    final DateTime now = DateTime.now();
     final List<DownloadQueueTask> tasks = currentSnapshot.tasks.toList(
-      growable: true,
+      growable: false,
     );
-    tasks[index] = _retryPolicy.queuedTask(
-      tasks[index],
-      now,
-      resetAttempts: true,
-    );
+    tasks[index] = _retryPolicy.queuedTask(tasks[index], resetAttempts: true);
 
     final bool shouldResume =
         currentSnapshot.isPaused &&
@@ -209,7 +196,7 @@ class DownloadQueueManager implements DownloadMigrationQueue {
     await _persistSnapshot(
       currentSnapshot.copyWith(
         isPaused: shouldResume ? false : currentSnapshot.isPaused,
-        tasks: tasks.toList(growable: false),
+        tasks: tasks,
       ),
     );
     if (shouldResume || !currentSnapshot.isPaused) {
@@ -331,14 +318,16 @@ class DownloadQueueManager implements DownloadMigrationQueue {
         ),
       );
 
-  bool _isCleanupBlocked(DownloadQueueTask task) => _cleanupGuard.blocks(
-    comicKey: task.comicKey,
-    comicPath: _downloadService.comicDirectoryPath(task.comicTitle),
-    chapterPath: _downloadService.chapterDirectoryPath(
-      task.comicTitle,
-      task.chapterLabel,
-    ),
-  );
+  bool _isCleanupBlocked(DownloadQueueTask task) =>
+      _cleanupGuard.hasReservations &&
+      _cleanupGuard.blocks(
+        comicKey: task.comicKey,
+        comicPath: _downloadService.comicDirectoryPath(task.comicTitle),
+        chapterPath: _downloadService.chapterDirectoryPath(
+          task.comicTitle,
+          task.chapterLabel,
+        ),
+      );
 
   Future<void> _removeWithCleanup(
     List<DownloadQueueTask> removed, {
@@ -354,6 +343,7 @@ class DownloadQueueManager implements DownloadMigrationQueue {
     if (deferred) _deferredCleanups.add(pending);
     try {
       final Set<String> removedIds = removed.map((task) => task.id).toSet();
+      if (removedIds.contains(_activeLease?.taskId)) _activeLease = null;
       final DownloadQueueSnapshot current = snapshot;
       final List<DownloadQueueTask> remaining = current.tasks
           .where((DownloadQueueTask task) => !removedIds.contains(task.id))
@@ -549,7 +539,7 @@ class DownloadQueueManager implements DownloadMigrationQueue {
 
     _retryScheduler.cancel(taskId);
     try {
-      await _updateTask(_retryPolicy.queuedTask(latestTask, DateTime.now()));
+      await _updateTask(_retryPolicy.queuedTask(latestTask));
       if (!_isProcessingQueue) {
         unawaited(ensureRunning());
       }
@@ -622,11 +612,11 @@ class DownloadQueueManager implements DownloadMigrationQueue {
     }
 
     final List<DownloadQueueTask> tasks = currentSnapshot.tasks.toList(
-      growable: true,
+      growable: false,
     );
     tasks[index] = updatedTask;
     final DownloadQueueSnapshot nextSnapshot = currentSnapshot.copyWith(
-      tasks: tasks.toList(growable: false),
+      tasks: tasks,
     );
     if (persist) {
       await _persistSnapshot(nextSnapshot);
@@ -637,15 +627,8 @@ class DownloadQueueManager implements DownloadMigrationQueue {
 
   Future<void> _runTask(DownloadQueueTask task) async {
     _runningTask = task;
-    final int generation = _taskGenerations.putIfAbsent(
-      task.id,
-      () => ++_nextGeneration,
-    );
-    final _QueueTaskExecutionHost host = _QueueTaskExecutionHost(
-      this,
-      task.id,
-      generation,
-    );
+    final host = _QueueTaskExecutionHost(this, task.id);
+    _activeLease = host;
     try {
       final DownloadTaskExecutionResult result = await _writes.write(
         () => _taskExecutor.execute(task, host),
@@ -670,7 +653,6 @@ class DownloadQueueManager implements DownloadMigrationQueue {
                     latest.totalImages > 0 && latest.completedImages > 0
                     ? '已暂停 ${latest.completedImages}/${latest.totalImages}'
                     : '已暂停',
-                updatedAt: DateTime.now(),
               ),
             );
           }
@@ -687,6 +669,7 @@ class DownloadQueueManager implements DownloadMigrationQueue {
       try {
         await _finishDeferredCleanups(task);
       } finally {
+        _activeLease = null;
         _runningTask = null;
       }
     }
@@ -800,15 +783,14 @@ class DownloadQueueManager implements DownloadMigrationQueue {
 }
 
 class _QueueTaskExecutionHost implements DownloadTaskExecutionHost {
-  const _QueueTaskExecutionHost(this.manager, this.taskId, this.generation);
+  const _QueueTaskExecutionHost(this.manager, this.taskId);
 
   final DownloadQueueManager manager;
   final String taskId;
-  final int generation;
 
   @override
   DownloadQueueTask? get currentTask =>
-      manager._disposed || manager._taskGenerations[taskId] != generation
+      manager._disposed || !identical(manager._activeLease, this)
       ? null
       : manager._taskById(taskId);
 

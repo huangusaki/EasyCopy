@@ -80,7 +80,7 @@ double comicCardHeightFor({
 }
 
 ({bool hasSubtitle, bool hasSecondary}) comicMetaCoverage(
-  List<ComicCardData> items,
+  Iterable<ComicCardData> items,
 ) {
   bool hasSubtitle = false;
   bool hasSecondary = false;
@@ -92,133 +92,19 @@ double comicCardHeightFor({
   return (hasSubtitle: hasSubtitle, hasSecondary: hasSecondary);
 }
 
-class ComicGrid extends StatelessWidget {
-  const ComicGrid({
-    required this.items,
-    required this.onTap,
-    this.onLongPress,
-    this.emptyMessage = '暂时没有可展示的内容。',
-    super.key,
-  });
-
-  final List<ComicCardData> items;
-  final ValueChanged<String> onTap;
-  final ValueChanged<String>? onLongPress;
-  final String emptyMessage;
-
-  static const int _crossAxisCount = 3;
-  static const double _crossAxisSpacing = 12;
-  static const double _mainAxisSpacing = 10;
-
-  @override
-  Widget build(BuildContext context) {
-    if (items.isEmpty) {
-      return Text(emptyMessage);
-    }
-
-    final ({bool hasSubtitle, bool hasSecondary}) meta = comicMetaCoverage(
-      items,
-    );
-
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        final double maxWidth = constraints.maxWidth.isFinite
-            ? constraints.maxWidth
-            : MediaQuery.sizeOf(context).width;
-        final int crossAxisCount = responsiveComicCrossAxisCount(
-          context,
-          maxWidth,
-          spacing: _crossAxisSpacing,
-          mobileCount: _crossAxisCount,
-        );
-        final double spacingWidth = _crossAxisSpacing * (crossAxisCount - 1);
-        final double itemWidth = ((maxWidth - spacingWidth) / crossAxisCount)
-            .clamp(0.0, maxWidth)
-            .toDouble();
-
-        if (itemWidth <= 0) {
-          return const SizedBox.shrink();
-        }
-
-        final double itemHeight = comicCardHeightFor(
-          itemWidth: itemWidth,
-          hasSubtitle: meta.hasSubtitle,
-          hasSecondary: meta.hasSecondary,
-          isWideLayout: usesWideLayout(context),
-          textScaler: MediaQuery.textScalerOf(context),
-        );
-        final int rowCount =
-            (items.length + crossAxisCount - 1) ~/ crossAxisCount;
-        final bool stagger = usesWideLayout(context);
-
-        return Column(
-          children: <Widget>[
-            for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
-              Padding(
-                padding: EdgeInsets.only(
-                  bottom: rowIndex == rowCount - 1 ? 0 : _mainAxisSpacing,
-                ),
-                child: Row(
-                  children: <Widget>[
-                    for (
-                      int columnIndex = 0;
-                      columnIndex < crossAxisCount;
-                      columnIndex++
-                    ) ...<Widget>[
-                      if (columnIndex > 0)
-                        const SizedBox(width: _crossAxisSpacing),
-                      SizedBox(
-                        width: itemWidth,
-                        height: itemHeight,
-                        child: _buildItem(
-                          rowIndex,
-                          columnIndex,
-                          crossAxisCount,
-                          stagger: stagger,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildItem(
-    int rowIndex,
-    int columnIndex,
-    int crossAxisCount, {
-    required bool stagger,
-  }) {
-    final int itemIndex = rowIndex * crossAxisCount + columnIndex;
-    if (itemIndex >= items.length) {
-      return const SizedBox.shrink();
-    }
-
-    final ComicCardData item = items[itemIndex];
-    return StaggerIn(
-      key: ValueKey<String>(item.href),
-      index: itemIndex,
-      enabled: stagger,
-      child: ComicCardTile(item: item, onTap: onTap, onLongPress: onLongPress),
-    );
-  }
-}
-
 class ComicSliverGrid extends StatelessWidget {
   const ComicSliverGrid({
     required this.items,
     required this.onTap,
     this.onLongPress,
+    this.metadata,
     this.animateItems = true,
     this.emptyMessage = '暂时没有可展示的内容。',
     super.key,
   });
 
-  final List<ComicCardData> items;
+  final Iterable<ComicCardData> items;
+  final ({bool hasSubtitle, bool hasSecondary})? metadata;
   final ValueChanged<String> onTap;
   final ValueChanged<ComicCardData>? onLongPress;
   final bool animateItems;
@@ -233,9 +119,8 @@ class ComicSliverGrid extends StatelessWidget {
       return SliverToBoxAdapter(child: Text(emptyMessage));
     }
 
-    final ({bool hasSubtitle, bool hasSecondary}) meta = comicMetaCoverage(
-      items,
-    );
+    final ({bool hasSubtitle, bool hasSecondary}) meta =
+        metadata ?? comicMetaCoverage(items);
 
     return SliverLayoutBuilder(
       builder: (BuildContext context, constraints) {
@@ -276,7 +161,7 @@ class ComicSliverGrid extends StatelessWidget {
           ),
           delegate: SliverChildBuilderDelegate(
             (BuildContext context, int index) {
-              final ComicCardData item = items[index];
+              final ComicCardData item = items.elementAt(index);
               final Widget tile = ComicCardTile(
                 item: item,
                 onTap: onTap,
@@ -284,16 +169,14 @@ class ComicSliverGrid extends StatelessWidget {
                     ? null
                     : (_) => onLongPress!(item),
               );
-              return RepaintBoundary(
-                child: animateItems
-                    ? StaggerIn(
-                        key: ValueKey<String>(item.href),
-                        index: index % (crossAxisCount * 2),
-                        enabled: stagger,
-                        child: tile,
-                      )
-                    : tile,
-              );
+              return animateItems
+                  ? StaggerIn(
+                      key: ValueKey<String>(item.href),
+                      index: index % (crossAxisCount * 2),
+                      enabled: stagger,
+                      child: tile,
+                    )
+                  : tile;
             },
             childCount: items.length,
             addAutomaticKeepAlives: false,
@@ -401,6 +284,25 @@ class _ComicCardTileState extends State<ComicCardTile> {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final bool isWideLayout = usesWideLayout(context);
 
+    final titleStyle = TextStyle(
+      fontSize: isWideLayout ? _wideComicTitleFontSize : _comicTitleFontSize,
+      height: _comicMetaLineHeight,
+      fontWeight: FontWeight.w800,
+      color: isWideLayout && _isHovered
+          ? colorScheme.primary
+          : colorScheme.onSurface,
+    );
+    final title = Text(
+      ChineseConverter.instance.convert(widget.item.title),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: isWideLayout ? null : titleStyle,
+    );
+    final cover = CoverImage(
+      imageUrl: widget.item.coverUrl,
+      aspectRatio: _comicCoverAspectRatio,
+      borderRadius: 0,
+    );
     final Widget cardContent = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -412,16 +314,14 @@ class _ComicCardTileState extends State<ComicCardTile> {
             child: Stack(
               children: <Widget>[
                 Positioned.fill(
-                  child: AnimatedScale(
-                    scale: _isHovered ? 1.05 : 1.0,
-                    duration: const Duration(milliseconds: 280),
-                    curve: Curves.easeOutCubic,
-                    child: CoverImage(
-                      imageUrl: widget.item.coverUrl,
-                      aspectRatio: _comicCoverAspectRatio,
-                      borderRadius: 0,
-                    ),
-                  ),
+                  child: !isWideLayout
+                      ? cover
+                      : AnimatedScale(
+                          scale: _isHovered ? 1.05 : 1.0,
+                          duration: const Duration(milliseconds: 280),
+                          curve: Curves.easeOutCubic,
+                          child: cover,
+                        ),
                 ),
                 if (widget.item.badge.isNotEmpty)
                   Positioned(
@@ -456,23 +356,14 @@ class _ComicCardTileState extends State<ComicCardTile> {
             isWideLayout: isWideLayout,
             textScaler: MediaQuery.textScalerOf(context),
           ),
-          child: AnimatedDefaultTextStyle(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-            style: TextStyle(
-              fontSize: isWideLayout
-                  ? _wideComicTitleFontSize
-                  : _comicTitleFontSize,
-              height: _comicMetaLineHeight,
-              fontWeight: FontWeight.w800,
-              color: _isHovered ? colorScheme.primary : colorScheme.onSurface,
-            ),
-            child: Text(
-              ChineseConverter.instance.convert(widget.item.title),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
+          child: isWideLayout
+              ? AnimatedDefaultTextStyle(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOut,
+                  style: titleStyle,
+                  child: title,
+                )
+              : title,
         ),
         if (widget.item.subtitle.isNotEmpty) ...<Widget>[
           const SizedBox(height: _comicSubtitleGap),
@@ -507,6 +398,12 @@ class _ComicCardTileState extends State<ComicCardTile> {
       ],
     );
 
+    final ink = ComicCardInk(
+      onTap: _handleTap,
+      onLongPress: widget.onLongPress == null ? null : _handleLongPress,
+      child: cardContent,
+    );
+    if (!isWideLayout) return ink;
     final Widget cardContainer = AnimatedContainer(
       duration: const Duration(milliseconds: 280),
       curve: Curves.easeOutCubic,
@@ -527,20 +424,13 @@ class _ComicCardTileState extends State<ComicCardTile> {
             ),
         ],
       ),
-      child: ComicCardInk(
-        onTap: _handleTap,
-        onLongPress: widget.onLongPress == null ? null : _handleLongPress,
-        child: cardContent,
-      ),
+      child: ink,
     );
 
-    if (isWideLayout) {
-      return MouseRegion(
-        onEnter: (_) => setState(() => _isHovered = true),
-        onExit: (_) => setState(() => _isHovered = false),
-        child: cardContainer,
-      );
-    }
-    return cardContainer;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: cardContainer,
+    );
   }
 }

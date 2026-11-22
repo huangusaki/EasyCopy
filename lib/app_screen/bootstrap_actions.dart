@@ -49,7 +49,7 @@ extension _AppScreenBootstrapActions on _AppScreenState {
         _services.localLibraryStore.ensureInitialized(),
         _services.blockedContentStore.ensureInitialized(),
         _services.searchHistoryStore.ensureInitialized(),
-        PageCacheStore.instance.ensureInitialized(),
+        _services.pageCacheStore.ensureInitialized(),
       ]);
     } catch (error) {
       if (!mounted) return;
@@ -58,13 +58,11 @@ extension _AppScreenBootstrapActions on _AppScreenState {
         targetTabIndex: _nav.selectedIndex,
         intent: NavigationIntent.preserve,
         preserveVisiblePage: false,
-        sourceKind: NavigationRequestSourceKind.navigation,
       );
       await _handlePageLoadFailure(error, requestContext: request);
       return;
     }
     _shell.bootstrapReady = true;
-    _searchActions.replaceHistory(_services.searchHistoryStore.items);
     DebugTrace.log('bootstrap.initialized', <String, Object?>{
       'bootId': _shell.bootId,
       'elapsedMs': stopwatch.elapsedMilliseconds,

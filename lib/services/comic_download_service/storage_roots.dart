@@ -67,43 +67,21 @@ extension _DownloadStorageRoots on ComicDownloadService {
   }
 
   Future<bool> _isChapterCompleted({
-    required _ResolvedStorageRoot root,
-    required String manifestRelativePath,
+    required Map<String, Object?>? manifest,
     required String chapterDirectoryPath,
     required int expectedImageCount,
-    Future<bool> Function(String relativePath)? validateImage,
+    required Future<bool> Function(String relativePath) validateImage,
   }) async {
-    if (!await root.exists(manifestRelativePath)) {
-      return false;
-    }
+    if (manifest == null) return false;
     try {
-      final Object? decoded = jsonDecode(
-        await root.readString(manifestRelativePath),
-      );
-      if (decoded is! Map) {
-        return false;
-      }
-      final int imageCount = (decoded['imageCount'] as num?)?.toInt() ?? 0;
-      final Object? rawFiles = decoded['files'];
-      if (rawFiles is! List ||
-          rawFiles.length != expectedImageCount ||
-          imageCount != expectedImageCount ||
-          expectedImageCount <= 0) {
-        return false;
-      }
-      final Set<String> seen = <String>{};
-      for (final Object? value in rawFiles) {
-        if (value is! String || !_isCacheFileName(value) || !seen.add(value)) {
-          return false;
-        }
+      final files = _manifestImageFiles(manifest);
+      if (files == null || files.length != expectedImageCount) return false;
+      for (final value in files) {
         final String path = _joinRelativePath(<String>[
           chapterDirectoryPath,
           value,
         ]);
-        final bool valid =
-            await (validateImage?.call(path) ??
-                isCompleteImage(await root.readBytes(path)));
-        if (!valid) return false;
+        if (!await validateImage(path)) return false;
       }
       return true;
     } on DownloadCancelledException {
@@ -119,6 +97,7 @@ extension _DownloadStorageRoots on ComicDownloadService {
     _ResolvedStorageRoot root,
     String chapterDirectoryPath, {
     Future<bool> Function(String relativePath)? validateImage,
+    required int imageCount,
   }) async {
     if (!await root.exists(chapterDirectoryPath)) {
       return const <int, String>{};
@@ -126,9 +105,10 @@ extension _DownloadStorageRoots on ComicDownloadService {
 
     final Map<int, String> existingFiles = <int, String>{};
     final RegExp pattern = RegExp(r'^(\d+)\.[^.]+$');
-    for (final _StorageEntry entry in await root.listEntries(
+    for (final DocumentTreeEntry entry in await root.listEntries(
       chapterDirectoryPath,
       recursive: false,
+      includeSize: true,
     )) {
       if (entry.isDirectory) {
         continue;
@@ -138,7 +118,8 @@ extension _DownloadStorageRoots on ComicDownloadService {
       if (match == null) {
         continue;
       }
-      if (entry.size <= 0) {
+      final index = int.tryParse(match.group(1)!) ?? 0;
+      if (index < 1 || index > imageCount || entry.size <= 0) {
         continue;
       }
       try {
@@ -155,8 +136,7 @@ extension _DownloadStorageRoots on ComicDownloadService {
       } catch (_) {
         continue;
       }
-      final int index = int.parse(match.group(1)!) - 1;
-      existingFiles[index] = fileName;
+      existingFiles[index - 1] = fileName;
     }
     return existingFiles;
   }
@@ -195,13 +175,12 @@ extension _DownloadStorageRoots on ComicDownloadService {
     _ResolvedStorageRoot root, {
     String relativePath = '',
     String comicKey = '',
+    List<DocumentTreeEntry>? listedEntries,
   }) async {
-    final List<_StorageEntry> entries = await root.listEntries(
-      relativePath,
-      recursive: true,
-    );
+    final List<DocumentTreeEntry> entries =
+        listedEntries ?? await root.listEntries(relativePath, recursive: true);
     final Set<String> paths = <String>{};
-    for (final _StorageEntry entry in entries) {
+    for (final DocumentTreeEntry entry in entries) {
       if (entry.isDirectory ||
           (entry.name != 'manifest.json' &&
               entry.name != _downloadIdentityFileName)) {
@@ -221,7 +200,6 @@ extension _DownloadStorageRoots on ComicDownloadService {
         continue;
       }
       if (decoded is! Map) continue;
-      final Object? rawFiles = decoded['files'];
       final Uri? source = Uri.tryParse(decoded['sourceUri']?.toString() ?? '');
       if (source == null ||
           !source.path.startsWith('/comic/') ||
@@ -248,31 +226,18 @@ extension _DownloadStorageRoots on ComicDownloadService {
         final Map<int, String> images = await _loadExistingImageFiles(
           root,
           directory,
+          imageCount: count,
         );
-        paths.addAll(
-          images.entries
-              .where(
-                (MapEntry<int, String> image) =>
-                    image.key >= 0 && image.key < count,
-              )
-              .map(
-                (MapEntry<int, String> image) => '$directory/${image.value}',
-              ),
-        );
+        paths.addAll(images.values.map((name) => '$directory/$name'));
         paths.add(entry.relativePath);
         continue;
       }
+      final files = _manifestImageFiles(decoded);
       if ((decoded['comicTitle']?.toString().trim() ?? '').isEmpty ||
-          rawFiles is! List ||
-          rawFiles.isEmpty ||
-          decoded['imageCount'] != rawFiles.length ||
-          rawFiles.any(
-            (Object? name) => name is! String || !_isNumberedCacheImage(name),
-          )) {
+          files == null ||
+          !files.every(_isNumberedCacheImage)) {
         continue;
       }
-      final List<String> files = rawFiles.cast<String>();
-      if (files.toSet().length != files.length) continue;
       paths.addAll(files.map((String name) => '$directory/$name'));
       paths.add(entry.relativePath);
     }
@@ -307,13 +272,9 @@ extension _DownloadStorageRoots on ComicDownloadService {
         sourceRoot.rootDirectory,
         relativePaths: relativePaths,
         verifyOnly: verifyOnly,
-        onProgress: (DocumentTreeTransferProgress progress) {
-          return progressController.syncMigrating(
-            completedItems: progress.completedCount,
-            totalItems: progress.totalCount,
-            currentItemPath: progress.currentItemPath,
-          );
-        },
+        onProgress: progressController.onProgress == null || verifyOnly
+            ? null
+            : progressController.syncTransfer,
       );
       await progressController.markMigratingComplete();
       return;
@@ -325,13 +286,9 @@ extension _DownloadStorageRoots on ComicDownloadService {
         targetRoot.rootDirectory,
         relativePaths: relativePaths,
         verifyOnly: verifyOnly,
-        onProgress: (DocumentTreeTransferProgress progress) {
-          return progressController.syncMigrating(
-            completedItems: progress.completedCount,
-            totalItems: progress.totalCount,
-            currentItemPath: progress.currentItemPath,
-          );
-        },
+        onProgress: progressController.onProgress == null || verifyOnly
+            ? null
+            : progressController.syncTransfer,
       );
       await progressController.markMigratingComplete();
       return;
@@ -343,13 +300,9 @@ extension _DownloadStorageRoots on ComicDownloadService {
         targetRoot,
         relativePaths: relativePaths,
         verifyOnly: verifyOnly,
-        onProgress: (DocumentTreeTransferProgress progress) {
-          return progressController.syncMigrating(
-            completedItems: progress.completedCount,
-            totalItems: progress.totalCount,
-            currentItemPath: progress.currentItemPath,
-          );
-        },
+        onProgress: progressController.onProgress == null || verifyOnly
+            ? null
+            : progressController.syncTransfer,
       );
       await progressController.markMigratingComplete();
       return;
@@ -359,20 +312,6 @@ extension _DownloadStorageRoots on ComicDownloadService {
   String _normalizedPath(String value) => normalizeStoragePath(value);
 }
 
-class _StorageEntry {
-  const _StorageEntry({
-    required this.relativePath,
-    required this.name,
-    required this.isDirectory,
-    required this.size,
-  });
-
-  final String relativePath;
-  final String name;
-  final bool isDirectory;
-  final int size;
-}
-
 class _MigrationProgressController {
   _MigrationProgressController({
     required this.fromPath,
@@ -380,27 +319,21 @@ class _MigrationProgressController {
     this.onProgress,
   });
 
-  static const Duration _minimumEmitInterval = Duration(milliseconds: 800);
-  static const int _largeProgressStep = 160;
-  static const int _smallProgressStep = 12;
-
   final String fromPath;
   final String toPath;
   final MigrationProgressCallback? onProgress;
 
   int _completedItems = 0;
   int _totalItems = 0;
-  int _lastEmittedCompletedItems = -1;
-  int _lastEmittedTotalItems = -1;
-  DateTime? _lastEmittedAt;
-  DownloadStorageMigrationPhase? _lastEmittedPhase;
+  Future<void> syncTransfer(DocumentTreeTransferProgress progress) =>
+      syncMigrating(
+        completedItems: progress.completedCount,
+        totalItems: progress.totalCount,
+        currentItemPath: progress.currentItemPath,
+      );
 
   Future<void> emitPreparing() {
-    return _emit(
-      DownloadStorageMigrationPhase.preparing,
-      message: '正在准备迁移缓存…',
-      force: true,
-    );
+    return _emit(DownloadStorageMigrationPhase.preparing, message: '正在准备迁移缓存…');
   }
 
   Future<void> startMigrating({int totalItems = 0}) {
@@ -409,7 +342,6 @@ class _MigrationProgressController {
     return _emit(
       DownloadStorageMigrationPhase.migrating,
       message: _migratingMessage(),
-      force: true,
     );
   }
 
@@ -420,7 +352,6 @@ class _MigrationProgressController {
     return _emit(
       DownloadStorageMigrationPhase.migrating,
       message: _migratingMessage(),
-      force: true,
     );
   }
 
@@ -444,11 +375,7 @@ class _MigrationProgressController {
   }
 
   Future<void> emitCleaning() {
-    return _emit(
-      DownloadStorageMigrationPhase.cleaning,
-      message: '正在清理旧缓存目录…',
-      force: true,
-    );
+    return _emit(DownloadStorageMigrationPhase.cleaning, message: '正在清理旧缓存目录…');
   }
 
   String _migratingMessage() {
@@ -462,19 +389,10 @@ class _MigrationProgressController {
     DownloadStorageMigrationPhase phase, {
     required String message,
     String currentItemPath = '',
-    bool force = false,
   }) async {
     if (onProgress == null) {
       return;
     }
-    final DateTime now = DateTime.now();
-    if (!force && !_shouldEmit(phase, now)) {
-      return;
-    }
-    _lastEmittedAt = now;
-    _lastEmittedCompletedItems = _completedItems;
-    _lastEmittedTotalItems = _totalItems;
-    _lastEmittedPhase = phase;
     await onProgress!(
       StorageMigrationProgress(
         phase: phase,
@@ -487,30 +405,6 @@ class _MigrationProgressController {
       ),
     );
   }
-
-  bool _shouldEmit(DownloadStorageMigrationPhase phase, DateTime now) {
-    if (_lastEmittedPhase != phase) {
-      return true;
-    }
-    if (_completedItems <= 1 ||
-        (_totalItems > 0 && _completedItems >= _totalItems)) {
-      return true;
-    }
-    if (_totalItems != _lastEmittedTotalItems) {
-      return true;
-    }
-    final int progressStep = _totalItems > 0 && _totalItems <= 64
-        ? _smallProgressStep
-        : _largeProgressStep;
-    if (_completedItems - _lastEmittedCompletedItems >= progressStep) {
-      return true;
-    }
-    final DateTime? lastEmittedAt = _lastEmittedAt;
-    if (lastEmittedAt == null) {
-      return true;
-    }
-    return now.difference(lastEmittedAt) >= _minimumEmitInterval;
-  }
 }
 
 abstract class _ResolvedStorageRoot {
@@ -522,9 +416,10 @@ abstract class _ResolvedStorageRoot {
 
   Future<Uint8List> readBytes(String relativePath);
 
-  Future<List<_StorageEntry>> listEntries(
+  Future<List<DocumentTreeEntry>> listEntries(
     String relativePath, {
     required bool recursive,
+    bool includeSize = false,
   });
 
   Future<bool> exists(String relativePath);
@@ -572,9 +467,10 @@ class _FileStorageRoot implements _ResolvedStorageRoot {
   }
 
   @override
-  Future<List<_StorageEntry>> listEntries(
+  Future<List<DocumentTreeEntry>> listEntries(
     String relativePath, {
     required bool recursive,
+    bool includeSize = false,
   }) async {
     final String normalizedRelativePath = _normalizeRelativePath(relativePath);
     final String absolutePath = normalizedRelativePath.isEmpty
@@ -582,22 +478,22 @@ class _FileStorageRoot implements _ResolvedStorageRoot {
         : _absolutePath(normalizedRelativePath);
     final FileSystemEntityType type = await FileSystemEntity.type(absolutePath);
     if (type == FileSystemEntityType.notFound) {
-      return const <_StorageEntry>[];
+      return const <DocumentTreeEntry>[];
     }
     if (type == FileSystemEntityType.file) {
       final File file = File(absolutePath);
-      return <_StorageEntry>[
-        _StorageEntry(
+      return <DocumentTreeEntry>[
+        DocumentTreeEntry(
           relativePath: normalizedRelativePath,
           name: file.uri.pathSegments.last,
           isDirectory: false,
-          size: await file.length(),
+          size: includeSize ? await file.length() : 0,
         ),
       ];
     }
 
     final Directory directory = Directory(absolutePath);
-    final List<_StorageEntry> entries = <_StorageEntry>[];
+    final List<DocumentTreeEntry> entries = <DocumentTreeEntry>[];
     await for (final FileSystemEntity entity in directory.list(
       recursive: recursive,
       followLinks: false,
@@ -609,14 +505,12 @@ class _FileStorageRoot implements _ResolvedStorageRoot {
       if (relative.isEmpty) {
         continue;
       }
-      final FileSystemEntityType entityType = await FileSystemEntity.type(
-        entity.path,
-        followLinks: false,
-      );
-      final bool isDirectory = entityType == FileSystemEntityType.directory;
-      final int size = entity is File ? await entity.length() : 0;
+      final bool isDirectory = entity is Directory;
+      final int size = includeSize && entity is File
+          ? await entity.length()
+          : 0;
       entries.add(
-        _StorageEntry(
+        DocumentTreeEntry(
           relativePath: relative,
           name: entity.uri.pathSegments.isEmpty
               ? ''
@@ -686,10 +580,6 @@ class _FileStorageRoot implements _ResolvedStorageRoot {
     return normalized.isEmpty
         ? rootDirectory.path
         : '${rootDirectory.path}${Platform.pathSeparator}$normalized';
-  }
-
-  String _normalizeRelativePath(String relativePath) {
-    return relativePath.trim().replaceAll('\\', '/');
   }
 }
 
@@ -788,37 +678,17 @@ class _DocumentTreeStorageRoot implements _ResolvedStorageRoot {
   }
 
   @override
-  Future<List<_StorageEntry>> listEntries(
+  Future<List<DocumentTreeEntry>> listEntries(
     String relativePath, {
     required bool recursive,
+    bool includeSize = false,
   }) async {
     final String requestedPath = _resolveRelativePath(relativePath);
-    final String prefix = _normalizeRelativePath(rootRelativePath);
-    final List<DocumentTreeEntry> entries = await bridge.listEntries(
+    return bridge.listEntries(
       treeUri: treeUri,
       relativePath: requestedPath,
       recursive: recursive,
-    );
-    return entries
-        .map((DocumentTreeEntry entry) => _toStorageEntry(entry, prefix))
-        .where((_StorageEntry entry) => entry.relativePath.isNotEmpty)
-        .toList(growable: false);
-  }
-
-  _StorageEntry _toStorageEntry(DocumentTreeEntry entry, String prefix) {
-    String relative = _normalizeRelativePath(entry.relativePath);
-    if (prefix.isNotEmpty) {
-      if (relative == prefix) {
-        relative = '';
-      } else if (relative.startsWith('$prefix/')) {
-        relative = relative.substring(prefix.length + 1);
-      }
-    }
-    return _StorageEntry(
-      relativePath: relative,
-      name: entry.name,
-      isDirectory: entry.isDirectory,
-      size: entry.size,
+      rootPrefix: _normalizeRelativePath(rootRelativePath),
     );
   }
 
@@ -872,10 +742,6 @@ class _DocumentTreeStorageRoot implements _ResolvedStorageRoot {
     }
     return '$normalizedRoot/$normalized';
   }
-
-  String _normalizeRelativePath(String relativePath) {
-    return relativePath.trim().replaceAll('\\', '/');
-  }
 }
 
 class _LibraryScanStats {
@@ -883,7 +749,6 @@ class _LibraryScanStats {
   int chapterDirectoryCount = 0;
   int manifestCount = 0;
   int listCalls = 0;
-  int existsCalls = 0;
   int readCalls = 0;
 }
 
@@ -934,7 +799,7 @@ int _copyFileSystemTreeSync(_FileSystemCopyRequest request) {
     );
     try {
       source.copySync(temporary.path);
-      if (!_filesMatchSync(source, temporary)) {
+      if (source.lengthSync() != temporary.lengthSync()) {
         throw FileSystemException('缓存复制校验失败，保留原目录。', source.path);
       }
       if (target.existsSync()) {
@@ -957,12 +822,13 @@ bool _filesMatchSync(File left, File right) {
   RandomAccessFile? rightReader;
   try {
     rightReader = right.openSync();
+    final leftBytes = Uint8List(64 * 1024);
+    final rightBytes = Uint8List(leftBytes.length);
     while (true) {
-      final Uint8List leftBytes = leftReader.readSync(64 * 1024);
-      final Uint8List rightBytes = rightReader.readSync(64 * 1024);
-      if (leftBytes.length != rightBytes.length) return false;
-      if (leftBytes.isEmpty) return true;
-      for (int index = 0; index < leftBytes.length; index += 1) {
+      final count = leftReader.readIntoSync(leftBytes);
+      if (rightReader.readIntoSync(rightBytes) != count) return false;
+      if (count == 0) return true;
+      for (int index = 0; index < count; index += 1) {
         if (leftBytes[index] != rightBytes[index]) return false;
       }
     }
@@ -979,10 +845,27 @@ bool _isCacheFileName(String name) =>
     !name.contains('/') &&
     !name.contains(r'\');
 
-bool _isNumberedCacheImage(String name) => RegExp(
-  r'^\d+\.(avif|bmp|gif|jpeg|jpg|png|webp)$',
-  caseSensitive: false,
-).hasMatch(name);
+final _numberedCacheImagePattern = RegExp(r'^(\d+)\.([^.]+)$');
+
+bool _isNumberedCacheImage(String name) {
+  final match = _numberedCacheImagePattern.firstMatch(name);
+  return match != null &&
+      comicImageExtensions.contains(match[2]!.toLowerCase());
+}
+
+List<String>? _manifestImageFiles(Map? manifest) {
+  final raw = manifest?['files'];
+  if (raw is! List || raw.isEmpty || raw.length != manifest?['imageCount']) {
+    return null;
+  }
+  final seen = <String>{};
+  for (final name in raw) {
+    if (name is! String || !_isCacheFileName(name) || !seen.add(name)) {
+      return null;
+    }
+  }
+  return raw.cast<String>();
+}
 
 File _migrationFile(String canonicalRoot, String relativePath) {
   final List<String> parts = relativePath.split('/');
@@ -1015,4 +898,8 @@ File _migrationFile(String canonicalRoot, String relativePath) {
     }
   }
   return File(path);
+}
+
+String _normalizeRelativePath(String relativePath) {
+  return relativePath.trim().replaceAll('\\', '/');
 }

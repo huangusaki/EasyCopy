@@ -347,10 +347,9 @@ extension _AppScreenTabNavigation on _AppScreenState {
     if ((token ?? '').isEmpty) {
       return;
     }
-    await _services.session.updateFromCookieHeader(result.cookieHeader);
     await _services.session.saveToken(token!, cookies: result.cookies);
     try {
-      await _services.siteApiClient.loadUserInfo();
+      await _services.siteApiClient.loadUserInfo(forLogin: true);
     } catch (_) {
       // 用户信息绑定失败不影响登录态。
     }
@@ -365,7 +364,16 @@ extension _AppScreenTabNavigation on _AppScreenState {
     if (_sessionController.isLoggingOut) return;
     _scrollState.persistVisiblePageState();
     _scrollState.resetStandardScrollPosition();
-    await _sessionController.logout();
+    var cleanupFailed = false;
+    try {
+      await _sessionController.logout();
+    } catch (error) {
+      cleanupFailed = true;
+      DebugTrace.log('session.logout_cleanup_failed', {
+        'error': error.toString(),
+      });
+    }
+    if (!mounted) return;
     _mutateSessionState(() {
       for (int index = 0; index < appDestinations.length; index += 1) {
         _abandonCurrentRequest(index, phase: 'logout');
@@ -382,7 +390,9 @@ extension _AppScreenTabNavigation on _AppScreenState {
       preserveVisiblePage: true,
       historyMode: NavigationIntent.resetToRoot,
     );
-    if (showFeedback) {
+    if (cleanupFailed) {
+      _showNotice('当前已退出，部分本地登录数据清理失败。');
+    } else if (showFeedback) {
       _showNotice('已退出登录');
     }
   }

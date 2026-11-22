@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -15,10 +16,12 @@ import 'package:reader/services/comic_archive.dart';
 import 'package:reader/services/comic_download_service/chapter_image_downloader.dart';
 import 'package:reader/services/comic_download_service/download_contracts.dart';
 import 'package:reader/services/comic_download_service/image_integrity.dart';
+import 'package:reader/services/comic_image_files.dart';
 import 'package:reader/services/debug_trace.dart';
 import 'package:reader/services/download_queue_store.dart';
 import 'package:reader/services/download_storage_service.dart';
 import 'package:reader/services/local_comic.dart';
+import 'package:reader/services/persistence/serial_executor.dart';
 import 'package:reader/services/tree_image_provider.dart';
 import 'package:reader/services/uri_keys.dart';
 
@@ -63,6 +66,11 @@ class ComicDownloadService {
   final CachedLibraryIndexStore _cachedLibraryIndexStore;
   final CachedChapterLocatorStore _cachedChapterLocatorStore;
   final DownloadStorageService _storageService;
+  late final SerialExecutor _indexOperations = SerialExecutor();
+  bool _libraryInDatabase = false;
+  String? _libraryStorageKey;
+  List<CachedComicLibraryEntry>? _library;
+  Map<String, CachedChapterEntry>? _chaptersByPath;
 
   bool get supportsCustomStorageSelection => _storageService.supportsCustomDirs;
 
@@ -76,21 +84,10 @@ class ComicDownloadService {
     );
   }
 
-  Future<String> storageKeyForPreferences(
-    DownloadPreferences preferences, {
-    bool verifyWritable = false,
-  }) async {
-    final DownloadStorageState state = await resolveStorageState(
-      preferences: preferences,
-      verifyWritable: verifyWritable,
-    );
-    return _storageService.storageKeyForState(state);
-  }
-
   Future<void> copyCachedLibraryIndex({
     required DownloadPreferences from,
     required DownloadPreferences to,
-  }) async {
+  }) => _indexOperations.run(() async {
     final DownloadStorageState sourceState = await resolveStorageState(
       preferences: from,
       verifyWritable: false,
@@ -120,12 +117,13 @@ class ComicDownloadService {
         ...await _readCachedLibraryMetadata(targetState),
       ],
     );
-    await _writeCachedLibraryIndex(toStorageKey, comics);
-    await _replaceCachedChapterLocators(
-      storageKey: toStorageKey,
-      comics: comics,
+    await _writeCachedLibraryIndex(
+      toStorageKey,
+      comics,
+      locators: _locatorsFromLibrary(toStorageKey, comics),
+      replaceLocators: true,
     );
-  }
+  });
 
   String comicDirectoryPath(String comicTitle) {
     return _sanitizePathSegment(comicTitle);
@@ -157,7 +155,6 @@ class ComicDownloadService {
     final DownloadStorageState storageState = await resolveStorageState(
       verifyWritable: true,
     );
-    final String storageKey = _storageService.storageKeyForState(storageState);
     final _ResolvedStorageRoot root = await _resolveStorageRootFromState(
       storageState,
     );
@@ -181,7 +178,7 @@ class ComicDownloadService {
       chapterDirectoryPath,
       'manifest.json',
     ]);
-    await _checkChapterDirectoryIdentity(
+    final manifest = await _checkChapterDirectoryIdentity(
       root,
       chapterDirectoryPath,
       chapterHref: resolvedChapterHref,
@@ -202,15 +199,14 @@ class ComicDownloadService {
     }
 
     final bool isCompleted = await _isChapterCompleted(
-      root: root,
-      manifestRelativePath: manifestRelativePath,
+      manifest: manifest,
       chapterDirectoryPath: chapterDirectoryPath,
       expectedImageCount: page.imageUrls.length,
       validateImage: validateImage,
     );
     if (isCompleted) {
       await _upsertCachedChapterIndex(
-        storageKey: storageKey,
+        storageState: storageState,
         comicTitle: page.comicTitle,
         comicHref: resolvedComicUri,
         coverUrl: coverUrl ?? '',
@@ -241,12 +237,13 @@ class ComicDownloadService {
           (uri.scheme != 'http' && uri.scheme != 'https') ||
           uri.host.isEmpty;
     })) {
-      throw const FileSystemException('本地章节缓存已变化，请重试下载。');
+      throw const LocalChapterChangedException();
     }
 
     final Map<int, String> existingFiles = await _loadExistingImageFiles(
       root,
       chapterDirectoryPath,
+      imageCount: page.imageUrls.length,
       validateImage: validateImage,
     );
     final String downloadIdentityPath = _joinRelativePath(<String>[
@@ -301,7 +298,7 @@ class ComicDownloadService {
     );
     await root.deletePath(downloadIdentityPath);
     await _upsertCachedChapterIndex(
-      storageKey: storageKey,
+      storageState: storageState,
       comicTitle: page.comicTitle,
       comicHref: resolvedComicUri,
       coverUrl: coverUrl ?? '',
@@ -316,24 +313,26 @@ class ComicDownloadService {
     );
   }
 
-  Future<void> _checkChapterDirectoryIdentity(
+  Future<Map<String, Object?>?> _checkChapterDirectoryIdentity(
     _ResolvedStorageRoot root,
     String directoryPath, {
     required String chapterHref,
     required String sourceUri,
   }) async {
-    if (!await root.exists(directoryPath)) return;
+    if (!await root.exists(directoryPath)) return null;
     for (final String name in <String>[
       'manifest.json',
       _downloadIdentityFileName,
     ]) {
       final String path = _joinRelativePath(<String>[directoryPath, name]);
-      if (!await root.exists(path)) continue;
       Object? metadata;
       try {
         metadata = jsonDecode(await root.readString(path));
       } on FormatException {
         throw FileSystemException('同名目录中的章节记录无法识别，已停止下载。', directoryPath);
+      } catch (_) {
+        if (await root.exists(path)) rethrow;
+        continue;
       }
       final Set<String> expectedKeys = <String>{
         _pathKeyForUri(chapterHref),
@@ -349,10 +348,11 @@ class ComicDownloadService {
       if (storedKeys.isEmpty || !storedKeys.every(expectedKeys.contains)) {
         throw FileSystemException('同名目录已有其他章节或无法识别的文件，已停止下载。', directoryPath);
       }
-      return;
+      return name == 'manifest.json' ? metadata as Map<String, Object?> : null;
     }
     if ((await root.listEntries(directoryPath, recursive: false)).isNotEmpty) {
       throw FileSystemException('同名目录已有无法识别的文件，已停止下载。', directoryPath);
     }
+    return null;
   }
 }

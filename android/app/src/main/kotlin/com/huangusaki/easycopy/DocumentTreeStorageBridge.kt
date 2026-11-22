@@ -17,6 +17,8 @@ import androidx.documentfile.provider.DocumentFile
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.DataInputStream
+import java.io.EOFException
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -24,7 +26,6 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.Executors
 
@@ -109,6 +110,7 @@ class DocumentTreeStorageBridge(
                 "readText" -> handleReadText(call, result)
                 "readBytes" -> handleReadBytes(call, result)
                 "readBytesFromUri" -> handleReadBytesFromUri(call, result)
+                "stageFile" -> handleStageFile(call, result)
                 "listEntries" -> handleListEntries(call, result)
                 "exists" -> handleExists(call, result)
                 "deletePath" -> handleDeletePath(call, result)
@@ -297,11 +299,12 @@ class DocumentTreeStorageBridge(
                 "Destination path is not a directory: $destinationPath"
             }
             ensureNonOverlappingMigrationRoots(sourceRoot, destinationDirectory)
+            val sourceDirectories = mutableMapOf<Uri, Map<String, DocumentRow>>()
             transferFiles(
                 paths = transferPaths(call),
                 operationId = operationId,
                 verifyOnly = verifyOnly,
-                source = { path -> openDocumentInput(sourceRoot, path) ?: throw FileNotFoundException(path) },
+                source = { path -> openDocumentInput(sourceRoot, path, sourceDirectories) ?: throw FileNotFoundException(path) },
                 target = { path -> resolveFile(destinationDirectory, path).let { if (it.exists()) FileInputStream(it) else null } },
                 write = { path, input -> writeFileAtomically(resolveFile(destinationDirectory, path), input) },
             )
@@ -330,11 +333,12 @@ class DocumentTreeStorageBridge(
             val targetRoot = if (verifyOnly) resolveSourceDirectory(targetTreeUri, targetRelativePath)
                 else resolveTargetDirectory(targetTreeUri, targetRelativePath)
             ensureNonOverlappingMigrationRoots(sourceRoot, targetRoot)
+            val sourceDirectories = mutableMapOf<Uri, Map<String, DocumentRow>>()
             transferFiles(
                 paths = transferPaths(call),
                 operationId = operationId,
                 verifyOnly = verifyOnly,
-                source = { path -> openDocumentInput(sourceRoot, path) ?: throw FileNotFoundException(path) },
+                source = { path -> openDocumentInput(sourceRoot, path, sourceDirectories) ?: throw FileNotFoundException(path) },
                 target = { path -> openDocumentInput(targetRoot, path) },
                 write = { path, input -> writeDocumentPath(targetRoot, path, false) { output -> copyStreams(input, output) } },
             )
@@ -376,6 +380,21 @@ class DocumentTreeStorageBridge(
         }
     }
 
+    private fun handleStageFile(call: MethodCall, result: MethodChannel.Result) {
+        val treeUri = call.requireString("treeUri")
+        val relativePath = call.requireString("relativePath")
+        val target = File(call.requireString("destinationPath")).canonicalFile
+        require(target.path.startsWith(activity.cacheDir.canonicalPath + File.separator)) {
+            "归档临时文件目录无效。"
+        }
+        runAsyncLogged(method = "stageFile", result = result, executor = transferIoExecutor, relativePath = relativePath) {
+            val document = requireDocument(treeUri, relativePath)
+            val input = activity.contentResolver.openInputStream(document.uri) ?: throw FileNotFoundException(relativePath)
+            input.use { writeFileAtomically(target, it) }
+            null
+        }
+    }
+
     private fun handleReadBytesFromUri(call: MethodCall, result: MethodChannel.Result) {
         val documentUri = call.requireString("documentUri")
         runAsyncLogged(
@@ -402,27 +421,14 @@ class DocumentTreeStorageBridge(
             recursive = recursive,
         ) {
             val tree = requireTree(treeUri)
-            val baseDocument = resolveDocument(tree, splitRelativePath(relativePath))
-            if (baseDocument == null || !baseDocument.exists()) {
-                return@runAsyncLogged emptyList<Map<String, Any?>>()
-            }
-
-            val baseSegments = splitRelativePath(relativePath)
+            val segments = splitRelativePath(relativePath)
+            val base = projectedPath(tree, segments) ?: return@runAsyncLogged emptyList<Map<String, Any?>>()
             val results = mutableListOf<Map<String, Any?>>()
-            if (baseDocument.isDirectory) {
-                collectEntries(
-                    directory = baseDocument,
-                    prefixSegments = baseSegments,
-                    recursive = recursive,
-                    results = results,
-                )
+            val prefix = segments.joinToString("/")
+            if (base.directory) {
+                collectEntries(base.uri, prefix, recursive, results)
             } else {
-                results.add(
-                    entryMap(
-                        relativePath = baseSegments.joinToString("/"),
-                        document = baseDocument,
-                    ),
-                )
+                results.add(base.entry(prefix))
             }
             results
         }
@@ -438,20 +444,15 @@ class DocumentTreeStorageBridge(
             recursive = false,
         ) {
             val tree = requireTree(treeUri)
-            val document = resolveDocument(tree, splitRelativePath(relativePath))
-            document?.exists() == true
+            projectedPath(tree, splitRelativePath(relativePath)) != null
         }
     }
 
     private fun handleDeletePath(call: MethodCall, result: MethodChannel.Result) {
-        val operationId = call.argument<String>("operationId")?.trim().orEmpty()
         runAsyncLogged(
             method = "deletePath",
             result = result,
-            executor = if (operationId.isBlank()) foregroundIoExecutor else transferIoExecutor,
             relativePath = call.argument<String>("relativePath")?.trim().orEmpty(),
-            recursive = false,
-            extra = "operationId=$operationId",
         ) {
             val treeUri = call.requireString("treeUri")
             val relativePath = call.requireString("relativePath")
@@ -463,18 +464,7 @@ class DocumentTreeStorageBridge(
             if (document == null || !document.exists()) {
                 return@runAsyncLogged false
             }
-            if (operationId.isBlank()) {
-                return@runAsyncLogged document.delete()
-            }
-            val progressReporter =
-                ProgressReporter(
-                    operationId = operationId,
-                    totalCount = countFilesForDeletion(document),
-                )
-            progressReporter.dispatch(force = true)
-            val deleted = deleteDocumentRecursively(document, relativePath, progressReporter)
-            progressReporter.complete()
-            deleted
+            document.delete()
         }
     }
 
@@ -681,49 +671,58 @@ class DocumentTreeStorageBridge(
         target: (String) -> InputStream?,
         write: (String, InputStream) -> Unit,
     ) {
-        val digests = linkedMapOf<String, ByteArray>()
         val missing = mutableSetOf<String>()
-        // Check every conflict before creating any destination file.
+        val sourceBuffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        val targetBuffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        // Check existing names before publishing any new file.
         for (path in paths) {
-            val sourceDigest = source(path).use { digest(it) }
-            digests[path] = sourceDigest
             val existing = target(path)
             if (existing == null) {
                 if (verifyOnly) throw IOException("目标缺少缓存文件，原缓存已保留：$path")
                 missing.add(path)
-            } else if (!existing.use { digest(it) }.contentEquals(sourceDigest)) {
-                throw IOException("目标已有不同内容的同名文件，未覆盖：$path")
+            } else {
+                existing.use { targetInput ->
+                    source(path).use { sourceInput ->
+                        if (!sameContents(sourceInput, targetInput, sourceBuffer, targetBuffer)) {
+                            throw IOException("目标已有不同内容的同名文件，未覆盖：$path")
+                        }
+                    }
+                }
             }
         }
+        if (verifyOnly) return
         val progress = ProgressReporter(operationId = operationId, totalCount = paths.size)
         progress.dispatch(force = true)
         for (path in paths) {
             if (path in missing) {
                 source(path).use { input -> write(path, input) }
-                val copied = target(path) ?: throw IOException("目标缓存文件不可读：$path")
-                if (!copied.use { digest(it) }.contentEquals(digests.getValue(path))) {
-                    throw IOException("缓存文件校验失败，原缓存已保留：$path")
-                }
             }
             progress.advance(path)
         }
         progress.complete()
     }
 
-    private fun digest(input: InputStream): ByteArray {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    private fun sameContents(source: InputStream, target: InputStream, left: ByteArray, right: ByteArray): Boolean {
+        val reader = DataInputStream(target)
         while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            if (count > 0) digest.update(buffer, 0, count)
+            val count = source.read(left)
+            if (count < 0) return reader.read() == -1
+            try {
+                reader.readFully(right, 0, count)
+            } catch (_: EOFException) {
+                return false
+            }
+            for (i in 0 until count) {
+                if (left[i] != right[i]) return false
+            }
         }
-        return digest.digest()
     }
 
-    private fun openDocumentInput(root: DocumentFile, path: String): InputStream? {
-        val document = resolveDocument(root, splitRelativePath(path)) ?: return null
-        require(document.isFile) { "目标路径不是文件：$path" }
+    private fun openDocumentInput(
+        root: DocumentFile, path: String, directories: MutableMap<Uri, Map<String, DocumentRow>>? = null,
+    ): InputStream? {
+        val document = projectedPath(root, splitRelativePath(path), directories) ?: return null
+        require(!document.directory) { "目标路径不是文件：$path" }
         return activity.contentResolver.openInputStream(document.uri)
             ?: throw IOException("无法读取文件：$path")
     }
@@ -761,14 +760,7 @@ class DocumentTreeStorageBridge(
         }
 
     private fun copyStreams(input: InputStream, output: OutputStream) {
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        while (true) {
-            val read = input.read(buffer)
-            if (read <= 0) {
-                break
-            }
-            output.write(buffer, 0, read)
-        }
+        input.copyTo(output)
         output.flush()
     }
 
@@ -901,52 +893,6 @@ class DocumentTreeStorageBridge(
         return candidate == parent || candidate.startsWith("$parent/")
     }
 
-    private fun countFilesForDeletion(document: DocumentFile): Int {
-        if (document.isFile) {
-            return 1
-        }
-        var count = 0
-        for (child in document.listFiles()) {
-            val childName = child.name?.trim().orEmpty()
-            if (childName.isEmpty()) {
-                continue
-            }
-            count += countFilesForDeletion(child)
-        }
-        return count
-    }
-
-    private fun deleteDocumentRecursively(
-        document: DocumentFile,
-        relativePath: String,
-        progressReporter: ProgressReporter,
-    ): Boolean {
-        if (document.isDirectory) {
-            for (child in document.listFiles()) {
-                val childName = child.name?.trim().orEmpty()
-                if (childName.isEmpty()) {
-                    continue
-                }
-                val childRelativePath =
-                    if (relativePath.isEmpty()) {
-                        childName
-                    } else {
-                        "$relativePath/$childName"
-                    }
-                if (!deleteDocumentRecursively(child, childRelativePath, progressReporter)) {
-                    return false
-                }
-            }
-            return document.delete()
-        }
-
-        val deleted = document.delete()
-        if (deleted) {
-            progressReporter.advance(relativePath)
-        }
-        return deleted
-    }
-
     private fun requireTree(treeUri: String): DocumentFile {
         val documentFile =
             DocumentFile.fromTreeUri(activity, Uri.parse(treeUri))
@@ -956,9 +902,9 @@ class DocumentTreeStorageBridge(
         return documentFile
     }
 
-    private fun requireDocument(treeUri: String, relativePath: String): DocumentFile {
+    private fun requireDocument(treeUri: String, relativePath: String): DocumentRow {
         val tree = requireTree(treeUri)
-        return resolveDocument(tree, splitRelativePath(relativePath))
+        return projectedPath(tree, splitRelativePath(relativePath))
             ?: throw FileNotFoundException("Document not found: $relativePath")
     }
 
@@ -991,48 +937,83 @@ class DocumentTreeStorageBridge(
         return current
     }
 
-    private fun collectEntries(
-        directory: DocumentFile,
-        prefixSegments: List<String>,
-        recursive: Boolean,
-        results: MutableList<Map<String, Any?>>,
-    ) {
-        val children = synchronized(documentCommitLock) {
-            val entries = directory.listFiles()
-            var recovered = false
-            for (entry in entries) {
-                val name = entry.name.orEmpty()
-                if (name.startsWith(".easycopy.") && name.endsWith(".migrate_tmp") && entry.isFile) {
-                    val originalName = name.removePrefix(".easycopy.").removeSuffix(".migrate_tmp")
-                    if (originalName.isNotEmpty() && directory.findFile(originalName) == null) {
-                        recoverDocument(directory, originalName)
-                        recovered = true
-                    }
-                }
-            }
-            if (recovered) directory.listFiles() else entries
-        }
-        for (child in children) {
-            val childName = child.name?.trim().orEmpty()
-            if (childName.isEmpty()) {
-                continue
-            }
-            val relativeSegments = prefixSegments + childName
-            val relativePath = relativeSegments.joinToString("/")
-            results.add(entryMap(relativePath = relativePath, document = child))
-            if (recursive && child.isDirectory) {
-                collectEntries(child, relativeSegments, true, results)
-            }
-        }
+    private data class DocumentRow(val uri: Uri, val name: String, val directory: Boolean, val size: Long) {
+        fun entry(relative: String): Map<String, Any?> = mapOf(
+            "relativePath" to relative, "name" to name, "isDirectory" to directory, "size" to size,
+        )
     }
 
-    private fun entryMap(relativePath: String, document: DocumentFile): Map<String, Any?> {
-        return mapOf(
-            "relativePath" to relativePath,
-            "name" to (document.name ?: ""),
-            "isDirectory" to document.isDirectory,
-            "size" to document.length(),
+    private fun queryChildren(parent: Uri): List<DocumentRow> {
+        val resolver = activity.contentResolver
+        val uri = DocumentsContract.buildChildDocumentsUriUsingTree(parent, DocumentsContract.getDocumentId(parent))
+        val columns = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE,
         )
+        val rows = mutableListOf<DocumentRow>()
+        val cursor = resolver.query(uri, columns, null, null, null) ?: throw IOException("无法读取目录：$parent")
+        cursor.use {
+            while (it.moveToNext()) {
+                val name = it.getString(1) ?: continue
+                val childUri = DocumentsContract.buildDocumentUriUsingTree(parent, it.getString(0))
+                rows.add(DocumentRow(childUri, name, it.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR, it.getLong(3)))
+            }
+        }
+        return rows
+    }
+
+    private fun projectedPath(
+        root: DocumentFile, segments: List<String>, directories: MutableMap<Uri, Map<String, DocumentRow>>? = null,
+    ): DocumentRow? {
+        var current = DocumentRow(root.uri, "", true, 0)
+        for ((index, segment) in segments.withIndex()) {
+            if (!current.directory) return null
+            val parent = current.uri
+            current = synchronized(documentCommitLock) {
+                fun byName(): Map<String, DocumentRow> = buildMap {
+                    for (row in queryChildren(parent)) {
+                        if (row.name !in this) put(row.name, row)
+                    }
+                }
+                val children = directories?.getOrPut(parent) { byName() } ?: byName()
+                children[segment] ?: if (index == segments.lastIndex) {
+                    children[".easycopy.$segment.migrate_tmp"]?.let { backup ->
+                        directories?.remove(parent)
+                        restoreBackup(backup, segment)
+                    }
+                } else null
+            } ?: return null
+        }
+        return current
+    }
+
+    private fun restoreBackup(backup: DocumentRow, name: String): DocumentRow {
+        val uri = DocumentsContract.renameDocument(activity.contentResolver, backup.uri, name)
+            ?: throw IOException("无法恢复缓存文件：$name")
+        return backup.copy(uri = uri, name = name)
+    }
+
+    private fun collectEntries(
+        parent: Uri, prefix: String, recursive: Boolean, results: MutableList<Map<String, Any?>>,
+    ) {
+        val children = synchronized(documentCommitLock) {
+            val rows = queryChildren(parent)
+            val names by lazy { rows.mapTo(mutableSetOf()) { it.name } }
+            rows.map { child ->
+                val name = child.name
+                if (!child.directory && name.startsWith(".easycopy.") && name.endsWith(".migrate_tmp")) {
+                    val original = name.removePrefix(".easycopy.").removeSuffix(".migrate_tmp")
+                    if (original.isNotEmpty() && original !in names) restoreBackup(child, original) else child
+                } else child
+            }
+        }
+        for (child in children) {
+            val name = child.name.trim()
+            if (name.isEmpty()) continue
+            val relative = if (prefix.isEmpty()) name else "$prefix/$name"
+            results.add(child.entry(relative))
+            if (recursive && child.directory) collectEntries(child.uri, relative, true, results)
+        }
     }
 
     private fun writeProbe(rootDirectory: DocumentFile) {
@@ -1091,7 +1072,7 @@ class DocumentTreeStorageBridge(
     ) {
         private var completedCount = 0
         private var lastDispatchedAtMillis = 0L
-        private var lastDispatchedCompletedCount = 0
+        private var lastDispatchedCompletedCount = -1
 
         fun advance(currentItemPath: String) {
             completedCount += 1
@@ -1106,9 +1087,7 @@ class DocumentTreeStorageBridge(
         }
 
         fun dispatch(currentItemPath: String = "", force: Boolean = false) {
-            if (operationId.isBlank()) {
-                return
-            }
+            if (operationId.isBlank() || completedCount == lastDispatchedCompletedCount) return
             val now = SystemClock.uptimeMillis()
             val dispatchStep =
                 when {

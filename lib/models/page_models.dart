@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:reader/models/blocked_content.dart';
+import 'package:reader/services/uri_keys.dart';
 
 part 'page_models/site_pages.dart';
 
@@ -371,30 +372,20 @@ class RankEntryData {
 
 @immutable
 class ChapterData {
-  const ChapterData({
-    required this.label,
-    required this.href,
-    this.subtitle = '',
-  });
+  const ChapterData({required this.label, required this.href});
 
   factory ChapterData.fromJson(Map<String, Object?> json) {
     return ChapterData(
       label: _stringValue(json['label']),
       href: _stringValue(json['href']),
-      subtitle: _stringValue(json['subtitle']),
     );
   }
 
   final String label;
   final String href;
-  final String subtitle;
 
   Map<String, Object?> toJson() {
-    return <String, Object?>{
-      'label': label,
-      'href': href,
-      'subtitle': subtitle,
-    };
+    return <String, Object?>{'label': label, 'href': href};
   }
 }
 
@@ -428,9 +419,6 @@ class ProfileUserData {
     required this.userId,
     required this.username,
     this.nickname = '',
-    this.avatarUrl = '',
-    this.createdAt = '',
-    this.membershipLabel = '',
   });
 
   factory ProfileUserData.fromJson(Map<String, Object?> json) {
@@ -438,18 +426,12 @@ class ProfileUserData {
       userId: _stringValue(json['userId']),
       username: _stringValue(json['username']),
       nickname: _stringValue(json['nickname']),
-      avatarUrl: _stringValue(json['avatarUrl']),
-      createdAt: _stringValue(json['createdAt']),
-      membershipLabel: _stringValue(json['membershipLabel']),
     );
   }
 
   final String userId;
   final String username;
   final String nickname;
-  final String avatarUrl;
-  final String createdAt;
-  final String membershipLabel;
 
   String get displayName => nickname.isNotEmpty ? nickname : username;
 
@@ -458,9 +440,6 @@ class ProfileUserData {
       'userId': userId,
       'username': username,
       'nickname': nickname,
-      'avatarUrl': avatarUrl,
-      'createdAt': createdAt,
-      'membershipLabel': membershipLabel,
     };
   }
 }

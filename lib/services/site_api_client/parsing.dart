@@ -14,35 +14,18 @@ extension _SiteApiParsing on SiteApiClient {
       'email',
     ]);
     final String nickname = pickString(results, <String>['nickname', 'name']);
-    final String avatarUrl = pickString(results, <String>[
-      'avatar',
-      'avatar_url',
-    ]);
-    final String createdAt = pickString(results, <String>[
-      'createDate',
-      'datetime_created',
-      'created_at',
-    ]);
-    final List<String> memberships = <String>[
-      if (pickBool(results, 'vip')) 'VIP',
-      if (pickBool(results, 'comic_vip')) '漫画会员',
-      if (pickBool(results, 'cartoon_vip')) '动画会员',
-    ];
     return ProfileUserData(
       userId: userId,
       username: username.isEmpty ? '未命名用户' : username,
       nickname: nickname,
-      avatarUrl: avatarUrl,
-      createdAt: createdAt,
-      membershipLabel: memberships.isEmpty ? '普通会员' : memberships.join(' / '),
     );
   }
 
   List<ProfileLibraryItem> _parseCollections(
-    Object? results, {
+    List<Map<String, Object?>> results, {
     ProfileCollectionSort sort = AppConfig.defaultProfileCollectionSort,
   }) {
-    final List<ProfileLibraryItem> items = _extractList(results)
+    final List<ProfileLibraryItem> items = results
         .map((Map<String, Object?> item) {
           final Map<String, Object?> comic = _firstNonEmptyMap(item, <String>[
             'comic',
@@ -101,8 +84,8 @@ extension _SiteApiParsing on SiteApiClient {
     return items;
   }
 
-  List<ProfileHistoryItem> _parseHistory(Object? results) {
-    return _extractList(results)
+  List<ProfileHistoryItem> _parseHistory(List<Map<String, Object?>> results) {
+    return results
         .map((Map<String, Object?> item) {
           final Map<String, Object?> comic = _firstNonEmptyMap(item, <String>[
             'comic',
@@ -180,7 +163,10 @@ extension _SiteApiParsing on SiteApiClient {
       'pathWord',
       'slug',
     ]);
-    final String authorText = _searchAuthorLabel(source);
+    final authors = _searchAuthorLinks(source);
+    final authorText = authors.isEmpty
+        ? pickString(source, const ['author_name', 'author'])
+        : authors.map((author) => author.label).join(' / ');
     return ComicCardData(
       title: pickString(source, <String>['name', 'title']),
       subtitle: authorText.isEmpty ? '作者：--' : '作者：$authorText',
@@ -191,7 +177,7 @@ extension _SiteApiParsing on SiteApiClient {
       ]),
       coverUrl: pickString(source, <String>['cover', 'cover_url', 'image']),
       href: _buildComicHref(pathWord, source, item),
-      authorLinks: _searchAuthorLinks(source),
+      authorLinks: authors,
     );
   }
 
@@ -297,29 +283,6 @@ extension _SiteApiParsing on SiteApiClient {
     return AppConfig.resolvePath(
       '/comic/$pathWord/chapter/$chapterUuid',
     ).toString();
-  }
-
-  String _searchAuthorLabel(Map<String, Object?> source) {
-    final Object? authorValue = source['author'];
-    if (authorValue is List) {
-      final List<String> labels = authorValue
-          .whereType<Map>()
-          .map(
-            (Map value) => pickString(
-              value.map(
-                (Object? key, Object? nested) =>
-                    MapEntry(key.toString(), nested),
-              ),
-              const <String>['name', 'author_name', 'title'],
-            ),
-          )
-          .where((String value) => value.isNotEmpty)
-          .toList(growable: false);
-      if (labels.isNotEmpty) {
-        return labels.join(' / ');
-      }
-    }
-    return pickString(source, const <String>['author_name', 'author']);
   }
 
   List<LinkAction> _searchAuthorLinks(Map<String, Object?> source) {

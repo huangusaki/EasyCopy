@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -66,11 +65,7 @@ class ProfilePageView extends StatelessWidget {
     this.isCheckingForUpdates = false,
     this.onCheckForUpdates,
     this.onOpenProjectRepository,
-    this.currentHost = '',
-    this.knownHosts = const <String>[],
-    this.candidateHosts = const <String>[],
-    this.candidateHostAliases = const <String, List<String>>{},
-    this.hostSnapshot,
+    this.hostManager,
     this.isRefreshingHosts = false,
     this.onRefreshHosts,
     this.onUseAutomaticHostSelection,
@@ -84,6 +79,7 @@ class ProfilePageView extends StatelessWidget {
     this.chineseConversionMode = ChineseConversionMode.disabled,
     this.onChineseConversionModeChanged,
     this.afterContinueReading,
+    this.cachedMetadata,
     this.cachedComicCards = const <ComicCardData>[],
     this.activeSubview = ProfileSubview.root,
     super.key,
@@ -111,11 +107,7 @@ class ProfilePageView extends StatelessWidget {
   final bool isCheckingForUpdates;
   final VoidCallback? onCheckForUpdates;
   final VoidCallback? onOpenProjectRepository;
-  final String currentHost;
-  final List<String> knownHosts;
-  final List<String> candidateHosts;
-  final Map<String, List<String>> candidateHostAliases;
-  final HostProbeSnapshot? hostSnapshot;
+  final HostManager? hostManager;
   final bool isRefreshingHosts;
   final FutureOr<void> Function()? onRefreshHosts;
   final FutureOr<void> Function()? onUseAutomaticHostSelection;
@@ -129,37 +121,29 @@ class ProfilePageView extends StatelessWidget {
   final ChineseConversionMode chineseConversionMode;
   final ValueChanged<ChineseConversionMode>? onChineseConversionModeChanged;
   final Widget? afterContinueReading;
-  final List<ComicCardData> cachedComicCards;
+  final Iterable<ComicCardData> cachedComicCards;
+  final ({bool hasSubtitle, bool hasSecondary})? cachedMetadata;
   final ProfileSubview activeSubview;
   static const double _libraryPreviewWidth = 100;
 
   @override
   Widget build(BuildContext context) {
-    final bool showsHostSettings =
-        currentHost.trim().isNotEmpty ||
-        knownHosts.isNotEmpty ||
-        candidateHosts.isNotEmpty ||
-        hostSnapshot != null;
-    final List<ComicCardData> collectionCards = page.collections
-        .map(_collectionCardData)
-        .toList(growable: false);
-    final List<ComicCardData> historyCards = page.history
-        .map(_historyCardData)
-        .toList(growable: false);
+    late final collectionCards = page.collections.map(_collectionCardData);
+    late final historyCards = page.history.map(_historyCardData);
     final int collectionsTotal = page.collectionsTotal > 0
         ? page.collectionsTotal
-        : collectionCards.length;
+        : page.collections.length;
     final int historyTotal = page.historyTotal > 0
         ? page.historyTotal
-        : historyCards.length;
+        : page.history.length;
     final ValueChanged<String>? localHistoryDelete = page.isLoggedIn
         ? null
         : onDeleteHistory;
-    final TextScaler textScaler = MediaQuery.textScalerOf(context);
-    final double libraryPreviewWidth =
+    late final TextScaler textScaler = MediaQuery.textScalerOf(context);
+    late final double libraryPreviewWidth =
         textScaler.scale(_libraryPreviewWidth) +
         ComicCardInk.contentPadding * 2;
-    final double libraryPreviewHeight = _LibraryCard.previewHeightFor(
+    late final double libraryPreviewHeight = _LibraryCard.previewHeightFor(
       textScaler: textScaler,
       width: libraryPreviewWidth,
     );
@@ -167,6 +151,7 @@ class ProfilePageView extends StatelessWidget {
     if (activeSubview == ProfileSubview.cached) {
       return _buildComicCollectionSection(
         items: cachedComicCards,
+        metadata: cachedMetadata,
         emptyMessage: '还没有缓存的漫画。',
         onTap: onOpenCachedComic ?? onOpenComic,
         onLongPress: onDeleteCachedComic,
@@ -176,7 +161,7 @@ class ProfilePageView extends StatelessWidget {
     }
 
     if (activeSubview == ProfileSubview.blocked) {
-      return _buildBlockedSection(context);
+      return SliverToBoxAdapter(child: _buildBlockedSection(context));
     }
 
     switch (activeSubview) {
@@ -231,9 +216,11 @@ class ProfilePageView extends StatelessWidget {
                 height: libraryPreviewHeight,
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
-                  itemCount: collectionCards.length,
+                  itemCount: page.collections.length,
                   itemBuilder: (BuildContext context, int index) {
-                    final ComicCardData item = collectionCards[index];
+                    final ComicCardData item = _collectionCardData(
+                      page.collections[index],
+                    );
                     return SizedBox(
                       width: libraryPreviewWidth,
                       child: _LibraryCard(
@@ -268,7 +255,9 @@ class ProfilePageView extends StatelessWidget {
                   scrollDirection: Axis.horizontal,
                   itemCount: cachedComicCards.length,
                   itemBuilder: (BuildContext context, int index) {
-                    final ComicCardData item = cachedComicCards[index];
+                    final ComicCardData item = cachedComicCards.elementAt(
+                      index,
+                    );
                     return SizedBox(
                       width: libraryPreviewWidth,
                       child: _LibraryCard(
@@ -316,9 +305,11 @@ class ProfilePageView extends StatelessWidget {
                 height: libraryPreviewHeight,
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
-                  itemCount: historyCards.length,
+                  itemCount: page.history.length,
                   itemBuilder: (BuildContext context, int index) {
-                    final ComicCardData item = historyCards[index];
+                    final ComicCardData item = _historyCardData(
+                      page.history[index],
+                    );
                     return SizedBox(
                       width: libraryPreviewWidth,
                       child: _LibraryCard(
@@ -350,13 +341,9 @@ class ProfilePageView extends StatelessWidget {
         wallpaperActions: wallpaperActions,
         chineseConversionMode: chineseConversionMode,
         onChineseConversionModeChanged: onChineseConversionModeChanged,
-        hostEntry: showsHostSettings
+        hostEntry: hostManager != null
             ? _HostSettingsEntryRow(
-                currentHost: currentHost,
-                knownHosts: knownHosts,
-                candidateHosts: candidateHosts,
-                candidateHostAliases: candidateHostAliases,
-                snapshot: hostSnapshot,
+                manager: hostManager!,
                 isRefreshing: isRefreshingHosts,
                 onRefresh: onRefreshHosts,
                 onUseAutomaticSelection: onUseAutomaticHostSelection,
@@ -382,14 +369,7 @@ class ProfilePageView extends StatelessWidget {
         child: Column(children: sections),
       ),
     );
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        if (constraints.hasBoundedHeight) {
-          return SingleChildScrollView(child: content);
-        }
-        return content;
-      },
-    );
+    return SliverToBoxAdapter(child: content);
   }
 
   Widget _buildBlockedSection(BuildContext context) {
@@ -489,7 +469,8 @@ class ProfilePageView extends StatelessWidget {
   }
 
   Widget _buildComicCollectionSection({
-    required List<ComicCardData> items,
+    required Iterable<ComicCardData> items,
+    ({bool hasSubtitle, bool hasSecondary})? metadata,
     required String emptyMessage,
     required ValueChanged<String> onTap,
     required bool isLoading,
@@ -497,23 +478,28 @@ class ProfilePageView extends StatelessWidget {
     PagerData pager = const PagerData(),
     ValueChanged<int>? onOpenPage,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        AppSurfaceCard(
-          child: isLoading
-              ? const _ProfileListLoader()
-              : ComicGrid(
+    return SliverMainAxisGroup(
+      slivers: [
+        AppSliverSurface(
+          sliver: isLoading
+              ? const SliverToBoxAdapter(child: _ProfileListLoader())
+              : ComicSliverGrid(
                   items: items,
+                  metadata: metadata,
                   onTap: onTap,
-                  onLongPress: onLongPress,
+                  onLongPress: onLongPress == null
+                      ? null
+                      : (item) => onLongPress(item.href),
                   emptyMessage: emptyMessage,
                 ),
         ),
-        if (!isLoading && _shouldShowPager(pager)) ...<Widget>[
-          const SizedBox(height: 16),
-          _ProfilePagerBar(pager: pager, onOpenPage: onOpenPage),
-        ],
+        if (!isLoading && _shouldShowPager(pager))
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: _ProfilePagerBar(pager: pager, onOpenPage: onOpenPage),
+            ),
+          ),
       ],
     );
   }

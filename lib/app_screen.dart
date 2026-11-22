@@ -57,6 +57,8 @@ import 'package:reader/services/rank_filter_selection.dart';
 import 'package:reader/services/reader_navigation_repairer.dart';
 import 'package:reader/services/reader_platform_bridge.dart';
 import 'package:reader/services/site_api_client.dart';
+import 'package:reader/services/site_page_source.dart';
+import 'package:reader/services/site_session.dart';
 import 'package:reader/services/standard_page_load_controller.dart';
 import 'package:reader/services/tab_activation_policy.dart';
 import 'package:reader/services/uri_keys.dart';
@@ -110,7 +112,8 @@ const Duration _backToExitConfirmWindow = Duration(seconds: 2);
 
 Widget _buildFadeSwitchTransition(Widget child, Animation<double> animation) {
   return FadeTransition(
-    opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+    key: child.key,
+    opacity: animation.drive(CurveTween(curve: Curves.easeOutCubic)),
     child: child,
   );
 }
@@ -142,11 +145,15 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
   late final AppScrollState _scrollState;
   late final DetailChapterController _detailChapters;
   late final ChapterPathResolver _chapterKeys;
+  var _navigationRepairer = ReaderNavigationRepairer();
   final PrimaryTabSessionStore _tabSessionStore = PrimaryTabSessionStore(
     rootUris: <int, Uri>{
       for (int index = 0; index < appDestinations.length; index += 1)
         index: appDestinations[index].uri,
     },
+  );
+  late final BlockedContentFilter _displayFilter = BlockedContentFilter(
+    _services.blockedContentStore,
   );
   late final PageRepository _pageRepository;
   late final AppSessionController _sessionController;
@@ -175,16 +182,11 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
         widget.preferencesController ?? AppPreferencesController.instance;
     _readerServices = _services.createReaderServices(_preferencesController);
     _shell.lastDownloadPrefs = _preferencesController.downloadPreferences;
-    if (PlatformCapabilities.usesMobileWebView) {
-      _controller = _buildController();
-      _downloadController = _buildDownloadController();
-    }
     _chapterKeys = ChapterPathResolver(_services.readerProgressStore);
     _searchActions = AppSearchActions(
       historyStore: _services.searchHistoryStore,
       currentUri: () => _currentUri,
       selectedIndex: () => _nav.selectedIndex,
-      isMounted: () => mounted,
       updateUi: _setStateIfMounted,
       showNotice: _showNotice,
       loadUri:
@@ -230,6 +232,7 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
       session: _services.session,
       pageRepository: _pageRepository,
       invalidateNavigation: () {
+        _navigationRepairer = ReaderNavigationRepairer();
         for (int index = 0; index < appDestinations.length; index += 1) {
           _abandonCurrentRequest(index, phase: 'logout');
         }
@@ -504,6 +507,12 @@ class _AppScreenState extends State<AppScreen> with WidgetsBindingObserver {
                 switchInCurve: Curves.easeOut,
                 switchOutCurve: Curves.easeIn,
                 transitionBuilder: _buildFadeSwitchTransition,
+                // 阅读和普通页面交替；快速返回时同一模式只保留一个挂载实例。
+                layoutBuilder: (current, outgoing) =>
+                    AnimatedSwitcher.defaultLayoutBuilder(
+                      current,
+                      outgoing.isEmpty ? const [] : [outgoing.last],
+                    ),
                 child: page is ReaderPageData
                     ? KeyedSubtree(
                         key: const ValueKey<String>('reader'),

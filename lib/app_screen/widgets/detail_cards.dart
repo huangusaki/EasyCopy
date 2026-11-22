@@ -505,37 +505,6 @@ class _HoverFloatCoverState extends State<_HoverFloatCover> {
   }
 }
 
-/// 章节分组切换的淡入容器：只让当前内容参与布局。
-///
-/// AnimatedSwitcher 默认的 layoutBuilder 会把旧内容一起塞进 Stack，切换章节
-/// tab 时卡片高度被钉在旧列表上、旧章节压在新章节下面；同一话同时出现在两个
-/// 分组里时，[ChapterGrid] 复用的 GlobalKey 还会撞车。旧内容直接退出即可。
-class DetailSectionSwitcher extends StatelessWidget {
-  const DetailSectionSwitcher({required this.contentKey, required this.child});
-
-  final String contentKey;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 320),
-      switchInCurve: Curves.easeOutCubic,
-      layoutBuilder: (Widget? currentChild, List<Widget> previousChildren) =>
-          currentChild ?? const SizedBox.shrink(),
-      transitionBuilder: (Widget child, Animation<double> animation) =>
-          FadeTransition(
-            opacity: CurvedAnimation(
-              parent: animation,
-              curve: Curves.easeOutCubic,
-            ),
-            child: child,
-          ),
-      child: KeyedSubtree(key: ValueKey<String>(contentKey), child: child),
-    );
-  }
-}
-
 class ChapterGrid extends StatelessWidget {
   const ChapterGrid({
     required this.chapters,
@@ -543,7 +512,8 @@ class ChapterGrid extends StatelessWidget {
     this.downloadedChapterPathKeys = const <String>{},
     this.visitedChapterPathKeys = const <String>{},
     this.lastReadChapterPathKey = '',
-    this.itemKeyBuilder,
+    this.onLayout,
+    super.key,
   });
 
   final List<ChapterData> chapters;
@@ -551,7 +521,11 @@ class ChapterGrid extends StatelessWidget {
   final Set<String> downloadedChapterPathKeys;
   final Set<String> visitedChapterPathKeys;
   final String lastReadChapterPathKey;
-  final GlobalKey Function(String chapterPathKey)? itemKeyBuilder;
+  final void Function(
+    SliverConstraints constraints,
+    SliverGridDelegateWithFixedCrossAxisCount delegate,
+  )?
+  onLayout;
 
   @override
   Widget build(BuildContext context) {
@@ -576,11 +550,9 @@ class ChapterGrid extends StatelessWidget {
       downloadedColor.withValues(alpha: 0.12),
       tileColor,
     );
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        final double maxWidth = constraints.maxWidth.isFinite
-            ? constraints.maxWidth
-            : MediaQuery.sizeOf(context).width;
+    return SliverLayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.crossAxisExtent;
         final bool isWideLayout = usesWideLayout(context);
         final int crossAxisCount = responsiveComicCrossAxisCount(
           context,
@@ -589,17 +561,17 @@ class ChapterGrid extends StatelessWidget {
           spacing: 10,
           maxCount: 6,
         );
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
+        final delegate = SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: crossAxisCount,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+          childAspectRatio: isWideLayout ? 2.6 : 2.0,
+        );
+        onLayout?.call(constraints, delegate);
+        return SliverGrid.builder(
+          gridDelegate: delegate,
           itemCount: chapters.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: isWideLayout ? 2.6 : 2.0,
-          ),
-          itemBuilder: (BuildContext context, int index) {
+          itemBuilder: (context, index) {
             final ChapterData chapter = chapters[index];
             final Uri? chapterUri = Uri.tryParse(chapter.href);
             final String chapterPathKey = chapterUri == null
@@ -694,10 +666,7 @@ class ChapterGrid extends StatelessWidget {
                 ),
               ),
             );
-            final GlobalKey? itemKey = itemKeyBuilder?.call(chapterPathKey);
-            return itemKey == null
-                ? child
-                : KeyedSubtree(key: itemKey, child: child);
+            return Material(type: MaterialType.transparency, child: child);
           },
         );
       },

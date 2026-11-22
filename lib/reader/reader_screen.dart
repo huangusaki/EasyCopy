@@ -4,7 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/gestures.dart'
-    show DragStartBehavior, PointerDeviceKind;
+    show Drag, DragStartBehavior, PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:reader/models/app_preferences.dart';
 import 'package:reader/models/chapter_comment.dart';
@@ -250,7 +250,6 @@ class ReaderScreenState extends State<ReaderScreen> {
     final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
     final ReaderPreferences preferences = _controller.preferences;
     final double topOffset = preferences.fullscreen ? 2 : viewPadding.top + 6;
-    final int? batteryLevel = _controller.batteryLevel;
     return IgnorePointer(
       child: Stack(
         children: <Widget>[
@@ -259,10 +258,13 @@ class ReaderScreenState extends State<ReaderScreen> {
             Positioned(
               left: 8,
               top: topOffset,
-              child: ReaderStatusLabel(
-                label: batteryLevel == null ? '--%' : '$batteryLevel%',
-                icon: Icons.bolt_rounded,
-                fontSize: 14,
+              child: ValueListenableBuilder<int?>(
+                valueListenable: _controller.batteryLevel,
+                builder: (context, batteryLevel, _) => ReaderStatusLabel(
+                  label: batteryLevel == null ? '--%' : '$batteryLevel%',
+                  icon: Icons.bolt_rounded,
+                  fontSize: 14,
+                ),
               ),
             ),
           if (preferences.showClock)
@@ -479,27 +481,29 @@ class ReaderScreenState extends State<ReaderScreen> {
       bottom: bottomPadding,
       child: IgnorePointer(
         ignoring: !_controller.isChapterControlsVisible,
-        child: AnimatedSlide(
+        child: AnimatedSwitcher(
           duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          offset: _controller.isChapterControlsVisible
-              ? Offset.zero
-              : const Offset(0, 1.08),
-          child: AnimatedOpacity(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            opacity: _controller.isChapterControlsVisible ? 1 : 0,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: usesWideLayout(context)
-                      ? kWideReaderControlsMaxWidth
-                      : double.infinity,
-                ),
-                child: _buildReaderChapterControls(context, page),
-              ),
-            ),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeOutCubic,
+          transitionBuilder: (child, animation) => SlideTransition(
+            position: Tween(
+              begin: const Offset(0, 1.08),
+              end: Offset.zero,
+            ).animate(animation),
+            child: FadeTransition(opacity: animation, child: child),
           ),
+          child: _controller.isChapterControlsVisible
+              ? Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: usesWideLayout(context)
+                          ? kWideReaderControlsMaxWidth
+                          : double.infinity,
+                    ),
+                    child: _buildReaderChapterControls(context, page),
+                  ),
+                )
+              : null,
         ),
       ),
     );
@@ -559,7 +563,6 @@ class ReaderScreenState extends State<ReaderScreen> {
                 child: _buildReaderImageFrame(
                   context,
                   page: page,
-                  imageIndex: index,
                   imageUrl: page.imageUrls[index],
                   viewportHeight: preferences.pageFit == ReaderPageFit.fitScreen
                       ? MediaQuery.sizeOf(context).height * 0.72
@@ -600,7 +603,6 @@ class ReaderScreenState extends State<ReaderScreen> {
                         child: _buildReaderImageFrame(
                           context,
                           page: page,
-                          imageIndex: i,
                           imageUrl: page.imageUrls[i],
                           viewportHeight: 1,
                         ),
@@ -647,7 +649,6 @@ class ReaderScreenState extends State<ReaderScreen> {
                     return _buildReaderImageFrame(
                       context,
                       page: page,
-                      imageIndex: image,
                       imageUrl: page.imageUrls[image],
                       viewportHeight: constraints.maxHeight,
                       fit: BoxFit.contain,
@@ -692,8 +693,6 @@ class ReaderScreenState extends State<ReaderScreen> {
       itemCount: _controller.readerPagedPageCount(page),
       onPageChanged: _controller.handlePageChanged,
       itemBuilder: (BuildContext context, int index) {
-        final ScrollController scrollController = _controller
-            .pagedScrollControllerFor(index);
         final bool isCommentPage = index >= page.imageUrls.length;
         return LayoutBuilder(
           builder: (BuildContext context, BoxConstraints constraints) {
@@ -706,7 +705,6 @@ class ReaderScreenState extends State<ReaderScreen> {
                 : _buildReaderPagedPageBody(
                     context,
                     page: page,
-                    imageIndex: index,
                     imageUrl: page.imageUrls[index],
                     constraints: constraints,
                     showNextChapterFooter:
@@ -725,7 +723,7 @@ class ReaderScreenState extends State<ReaderScreen> {
                       return false;
                     },
                     child: SingleChildScrollView(
-                      controller: scrollController,
+                      controller: _controller.pagedScrollControllerFor(index),
                       physics: _controller.isZoomGestureLocked
                           ? const NeverScrollableScrollPhysics()
                           : const BouncingScrollPhysics(),
@@ -809,7 +807,6 @@ class ReaderScreenState extends State<ReaderScreen> {
   Widget _buildReaderImageFrame(
     BuildContext context, {
     required ReaderPageData page,
-    required int imageIndex,
     required String imageUrl,
     double? viewportHeight,
     BoxFit? fit,
@@ -853,7 +850,6 @@ class ReaderScreenState extends State<ReaderScreen> {
   Widget _buildReaderPagedPageBody(
     BuildContext context, {
     required ReaderPageData page,
-    required int imageIndex,
     required String imageUrl,
     required BoxConstraints constraints,
     required bool showNextChapterFooter,
@@ -873,7 +869,6 @@ class ReaderScreenState extends State<ReaderScreen> {
               _buildReaderImageFrame(
                 context,
                 page: page,
-                imageIndex: imageIndex,
                 imageUrl: imageUrl,
                 viewportHeight: preferences.pageFit == ReaderPageFit.fitScreen
                     ? constraints.maxHeight

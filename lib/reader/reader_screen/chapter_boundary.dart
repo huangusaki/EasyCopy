@@ -15,7 +15,6 @@ extension _ReaderChapterBoundary on ReaderScreenState {
                 context,
                 isPrevious: false,
                 compact: false,
-                forceVisible: true,
               ),
         ),
       ),
@@ -34,28 +33,22 @@ extension _ReaderChapterBoundary on ReaderScreenState {
 
   Widget _buildNextChapterCueStack(BuildContext context) {
     final EdgeInsets viewPadding = MediaQuery.viewPaddingOf(context);
-    final bool showPreviousCue =
-        _controller.previousChapterPullDistance > 0 ||
-        (_controller.isNextChapterLoading &&
-            _controller.previousChapterPullDistance > 0);
-    final bool showNextCue =
-        _controller.nextChapterPullDistance > 0 ||
-        (_controller.isNextChapterLoading &&
-            _controller.nextChapterPullDistance > 0);
+    final bool showPreviousCue = _controller.previousChapterPullDistance > 0;
+    final bool showNextCue = _controller.nextChapterPullDistance > 0;
     return Stack(
       children: <Widget>[
         if (showPreviousCue)
           _buildBoundaryCueOverlayEntry(
             context,
             isPrevious: true,
-            forceVisible: showPreviousCue,
+
             viewPadding: viewPadding,
           ),
         if (showNextCue)
           _buildBoundaryCueOverlayEntry(
             context,
             isPrevious: false,
-            forceVisible: showNextCue,
+
             viewPadding: viewPadding,
           ),
       ],
@@ -65,7 +58,7 @@ extension _ReaderChapterBoundary on ReaderScreenState {
   Widget _buildBoundaryCueOverlayEntry(
     BuildContext context, {
     required bool isPrevious,
-    required bool forceVisible,
+
     required EdgeInsets viewPadding,
   }) {
     final ReaderPreferences preferences = _controller.preferences;
@@ -97,7 +90,6 @@ extension _ReaderChapterBoundary on ReaderScreenState {
           context,
           isPrevious: isPrevious,
           compact: true,
-          forceVisible: forceVisible,
         ),
       ),
     );
@@ -107,7 +99,6 @@ extension _ReaderChapterBoundary on ReaderScreenState {
     BuildContext context, {
     required bool isPrevious,
     required bool compact,
-    required bool forceVisible,
   }) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final ReaderPreferences preferences = _controller.preferences;
@@ -120,11 +111,10 @@ extension _ReaderChapterBoundary on ReaderScreenState {
             ? _controller.previousChapterPullReady
             : _controller.nextChapterPullReady) &&
         !isLoading;
-    final double triggerDistance = _controller.isPaged ? 152 : 266;
+    final double triggerDistance = _controller.chapterTriggerDistance;
     final double progress = (pullDistance / triggerDistance)
         .clamp(0, 1)
         .toDouble();
-    final bool isVisible = forceVisible || isLoading || progress > 0;
     final IconData directionIcon = switch ((
       isPrevious,
       _controller.isPaged,
@@ -153,9 +143,7 @@ extension _ReaderChapterBoundary on ReaderScreenState {
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutQuart,
-      opacity: !isVisible
-          ? 0
-          : (isLoading || isReady ? 1 : (0.5 + progress * 0.5).clamp(0, 1)),
+      opacity: isLoading || isReady ? 1 : (0.5 + progress * 0.5).clamp(0, 1),
       child: AnimatedScale(
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOutQuart,

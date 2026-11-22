@@ -2,6 +2,18 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+void syncSearchHistoryOverlay(
+  OverlayPortalController controller, {
+  required bool visible,
+}) {
+  if (visible == controller.isShowing) return;
+  if (visible) {
+    controller.show();
+  } else {
+    controller.hide();
+  }
+}
+
 /// Desktop and mobile share the same history panel and chip styling.
 class SearchHistoryPanel extends StatefulWidget {
   const SearchHistoryPanel({

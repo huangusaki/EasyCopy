@@ -35,18 +35,31 @@ class ReaderDownloadTaskRunner implements DownloadTaskRunner {
     required ChapterDownloadPauseChecker shouldPause,
     required ChapterDownloadCancelChecker shouldCancel,
     ChapterDownloadProgressCallback? onProgress,
-  }) {
-    return _downloadService.downloadChapter(
-      page,
-      cookieHeader: _session.cookieHeader,
-      comicUri: task.comicUri,
-      chapterHref: task.chapterHref,
-      chapterLabel: task.chapterLabel,
-      coverUrl: task.coverUrl,
-      detailSnapshot: task.detailSnapshot,
-      shouldPause: shouldPause,
-      shouldCancel: shouldCancel,
-      onProgress: onProgress,
-    );
+  }) async {
+    Future<void> save(ReaderPageData resolved) =>
+        _downloadService.downloadChapter(
+          resolved,
+          cookieHeader: _session.cookieHeader,
+          comicUri: task.comicUri,
+          chapterHref: task.chapterHref,
+          chapterLabel: task.chapterLabel,
+          coverUrl: task.coverUrl,
+          detailSnapshot: task.detailSnapshot,
+          shouldPause: shouldPause,
+          shouldCancel: shouldCancel,
+          onProgress: onProgress,
+        );
+    try {
+      await save(page);
+    } on LocalChapterChangedException {
+      if (shouldCancel()) throw const DownloadCancelledException();
+      if (shouldPause()) throw const DownloadPausedException();
+      final remote = await _pageResolver.resolveRemote(
+        AppConfig.rewriteToCurrentHost(Uri.parse(task.chapterHref)),
+      );
+      if (shouldCancel()) throw const DownloadCancelledException();
+      if (shouldPause()) throw const DownloadPausedException();
+      await save(remote);
+    }
   }
 }

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:reader/services/comic_download_service/download_contracts.dart';
 import 'package:reader/services/comic_download_service/image_integrity.dart';
+import 'package:reader/services/comic_image_files.dart';
 import 'package:reader/services/image_cache.dart';
 import 'package:reader/services/network_client.dart';
 import 'package:reader/services/quic_http_client.dart';
@@ -56,57 +57,54 @@ class ChapterImageDownloader {
           checkControl();
           final int index = next++;
           if (index >= files.length) return;
-          final bool restored = files[index].isNotEmpty;
-          if (!restored) {
-            final Uri uri = Uri.parse(imageUrls[index]);
-            if ((uri.scheme != 'http' && uri.scheme != 'https') ||
-                uri.host.isEmpty) {
-              throw const FileSystemException('章节图片地址不可下载，请重新解析章节。');
-            }
-            Uint8List? bytes = await _readCachedImage(imageUrls[index]);
-            String? contentType;
-            if (bytes == null || !await isCompleteImage(bytes)) {
-              checkControl();
-              if (failure != null) return;
-              final http.Response response = await NetworkClient.get(
-                _client,
-                uri,
-                headers: headers,
-                timeout: NetworkClient.imageTimeout,
-                maxRetries: 2,
-                label: 'download.image',
-              );
-              checkControl();
-              if (failure != null) return;
-              if (response.statusCode < 200 || response.statusCode >= 300) {
-                throw HttpException(
-                  'Image download failed: ${response.statusCode}',
-                  uri: uri,
-                );
-              }
-              bytes = response.bodyBytes;
-              contentType = response.headers['content-type'];
-              if (!await isCompleteImage(bytes)) {
-                throw HttpException('图片数据不完整，请重试下载。', uri: uri);
-              }
-            }
+          if (files[index].isNotEmpty) continue;
+          final Uri uri = Uri.parse(imageUrls[index]);
+          if ((uri.scheme != 'http' && uri.scheme != 'https') ||
+              uri.host.isEmpty) {
+            throw const FileSystemException('章节图片地址不可下载，请重新解析章节。');
+          }
+          Uint8List? bytes = await _readCachedImage(imageUrls[index]);
+          String? contentType;
+          if (bytes == null || !await isCompleteImage(bytes)) {
             checkControl();
             if (failure != null) return;
-            final String extension = _extension(uri, contentType);
-            final String fileName =
-                '${(index + 1).toString().padLeft(3, '0')}.$extension';
-            await writeImage(fileName, bytes);
+            final http.Response response = await NetworkClient.get(
+              _client,
+              uri,
+              headers: headers,
+              timeout: NetworkClient.imageTimeout,
+              maxRetries: 2,
+              label: 'download.image',
+            );
             checkControl();
-            files[index] = fileName;
-            completed += 1;
+            if (failure != null) return;
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+              throw HttpException(
+                'Image download failed: ${response.statusCode}',
+                uri: uri,
+              );
+            }
+            bytes = response.bodyBytes;
+            contentType = response.headers['content-type'];
+            if (!await isCompleteImage(bytes)) {
+              throw HttpException('图片数据不完整，请重试下载。', uri: uri);
+            }
           }
+          checkControl();
+          if (failure != null) return;
+          final String extension = _extension(uri, contentType);
+          final String fileName =
+              '${(index + 1).toString().padLeft(3, '0')}.$extension';
+          await writeImage(fileName, bytes);
+          checkControl();
+          files[index] = fileName;
+          completed += 1;
           if (failure != null) return;
           await onProgress?.call(
             ChapterDownloadProgress(
               completedCount: completed,
               totalCount: files.length,
-              currentLabel:
-                  '${restored ? '已恢复' : '已缓存'} $completed/${files.length}',
+              currentLabel: '已缓存 $completed/${files.length}',
             ),
           );
         }
@@ -116,6 +114,16 @@ class ChapterImageDownloader {
       }
     }
 
+    if (completed > 0) {
+      checkControl();
+      await onProgress?.call(
+        ChapterDownloadProgress(
+          completedCount: completed,
+          totalCount: files.length,
+          currentLabel: '已恢复 $completed/${files.length}',
+        ),
+      );
+    }
     await Future.wait(<Future<void>>[
       for (int index = 0; index < concurrency && index < files.length; index++)
         worker(),
@@ -126,11 +134,11 @@ class ChapterImageDownloader {
   }
 
   String _extension(Uri uri, String? contentType) {
-    final RegExpMatch? match = RegExp(
-      r'\.(avif|bmp|gif|jpeg|jpg|png|webp)$',
-      caseSensitive: false,
-    ).firstMatch(uri.path);
-    if (match != null) return match.group(1)!.toLowerCase();
+    final dot = uri.path.lastIndexOf('.');
+    if (dot != -1) {
+      final extension = uri.path.substring(dot + 1).toLowerCase();
+      if (comicImageExtensions.contains(extension)) return extension;
+    }
     final String type = (contentType ?? '').toLowerCase();
     for (final String extension in const <String>[
       'png',

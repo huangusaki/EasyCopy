@@ -231,6 +231,35 @@ class DetailPageData extends SitePage {
   final String comicId;
   final bool isCollected;
 
+  late final List<ChapterData> allChapters = chapters.isNotEmpty
+      ? chapters
+      : _uniqueGroupChapters();
+
+  List<ChapterData> _uniqueGroupChapters() {
+    final seen = <String>{};
+    return [
+      for (final group in chapterGroups)
+        for (final chapter in group.chapters)
+          if (chapter.href.isNotEmpty &&
+              seen.add(UriKeys.pathKey(chapter.href)))
+            chapter,
+    ];
+  }
+
+  late final Map<String, int> _chapterIndices = {
+    for (var index = allChapters.length - 1; index >= 0; index--)
+      UriKeys.pathKey(allChapters[index].href): index,
+  };
+
+  ({String prevHref, String nextHref})? adjacentTo(String href) {
+    final i = _chapterIndices[UriKeys.pathKey(href)];
+    if (i == null) return null;
+    return (
+      prevHref: i > 0 ? allChapters[i - 1].href : '',
+      nextHref: i + 1 < allChapters.length ? allChapters[i + 1].href : '',
+    );
+  }
+
   CachedComicDetailSnapshot toCachedDetailSnapshot() {
     return CachedComicDetailSnapshot(
       aliases: aliases,
@@ -241,7 +270,7 @@ class DetailPageData extends SitePage {
       summary: summary,
       tags: tags,
       startReadingHref: startReadingHref,
-      totalChapterCount: chapters.length,
+      totalChapterCount: allChapters.length,
     );
   }
 
@@ -282,7 +311,7 @@ class DetailPageData extends SitePage {
   }
 
   @override
-  Map<String, Object?> toJson() {
+  Map<String, Object?> toJson({bool includeFlatChapters = true}) {
     return <String, Object?>{
       'type': 'detail',
       'title': title,
@@ -301,9 +330,10 @@ class DetailPageData extends SitePage {
       'chapterGroups': chapterGroups
           .map((ChapterGroupData group) => group.toJson())
           .toList(),
-      'chapters': chapters
-          .map((ChapterData chapter) => chapter.toJson())
-          .toList(),
+      if (includeFlatChapters)
+        'chapters': chapters
+            .map((ChapterData chapter) => chapter.toJson())
+            .toList(),
       'comicId': comicId,
       'isCollected': isCollected,
     };
@@ -361,30 +391,6 @@ class CachedComicDetailSnapshot {
         startReadingHref.isEmpty &&
         tags.isEmpty &&
         totalChapterCount == 0;
-  }
-
-  CachedComicDetailSnapshot copyWith({
-    String? aliases,
-    String? authors,
-    List<LinkAction>? authorLinks,
-    String? updatedAt,
-    String? status,
-    String? summary,
-    List<LinkAction>? tags,
-    String? startReadingHref,
-    int? totalChapterCount,
-  }) {
-    return CachedComicDetailSnapshot(
-      aliases: aliases ?? this.aliases,
-      authors: authors ?? this.authors,
-      authorLinks: authorLinks ?? this.authorLinks,
-      updatedAt: updatedAt ?? this.updatedAt,
-      status: status ?? this.status,
-      summary: summary ?? this.summary,
-      tags: tags ?? this.tags,
-      startReadingHref: startReadingHref ?? this.startReadingHref,
-      totalChapterCount: totalChapterCount ?? this.totalChapterCount,
-    );
   }
 
   Map<String, Object?> toJson() {
@@ -501,7 +507,7 @@ class ReaderPageData extends SitePage {
       'prevHref': prevHref,
       'nextHref': nextHref,
       'catalogHref': catalogHref,
-      'contentKey': contentKey,
+      if (contentKey.isNotEmpty) 'contentKey': contentKey,
     };
   }
 }

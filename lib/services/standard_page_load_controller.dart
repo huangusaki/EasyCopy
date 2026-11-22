@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/services/navigation_request_guard.dart';
 import 'package:reader/services/page_repository.dart';
-import 'package:reader/services/primary_tab_session_store.dart';
 
 enum StandardPageLoadEventSource {
   navigationRequest,
@@ -24,7 +23,7 @@ class SupersededPageLoadException implements Exception {
 class StandardPageLoadHandle<T> {
   StandardPageLoadHandle({
     required Uri requestedUri,
-    required this.queryKey,
+    required PageQueryKey queryKey,
     required this.loadId,
     required this.requestContext,
     required this.completer,
@@ -32,17 +31,13 @@ class StandardPageLoadHandle<T> {
        acceptedRouteKeys = <String>{queryKey.routeKey};
 
   final Uri requestedUri;
-  final PageQueryKey queryKey;
   final int loadId;
   final NavigationRequestContext requestContext;
   final Completer<T> completer;
   final Set<String> acceptedRouteKeys;
   final Set<String> startedRouteKeys = <String>{};
 
-  bool hasStartedAcceptedNavigation = false;
   Uri? lastStartedAcceptedUri;
-
-  NavigationIntent get intent => requestContext.intent;
 
   bool get preserveCurrentPage => requestContext.preserveVisiblePage;
 
@@ -69,7 +64,6 @@ class StandardPageLoadHandle<T> {
           return false;
         }
         startedRouteKeys.add(routeKey);
-        hasStartedAcceptedNavigation = true;
         lastStartedAcceptedUri = rewrittenUri;
         return true;
       case StandardPageLoadEventSource.pageFinished:
@@ -94,11 +88,7 @@ bool _isSameContentRedirect(Uri from, Uri to) {
     return false;
   }
   final String path = from.path.toLowerCase();
-  return _isDetailRoute(path) || path.contains('/chapter/');
-}
-
-bool _isDetailRoute(String path) {
-  return path.startsWith('/comic/') && !path.contains('/chapter/');
+  return AppConfig.isDetailCatalogUri(from) || path.contains('/chapter/');
 }
 
 class StandardPageLoadController<T> {

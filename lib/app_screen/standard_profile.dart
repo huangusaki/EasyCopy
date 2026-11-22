@@ -31,7 +31,7 @@ extension _AppScreenProfileSections on _AppScreenState {
           (hasContent &&
               AppConfig.routeKeyForUri(Uri.parse(page.uri)) ==
                   AppConfig.routeKeyForUri(_currentUri)))
-        _hPaddedBox(
+        _hPaddedSliver(
           ProfilePageView(
             page: page,
             onAuthenticate: _openAuthFlow,
@@ -59,11 +59,7 @@ extension _AppScreenProfileSections on _AppScreenState {
                 _openProfileSubview(ProfileSubview.blocked, page: page),
             isLoading: _isLoading,
             isCachedComicsLoading: _library.cachedComicsLoadingNotifier.value,
-            currentHost: _services.hostManager.currentHost,
-            knownHosts: _services.hostManager.knownHosts,
-            candidateHosts: _services.hostManager.candidateHosts,
-            candidateHostAliases: _services.hostManager.candidateHostAliases,
-            hostSnapshot: _services.hostManager.probeSnapshot,
+            hostManager: _services.hostManager,
             isRefreshingHosts: _shell.isUpdatingHostSettings,
             onRefreshHosts: _refreshHostSettings,
             onUseAutomaticHostSelection: _useAutomaticHostSelection,
@@ -99,8 +95,18 @@ extension _AppScreenProfileSections on _AppScreenState {
               unawaited(_openProjectRepository());
             },
             afterContinueReading: _buildDownloadManagementEntry(),
-            cachedComicCards: _cachedComicCardsForProfile(),
-            activeSubview: AppConfig.profileSubviewForUri(_currentUri),
+            cachedComicCards: _library.cachedComics.map(_cachedComicCard),
+            cachedMetadata: view == ProfileSubview.cached
+                ? (
+                    hasSubtitle: true,
+                    hasSecondary: _library.cachedComics.any(
+                      (comic) =>
+                          comic.chapters.firstOrNull?.chapterTitle.isNotEmpty ??
+                          false,
+                    ),
+                  )
+                : null,
+            activeSubview: view,
             onOpenCachedComic: _openCachedComicFromProfile,
             onDeleteCachedComic: _deleteCachedComicFromProfile,
             onDeleteHistory: _deleteLocalHistoryFromProfile,
@@ -209,23 +215,19 @@ extension _AppScreenProfileSections on _AppScreenState {
     );
   }
 
-  List<ComicCardData> _cachedComicCardsForProfile() {
-    return _library.cachedComics
-        .map((CachedComicLibraryEntry item) {
-          final String latestChapterTitle = item.chapters.isEmpty
-              ? ''
-              : item.chapters.first.chapterTitle;
-          return ComicCardData(
-            title: item.comicTitle,
-            subtitle: '${item.cachedChapterCount}话',
-            secondaryText: latestChapterTitle.isEmpty
-                ? ''
-                : '最近缓存：$latestChapterTitle',
-            coverUrl: item.coverUrl,
-            href: _cachedComicCardKey(item),
-          );
-        })
-        .toList(growable: false);
+  ComicCardData _cachedComicCard(CachedComicLibraryEntry item) {
+    final String latestChapterTitle = item.chapters.isEmpty
+        ? ''
+        : item.chapters.first.chapterTitle;
+    return ComicCardData(
+      title: item.comicTitle,
+      subtitle: '${item.cachedChapterCount}话',
+      secondaryText: latestChapterTitle.isEmpty
+          ? ''
+          : '最近缓存：$latestChapterTitle',
+      coverUrl: item.coverUrl,
+      href: _cachedComicCardKey(item),
+    );
   }
 
   String _cachedComicCardKey(CachedComicLibraryEntry item) {
@@ -260,7 +262,6 @@ extension _AppScreenProfileSections on _AppScreenState {
       targetTabIndex: targetTabIndex,
       intent: NavigationIntent.push,
       preserveVisiblePage: false,
-      sourceKind: NavigationRequestSourceKind.navigation,
     );
     _applyLoadedPage(
       localPage,

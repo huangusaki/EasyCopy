@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -37,8 +38,11 @@ class ReaderCommentsController {
   final TextEditingController textController = TextEditingController();
   final ScrollController scrollController = ScrollController();
 
+  final List<ChapterComment> _loadedComments = [];
   List<ChapterComment> _items = const <ChapterComment>[];
   String _chapterId = '';
+  int _requestGeneration = 0;
+  final Set<String> _identities = {};
   String _error = '';
   int _total = 0;
   int _loadedStartOffset = 0;
@@ -60,8 +64,11 @@ class ReaderCommentsController {
   void prepare(ReaderPageData page, {required bool resetForNewChapter}) {
     final String nextChapterId = chapterIdForPage(page);
     if (!preferences().showChapterComments || nextChapterId.isEmpty) {
+      _requestGeneration++;
+      _identities.clear();
       _chapterId = '';
       _error = '';
+      _loadedComments.clear();
       _items = const <ChapterComment>[];
       _total = 0;
       _loadedStartOffset = 0;
@@ -75,9 +82,7 @@ class ReaderCommentsController {
     }
 
     final bool shouldRefresh =
-        resetForNewChapter ||
-        _chapterId != nextChapterId ||
-        (_items.isEmpty && _error.isEmpty);
+        resetForNewChapter || _chapterId != nextChapterId;
     if (!shouldRefresh || (_isLoading && _chapterId == nextChapterId)) {
       return;
     }
@@ -95,11 +100,10 @@ class ReaderCommentsController {
     if (nextChapterId.isEmpty || !preferences().showChapterComments) {
       return;
     }
-    if (!isDisposed()) {
-      final ReaderPageData? current = currentPage();
-      if (current == null || chapterIdForPage(current) != nextChapterId) {
-        return;
-      }
+    if (isDisposed()) return;
+    final ReaderPageData? activePage = currentPage();
+    if (activePage == null || chapterIdForPage(activePage) != nextChapterId) {
+      return;
     }
 
     final List<ChapterComment> existingComments =
@@ -114,8 +118,11 @@ class ReaderCommentsController {
     }
 
     if (!append) {
+      _requestGeneration++;
+      _identities.clear();
       _chapterId = nextChapterId;
       _error = '';
+      _loadedComments.clear();
       _items = const <ChapterComment>[];
       _total = 0;
       _loadedStartOffset = 0;
@@ -127,6 +134,7 @@ class ReaderCommentsController {
       _notify();
     }
 
+    final generation = _requestGeneration;
     try {
       final (
         ChapterCommentFeed feed,
@@ -139,19 +147,19 @@ class ReaderCommentsController {
               fallbackTotal: _total,
             )
           : await _loadInitialPage(nextChapterId);
-      if (isDisposed()) return;
+      if (isDisposed() || generation != _requestGeneration) return;
       final ReaderPageData? current = currentPage();
       if (current == null || chapterIdForPage(current) != nextChapterId) {
         _clearLoadingIfCurrent(nextChapterId);
         return;
       }
       _chapterId = nextChapterId;
-      _items = append
-          ? mergeReaderCommentsByIdentity(existingComments, feed.comments)
-          : mergeReaderCommentsByIdentity(
-              const <ChapterComment>[],
-              feed.comments,
-            );
+      for (final comment in feed.comments) {
+        if (_identities.add(readerCommentIdentity(comment))) {
+          _loadedComments.add(comment);
+        }
+      }
+      _items = UnmodifiableListView(_loadedComments);
       _total = resolvedTotal > 0 ? resolvedTotal : _items.length;
       _loadedStartOffset = loadedStartOffset;
       _error = '';
@@ -159,7 +167,7 @@ class ReaderCommentsController {
       _isLoadingMore = false;
       _notify();
     } catch (error) {
-      if (isDisposed()) return;
+      if (isDisposed() || generation != _requestGeneration) return;
       final ReaderPageData? current = currentPage();
       if (current == null || chapterIdForPage(current) != nextChapterId) {
         _clearLoadingIfCurrent(nextChapterId);
@@ -176,6 +184,7 @@ class ReaderCommentsController {
       }
       _chapterId = nextChapterId;
       _error = message;
+      _loadedComments.clear();
       _items = const <ChapterComment>[];
       _total = 0;
       _loadedStartOffset = 0;
@@ -257,19 +266,25 @@ class ReaderCommentsController {
   ) async {
     final ChapterCommentFeed probe = await apiClient.loadChapterComments(
       chapterId: chapterId,
-      limit: 1,
+      limit: readerCommentPageSize,
       offset: 0,
     );
     final int probeTotal = probe.total > 0
         ? probe.total
         : probe.comments.length;
-    if (probeTotal <= 0) {
-      return (probe, 0, 0);
+    if (probeTotal <= probe.comments.length) {
+      return (
+        ChapterCommentFeed(
+          total: probeTotal,
+          comments: normalizeCommentPage(probe.comments),
+        ),
+        0,
+        probeTotal,
+      );
     }
-
-    final ReaderCommentPageWindow window = probeTotal <= 1
-        ? const ReaderCommentPageWindow(offset: 0, limit: readerCommentPageSize)
-        : initialCommentWindow(total: probeTotal);
+    final ReaderCommentPageWindow window = initialCommentWindow(
+      total: probeTotal,
+    );
     final ChapterCommentFeed rawFeed = await apiClient.loadChapterComments(
       chapterId: chapterId,
       limit: window.limit,

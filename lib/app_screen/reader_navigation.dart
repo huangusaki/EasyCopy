@@ -9,16 +9,9 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     if (page is! UnknownPageData) {
       return false;
     }
-    final String path = uri.path.toLowerCase();
-    return path == '/' ||
-        path.startsWith('/comics') ||
-        path.startsWith('/search') ||
-        path.startsWith('/rank') ||
-        path.startsWith('/recommend') ||
-        path.startsWith('/newest') ||
-        path.startsWith('/comic/') ||
-        path.startsWith('/person') ||
-        path.startsWith('/web/login');
+    return SitePageRoute.forUri(uri) != SitePageRoute.standard ||
+        uri.path.startsWith('/person') ||
+        isLoginUri(uri);
   }
 
   CachedChapterNavigationContext _resolvedCachedChapterContext(
@@ -67,61 +60,31 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     Uri targetUri, {
     String preferredCatalogHref = '',
   }) {
-    final String targetKey = _chapterKeys.pathKey(targetUri.toString());
-    if (targetKey.isEmpty) {
+    if (targetUri.path.isEmpty) {
       return const CachedChapterNavigationContext();
     }
-    final List<PrimaryTabRouteEntry> stackEntries = _tabSessionStore
-        .stackForTab(_nav.selectedIndex);
-    final List<DetailPageData> detailPages = stackEntries
-        .map((PrimaryTabRouteEntry entry) => entry.page)
-        .whereType<DetailPageData>()
-        .toList(growable: false)
-        .reversed
-        .toList(growable: false);
-    if (detailPages.isEmpty) {
-      return const CachedChapterNavigationContext();
-    }
-
-    CachedChapterNavigationContext contextForPage(DetailPageData page) {
-      final List<ChapterData> chapters = _detailChapterList(page);
-      final int index = chapters.indexWhere(
-        (ChapterData chapter) =>
-            _chapterKeys.pathKey(chapter.href) == targetKey,
-      );
-      if (index == -1) {
-        return const CachedChapterNavigationContext();
-      }
-      return CachedChapterNavigationContext(
-        prevHref: index > 0 ? chapters[index - 1].href : '',
-        nextHref: index + 1 < chapters.length ? chapters[index + 1].href : '',
-        catalogHref: page.uri,
-      );
-    }
-
-    final String preferredCatalogRouteKey = preferredCatalogHref.trim().isEmpty
+    final preferredRoute = preferredCatalogHref.trim().isEmpty
         ? ''
         : AppConfig.routeKeyForUri(Uri.parse(preferredCatalogHref));
-    if (preferredCatalogRouteKey.isNotEmpty) {
-      for (final DetailPageData page in detailPages) {
-        if (AppConfig.routeKeyForUri(Uri.parse(page.uri)) !=
-            preferredCatalogRouteKey) {
-          continue;
-        }
-        final CachedChapterNavigationContext context = contextForPage(page);
-        if (context.hasAnyValue) {
-          return context;
-        }
-      }
+    CachedChapterNavigationContext? fallback;
+    for (final entry
+        in _tabSessionStore.stackForTab(_nav.selectedIndex).reversed) {
+      final page = entry.page;
+      if (page is! DetailPageData) continue;
+      final preferred =
+          preferredRoute.isEmpty || entry.routeKey == preferredRoute;
+      if (fallback != null && !preferred) continue;
+      final links = page.adjacentTo(targetUri.toString());
+      if (links == null) continue;
+      final context = CachedChapterNavigationContext(
+        prevHref: links.prevHref,
+        nextHref: links.nextHref,
+        catalogHref: page.uri,
+      );
+      if (preferred) return context;
+      fallback = context;
     }
-
-    for (final DetailPageData page in detailPages) {
-      final CachedChapterNavigationContext context = contextForPage(page);
-      if (context.hasAnyValue) {
-        return context;
-      }
-    }
-    return const CachedChapterNavigationContext();
+    return fallback ?? const CachedChapterNavigationContext();
   }
 
   ReaderPageData _mergeReaderPageNavigation(
@@ -166,7 +129,7 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     return null;
   }
 
-  Future<DetailPageData?> _loadRepairDetailPage(
+  Future<RepairCatalog?> _loadRepairDetailPage(
     Uri uri, {
     required String authScope,
     required String chapterHref,
@@ -175,19 +138,18 @@ extension _AppScreenReaderNavigation on _AppScreenState {
       PageQueryKey.forUri(uri, authScope: authScope),
     );
     final SitePage? cachedPage = cached?.page;
-    final String chapterKey = _chapterKeys.pathKey(chapterHref);
     if (cachedPage is DetailPageData &&
         !cached!.envelope.isSoftExpired(DateTime.now()) &&
-        _detailChapterList(
-          cachedPage,
-        ).any((chapter) => _chapterKeys.pathKey(chapter.href) == chapterKey)) {
-      return cachedPage;
+        cachedPage.adjacentTo(chapterHref) != null) {
+      return (page: cachedPage, validatedAt: cached.envelope.validatedAt);
     }
     final SitePage page = await _pageRepository.loadFresh(
       uri,
       authScope: authScope,
     );
-    return page is DetailPageData ? page : null;
+    return page is DetailPageData
+        ? (page: page, validatedAt: DateTime.now())
+        : null;
   }
 
   Future<void> _repairCachedReaderNavigation(
@@ -201,16 +163,18 @@ extension _AppScreenReaderNavigation on _AppScreenState {
       return;
     }
     final PageQueryKey key = _pageQueryKeyForUri(targetUri);
-    if (!_nav.repairRouteKeys.add(key.routeKey)) {
+    if (_navigationRepairer.hasConfirmedNavigation(page, key.authScope) ||
+        !_nav.repairRouteKeys.add(key.routeKey)) {
       return;
     }
+    final sessionGeneration = _sessionController.generation;
     try {
       DebugTrace.log('reader.navigation_repair_start', <String, Object?>{
         'bootId': _shell.bootId,
         'uri': targetUri.toString(),
         'persistToPageCache': persistToPageCache,
       });
-      final ReaderPageData repairedPage = await ReaderNavigationRepairer.repair(
+      final ReaderPageData repairedPage = await _navigationRepairer.repair(
         page,
         authScope: key.authScope,
         preferredCatalogHref: context.catalogHref,
@@ -221,6 +185,7 @@ extension _AppScreenReaderNavigation on _AppScreenState {
           chapterHref: page.uri,
         ),
       );
+      if (!_sessionController.accepts(sessionGeneration)) return;
       if (!_didReaderNavigationChange(page, repairedPage)) {
         DebugTrace.log('reader.navigation_repair_noop', <String, Object?>{
           'bootId': _shell.bootId,
@@ -298,47 +263,14 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     if (href.trim().isEmpty) {
       return;
     }
-    final AdjacentChapterLinks links = _adjacentChapterLinksForDetail(
-      page,
-      href,
-    );
+    final links = page.adjacentTo(href);
     unawaited(
       _openHref(
         href,
-        prevHref: links.prevHref,
-        nextHref: links.nextHref,
+        prevHref: links?.prevHref ?? '',
+        nextHref: links?.nextHref ?? '',
         catalogHref: page.uri,
       ),
-    );
-  }
-
-  List<ChapterData> _detailChapterList(DetailPageData page) {
-    if (page.chapters.isNotEmpty) {
-      return page.chapters;
-    }
-    if (page.chapterGroups.isNotEmpty) {
-      return page.chapterGroups
-          .expand((ChapterGroupData group) => group.chapters)
-          .toList(growable: false);
-    }
-    return page.chapters;
-  }
-
-  AdjacentChapterLinks _adjacentChapterLinksForDetail(
-    DetailPageData page,
-    String href,
-  ) {
-    final List<ChapterData> chapters = _detailChapterList(page);
-    final String targetKey = _chapterKeys.pathKey(href);
-    final int index = chapters.indexWhere(
-      (ChapterData chapter) => _chapterKeys.pathKey(chapter.href) == targetKey,
-    );
-    if (index == -1) {
-      return const AdjacentChapterLinks();
-    }
-    return AdjacentChapterLinks(
-      prevHref: index > 0 ? chapters[index - 1].href : '',
-      nextHref: index + 1 < chapters.length ? chapters[index + 1].href : '',
     );
   }
 
@@ -361,8 +293,9 @@ extension _AppScreenReaderNavigation on _AppScreenState {
     if (page is ReaderPageData) {
       await _ui.readerScreenKey.currentState?.controller
           .flushProgressPersistence();
+    } else {
+      _scrollState.persistVisiblePageState();
     }
-    _scrollState.persistVisiblePageState();
     if (page is ReaderPageData && await _handleReaderBackNavigation(page)) {
       return;
     }

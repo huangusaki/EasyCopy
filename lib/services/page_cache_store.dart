@@ -8,6 +8,7 @@ import 'package:reader/models/page_models.dart';
 import 'package:reader/services/host_manager.dart';
 import 'package:reader/services/persistence/atomic_json_file.dart';
 import 'package:reader/services/persistence/serial_executor.dart';
+import 'package:sqflite/sqflite.dart' as sql;
 
 typedef CacheNowProvider = DateTime Function();
 typedef CacheDirectoryProvider = Future<Directory> Function();
@@ -162,152 +163,213 @@ class PageCacheStore {
   PageCacheStore({
     CacheDirectoryProvider? directoryProvider,
     CacheNowProvider? now,
-  }) : _file = AtomicJsonFile<List<CachedPageEnvelope>>(
-         directoryProvider: directoryProvider ?? getApplicationSupportDirectory,
-         relativePath: 'page_cache.json',
-         decode: (Object? json) => (json as List)
-             .whereType<Map>()
-             .map(
-               (Map value) => CachedPageEnvelope.fromJson(
-                 Map<String, Object?>.from(value),
-               ),
-             )
-             .toList(growable: true),
-         encode: (List<CachedPageEnvelope> entries) => entries
-             .map((CachedPageEnvelope entry) => entry.toJson())
-             .toList(growable: false),
-       ),
+    sql.DatabaseFactory? databaseFactory,
+  }) : _directory = directoryProvider ?? getApplicationSupportDirectory,
+       _factory = databaseFactory,
        _now = now ?? DateTime.now;
 
   static final PageCacheStore instance = PageCacheStore();
-
   static const int maxEntries = 120;
   static const int maxBytes = 10 * 1024 * 1024;
   static const int readerCacheVersion = 1;
-
-  final AtomicJsonFile<List<CachedPageEnvelope>> _file;
-  final SerialExecutor _operations = SerialExecutor();
+  final CacheDirectoryProvider _directory;
   final CacheNowProvider _now;
-
+  final sql.DatabaseFactory? _factory;
+  final SerialExecutor _operations = SerialExecutor();
+  sql.Database? _db;
   Future<void>? _initialization;
-  List<CachedPageEnvelope> _entries = <CachedPageEnvelope>[];
 
-  Future<void> ensureInitialized() {
-    return _initialization ??= _initialize();
+  late final _legacy = AtomicJsonFile<List<CachedPageEnvelope>>(
+    directoryProvider: _directory,
+    relativePath: 'page_cache.json',
+    decode: (json) => (json as List)
+        .whereType<Map>()
+        .map(
+          (row) => CachedPageEnvelope.fromJson(Map<String, Object?>.from(row)),
+        )
+        .toList(),
+    encode: (entries) => entries.map((e) => e.toJson()).toList(),
+  );
+
+  Future<void> ensureInitialized() => _initialization ??= _initialize();
+
+  Future<void> _initialize() async {
+    try {
+      final dir = await _directory();
+      await dir.create(recursive: true);
+      _db = await (_factory ?? sql.databaseFactory).openDatabase(
+        '${dir.path}/page_cache.db',
+        options: sql.OpenDatabaseOptions(
+          version: 1,
+          onCreate: (db, _) async {
+            await db.execute(
+              """CREATE TABLE pages (
+            scope TEXT NOT NULL, route TEXT NOT NULL,
+            page_type TEXT NOT NULL, reader_version INTEGER, soft_ttl INTEGER NOT NULL,
+            bytes INTEGER NOT NULL, fetched INTEGER NOT NULL,
+            validated INTEGER NOT NULL, accessed INTEGER NOT NULL,
+            expires INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY(scope,route))""",
+            );
+            final now = _now();
+            for (final e in await _legacy.read() ?? <CachedPageEnvelope>[]) {
+              if (!e.isHardExpired(now)) await _put(db, e);
+            }
+            await _trim(db);
+          },
+        ),
+      );
+    } catch (_) {
+      // Page loading can continue while cache storage is unavailable.
+      _initialization = null;
+    }
+  }
+
+  static Future<void> _put(
+    sql.DatabaseExecutor db,
+    CachedPageEnvelope e,
+  ) async {
+    final body = utf8.encode(jsonEncode(e.payload));
+    final size = body.length;
+    if (size > maxBytes) {
+      await db.delete(
+        'pages',
+        where: 'scope=? AND route=?',
+        whereArgs: [e.authScope, e.routeKey],
+      );
+      return;
+    }
+    await db.insert('pages', {
+      'scope': e.authScope,
+      'route': e.routeKey,
+      'body': body,
+      'page_type': e.pageType.name,
+      'reader_version': e.readerCacheVersion,
+      'soft_ttl': e.softTtlSeconds,
+      'bytes': size,
+      'fetched': e.fetchedAt.microsecondsSinceEpoch,
+      'validated': e.validatedAt.microsecondsSinceEpoch,
+      'accessed': e.lastAccessedAt.microsecondsSinceEpoch,
+      'expires': e.fetchedAt.add(e.hardTtl).microsecondsSinceEpoch,
+    }, conflictAlgorithm: sql.ConflictAlgorithm.replace);
+  }
+
+  static Future<void> _trim(sql.DatabaseExecutor db) async {
+    final rows = await db.rawQuery(
+      'SELECT rowid, bytes FROM pages ORDER BY accessed DESC, rowid DESC',
+    );
+    var bytes = 0;
+    final expired = <int>[];
+    for (var i = 0; i < rows.length; i++) {
+      bytes += rows[i]['bytes'] as int;
+      if (i >= maxEntries || bytes > maxBytes) {
+        expired.add(rows[i]['rowid'] as int);
+      }
+    }
+    if (expired.isNotEmpty) {
+      await db.delete(
+        'pages',
+        where: 'rowid IN (${List.filled(expired.length, '?').join(',')})',
+        whereArgs: expired,
+      );
+    }
   }
 
   Future<CachedPageEnvelope?> read(
     String routeKey, {
     required String authScope,
-  }) {
-    return _operations.run(() async {
-      await ensureInitialized();
-      final DateTime now = _now();
-      final int entryCountBeforePrune = _entries.length;
-      _entries = _entries
-          .where((CachedPageEnvelope entry) => !entry.isHardExpired(now))
-          .toList(growable: true);
-      final bool prunedExpiredEntries =
-          _entries.length != entryCountBeforePrune;
-      final int index = _entries.indexWhere((CachedPageEnvelope entry) {
-        return entry.routeKey == routeKey && entry.authScope == authScope;
-      });
-      if (index == -1) {
-        if (prunedExpiredEntries) {
-          await _persist();
-        }
-        return null;
-      }
-      final CachedPageEnvelope entry = _entries[index].copyWith(
+  }) => _operations.run(() async {
+    await ensureInitialized();
+    final db = _db;
+    if (db == null) return null;
+    final now = _now();
+    try {
+      final rows = await db.query(
+        'pages',
+        where: 'scope=? AND route=? AND expires>=?',
+        whereArgs: [authScope, routeKey, now.microsecondsSinceEpoch],
+        limit: 1,
+      );
+      if (rows.isEmpty) return null;
+      final row = rows.single;
+      await db.update(
+        'pages',
+        {'accessed': now.microsecondsSinceEpoch},
+        where: 'scope=? AND route=?',
+        whereArgs: [authScope, routeKey],
+      );
+      final fetched = row['fetched'] as int;
+      return CachedPageEnvelope(
+        routeKey: routeKey,
+        authScope: authScope,
+        pageType: SitePageType.values.byName(row['page_type'] as String),
+        readerCacheVersion: row['reader_version'] as int?,
+        payload:
+            jsonDecode(utf8.decode(row['body'] as List<int>))
+                as Map<String, Object?>,
+        fetchedAt: DateTime.fromMicrosecondsSinceEpoch(fetched),
+        softTtlSeconds: row['soft_ttl'] as int,
+        hardTtlSeconds:
+            ((row['expires'] as int) - fetched) ~/
+            Duration.microsecondsPerSecond,
+        validatedAt: DateTime.fromMicrosecondsSinceEpoch(
+          row['validated'] as int,
+        ),
         lastAccessedAt: now,
       );
-      _entries[index] = entry;
-      if (prunedExpiredEntries) {
-        await _persist();
+    } on sql.DatabaseException {
+      return null;
+    }
+  });
+
+  Future<void> writeEnvelope(CachedPageEnvelope envelope) => _operations.run(
+    () async {
+      await ensureInitialized();
+      try {
+        await _db?.transaction((tx) async {
+          final now = _now();
+          await tx.delete(
+            'pages',
+            where: 'expires<?',
+            whereArgs: [now.microsecondsSinceEpoch],
+          );
+          await _put(tx, envelope.copyWith(lastAccessedAt: now));
+          await _trim(tx);
+        });
+      } on sql.DatabaseException {
+        // Disk cache is best effort. The original result is still deliverable.
       }
-      return entry;
-    });
-  }
+    },
+  );
 
-  Future<void> writeEnvelope(CachedPageEnvelope envelope) {
-    return _operations.run(() async {
-      await ensureInitialized();
-      _entries.removeWhere((CachedPageEnvelope entry) {
-        return entry.routeKey == envelope.routeKey &&
-            entry.authScope == envelope.authScope;
-      });
-      _entries.add(envelope.copyWith(lastAccessedAt: _now()));
-      _trimToBudget();
-      await _persist();
-    });
-  }
+  Future<void> refreshValidation(
+    String routeKey, {
+    required String authScope,
+  }) => _operations.run(() async {
+    await ensureInitialized();
+    final now = _now().microsecondsSinceEpoch;
+    await _db?.rawUpdate(
+      'UPDATE pages SET expires = ? + (expires - fetched), fetched=?, validated=?, accessed=? WHERE scope=? AND route=?',
+      [now, now, now, now, authScope, routeKey],
+    );
+  });
 
-  Future<void> refreshValidation(String routeKey, {required String authScope}) {
-    return _operations.run(() async {
-      await ensureInitialized();
-      final DateTime now = _now();
-      _entries = _entries
-          .map((CachedPageEnvelope entry) {
-            if (entry.routeKey == routeKey && entry.authScope == authScope) {
-              return entry.copyWith(
-                fetchedAt: now,
-                validatedAt: now,
-                lastAccessedAt: now,
-              );
-            }
-            return entry;
-          })
-          .toList(growable: true);
-      await _persist();
-    });
-  }
+  Future<void> removeAuthenticatedEntries() => _operations.run(() async {
+    await ensureInitialized();
+    await _db?.delete('pages', where: "scope != 'guest'");
+    // An explicit logout also clears account pages from the old primary and backup.
+    await _legacy.update(
+      (old) => old!.where((entry) => entry.authScope == 'guest').toList(),
+      whenEitherCopy: (entries) =>
+          entries.any((entry) => entry.authScope != 'guest'),
+    );
+  });
 
-  Future<void> removeAuthenticatedEntries() {
-    return _operations.run(() async {
-      await ensureInitialized();
-      _entries.removeWhere((CachedPageEnvelope entry) {
-        return entry.authScope != 'guest';
-      });
-      await _persist();
-    });
-  }
-
-  Future<void> _initialize() async {
-    try {
-      _entries = await _file.read() ?? <CachedPageEnvelope>[];
-      _trimToBudget();
-    } catch (_) {
-      _entries = <CachedPageEnvelope>[];
-    }
-  }
-
-  void _trimToBudget() {
-    _entries.sort((CachedPageEnvelope left, CachedPageEnvelope right) {
-      return left.lastAccessedAt.compareTo(right.lastAccessedAt);
-    });
-    // 预计算单条大小，避免循环里反复编码整表。
-    final List<int> entrySizes = _entries
-        .map(_encodedEntrySize)
-        .toList(growable: true);
-    int totalBytes = entrySizes.fold<int>(0, (int sum, int size) => sum + size);
-    while (_entries.isNotEmpty &&
-        (_entries.length > maxEntries || totalBytes > maxBytes)) {
-      totalBytes -= entrySizes.removeAt(0);
-      _entries.removeAt(0);
-    }
-  }
-
-  int _encodedEntrySize(CachedPageEnvelope entry) {
-    return utf8.encode(jsonEncode(entry.toJson())).length;
-  }
-
-  Future<void> _persist() async {
-    try {
-      await _file.write(_entries);
-    } catch (_) {
-      // Cache failures must not prevent page loading.
-    }
-  }
+  Future<void> close() => _operations.run(() async {
+    await _initialization;
+    await _db?.close();
+    _db = null;
+    _initialization = null;
+  });
 
   static CachedPageEnvelope buildEnvelope({
     required String routeKey,
@@ -336,13 +398,9 @@ class PageCacheStore {
   static const Set<String> _rootPayloadKeys = <String>{'type', 'title', 'uri'};
 
   static Map<String, Object?> _cachePayloadForPage(SitePage page) {
-    final Map<String, Object?> payload = Map<String, Object?>.from(
-      page.toJson(),
-    );
-    if (page is DetailPageData && page.chapterGroups.isNotEmpty) {
-      // chapterGroups 已含完整章节，移除扁平副本降低缓存体积。
-      payload.remove('chapters');
-    }
+    final payload = page is DetailPageData
+        ? page.toJson(includeFlatChapters: page.chapterGroups.isEmpty)
+        : page.toJson();
     return _compactMap(payload, isRoot: true);
   }
 
@@ -379,10 +437,7 @@ class PageCacheStore {
       return items.isEmpty ? null : items;
     }
     if (value is Map) {
-      final Map<String, Object?> map = value.map(
-        (Object? key, Object? nestedValue) =>
-            MapEntry(key.toString(), nestedValue),
-      );
+      final map = value.cast<String, Object?>();
       final Map<String, Object?> compacted = _compactMap(map, isRoot: false);
       return compacted.isEmpty ? null : compacted;
     }
@@ -408,6 +463,7 @@ class PageCacheStore {
 
   static Object? _rewritePayloadHosts(Object? value, HostManager manager) {
     if (value is String) {
+      if (!value.contains('://')) return value;
       final Uri? uri = Uri.tryParse(value);
       if (uri != null &&
           uri.hasScheme &&

@@ -125,11 +125,8 @@ class SiteHtmlPageLoader {
       final Stopwatch stopwatch = Stopwatch()..start();
       final NetworkResponseBytes response = await NetworkClient.sendForBytes(
         _client,
-        () => http.Request('GET', currentUri)
-          ..followRedirects = false
-          ..maxRedirects = 1
-          ..headers.addAll(headers),
-        uri: currentUri,
+        currentUri,
+        headers: headers,
         timeout: _requestTimeout,
         maxRetries: 1,
         label: 'html.get',

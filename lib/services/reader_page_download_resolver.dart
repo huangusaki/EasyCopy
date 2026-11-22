@@ -25,7 +25,7 @@ class ReaderPageDownloadResolver {
       return pageCachedPage!;
     }
 
-    // The storage loader validates local images or returns saved remote sources.
+    // Final image integrity is checked by the downloader against the active root.
     final ReaderPageData? storageCachedPage = await _loadFromStorageCache(
       chapterUri,
     );
@@ -33,6 +33,10 @@ class ReaderPageDownloadResolver {
       return storageCachedPage!;
     }
 
+    return resolveRemote(chapterUri);
+  }
+
+  Future<ReaderPageData> resolveRemote(Uri chapterUri) async {
     try {
       final ReaderPageData lightweightPage = await _loadFromLightweightSource(
         chapterUri,

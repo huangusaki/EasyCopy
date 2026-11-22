@@ -4,11 +4,7 @@ extension _AppScreenDownloadActions on _AppScreenState {
   void _handleCachedComicsChanged() => _setStateIfMounted();
 
   Set<String> _downloadedChapterKeys(DetailPageData page) {
-    return downloadedChapterKeysForDetail(
-      page,
-      cachedComics: _library.cachedComics,
-      chapterPathKey: _chapterKeys.pathKey,
-    );
+    return _chapterKeys.downloadedKeys(page, _library.cachedComics);
   }
 
   Future<void> _showDetailDownloadPicker(DetailPageData page) async {
@@ -142,61 +138,26 @@ extension _AppScreenDownloadActions on _AppScreenState {
   String _comicQueueKey(String value) => UriKeys.pathKey(value);
 
   Future<void> _persistCachedDetailSnapshot(DetailPageData page) async {
-    final CachedComicDetailSnapshot snapshot = page.toCachedDetailSnapshot();
-    if (snapshot.isEmpty) {
-      return;
-    }
-    _updateCachedComicSnapshot(page, snapshot);
     try {
-      await _services.downloadService.upsertCachedComicDetailSnapshot(page);
-    } catch (_) {
-      return;
-    }
-  }
-
-  void _updateCachedComicSnapshot(
-    DetailPageData page,
-    CachedComicDetailSnapshot snapshot,
-  ) {
-    if (!mounted) {
-      return;
-    }
-    final String targetComicKey = _comicQueueKey(page.uri);
-    final int index = _library.cachedComics.indexWhere((
-      CachedComicLibraryEntry entry,
-    ) {
-      if (targetComicKey.isNotEmpty &&
-          _comicQueueKey(entry.comicHref) == targetComicKey) {
-        return true;
+      if (await _services.downloadService.upsertCachedComicDetailSnapshot(
+            page,
+          ) &&
+          mounted) {
+        await _refreshCachedComics(reason: CacheLibraryRefreshReason.manual);
       }
-      return entry.comicTitle == page.title;
-    });
-    if (index == -1) {
-      return;
+    } catch (_) {
+      // Offline metadata is best effort.
     }
-
-    final CachedComicLibraryEntry current = _library.cachedComics[index];
-    final CachedComicLibraryEntry next = current.copyWith(
-      comicTitle: page.title.isEmpty ? current.comicTitle : page.title,
-      comicHref: page.uri.isEmpty ? current.comicHref : page.uri,
-      coverUrl: page.coverUrl.isEmpty ? current.coverUrl : page.coverUrl,
-      detailSnapshot: snapshot,
-    );
-    _library.cachedComicsNotifier.value = <CachedComicLibraryEntry>[
-      ..._library.cachedComics.take(index),
-      next,
-      ..._library.cachedComics.skip(index + 1),
-    ];
   }
 
   DownloadQueueTask _buildDownloadQueueTask(
     DetailPageData page,
     Uri chapterUri,
     ChapterData chapter,
+    String comicKey,
+    String chapterKey,
+    CachedComicDetailSnapshot detailSnapshot,
   ) {
-    final DateTime now = DateTime.now();
-    final String comicKey = _comicQueueKey(page.uri);
-    final String chapterKey = _chapterKeys.pathKey(chapterUri.toString());
     final String id = sha1
         .convert(utf8.encode('$comicKey::$chapterKey'))
         .toString();
@@ -213,9 +174,7 @@ extension _AppScreenDownloadActions on _AppScreenState {
       progressLabel: '等待缓存',
       completedImages: 0,
       totalImages: 0,
-      createdAt: now,
-      updatedAt: now,
-      detailSnapshot: page.toCachedDetailSnapshot(),
+      detailSnapshot: detailSnapshot,
     );
   }
 
@@ -228,6 +187,8 @@ extension _AppScreenDownloadActions on _AppScreenState {
         .map((DownloadQueueTask task) => task.chapterKey)
         .toSet();
     final Uri detailUri = Uri.parse(page.uri);
+    final comicKey = _comicQueueKey(page.uri);
+    final detailSnapshot = page.toCachedDetailSnapshot();
 
     int addedCount = 0;
     int skippedQueuedCount = 0;
@@ -244,7 +205,16 @@ extension _AppScreenDownloadActions on _AppScreenState {
         continue;
       }
 
-      newTasks.add(_buildDownloadQueueTask(page, chapterUri, chapter));
+      newTasks.add(
+        _buildDownloadQueueTask(
+          page,
+          chapterUri,
+          chapter,
+          comicKey,
+          chapterKey,
+          detailSnapshot,
+        ),
+      );
       queuedChapterKeys.add(chapterKey);
       addedCount += 1;
     }

@@ -34,47 +34,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Resolve release metadata
         id: meta
         env:
           REQUESTED_TAG: ${{ inputs.tag }}
           REQUESTED_PRERELEASE: ${{ inputs.prerelease }}
-        run: |
-          set -euo pipefail
-
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            release_tag="$REQUESTED_TAG"
-            prerelease_flag="$REQUESTED_PRERELEASE"
-          else
-            release_tag="$GITHUB_REF_NAME"
-            prerelease_flag="false"
-          fi
-
-          version_line="$(sed -nE 's/^version:[[:space:]]+(.+)$/\1/p' pubspec.yaml | head -n1)"
-          app_version="${version_line%%+*}"
-          expected_tag="v${app_version}"
-          notes_path=".github/release-notes/${release_tag}.md"
-
-          if [[ -z "$version_line" || "$release_tag" != "$expected_tag" ]]; then
-            echo "Tag ${release_tag} does not match pubspec version ${app_version}. Expected ${expected_tag}." >&2
-            exit 1
-          fi
-
-          if [[ -f "$notes_path" ]]; then
-            echo "has_custom_notes=true" >> "$GITHUB_OUTPUT"
-            echo "release_notes_path=$notes_path" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_custom_notes=false" >> "$GITHUB_OUTPUT"
-            echo "release_notes_path=" >> "$GITHUB_OUTPUT"
-          fi
-
-          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
-          echo "release_title=EasyCopy $app_version" >> "$GITHUB_OUTPUT"
-          echo "app_version=$app_version" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease_flag" >> "$GITHUB_OUTPUT"
+        shell: pwsh
+        run: ./.github/scripts/release-metadata.ps1
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -151,26 +118,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Create or update GitHub Release with custom notes
-        if: steps.meta.outputs.has_custom_notes == 'true'
+      - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.release_tag }}
           name: ${{ steps.meta.outputs.release_title }}
           target_commitish: ${{ github.sha }}
           body_path: ${{ steps.meta.outputs.release_notes_path }}
-          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
-          files: dist/*.ipa
-          fail_on_unmatched_files: true
-
-      - name: Create or update GitHub Release
-        if: steps.meta.outputs.has_custom_notes != 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.meta.outputs.release_tag }}
-          name: ${{ steps.meta.outputs.release_title }}
-          target_commitish: ${{ github.sha }}
-          generate_release_notes: true
+          generate_release_notes: ${{ steps.meta.outputs.release_notes_path == '' }}
           prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
           files: dist/*.ipa
           fail_on_unmatched_files: true

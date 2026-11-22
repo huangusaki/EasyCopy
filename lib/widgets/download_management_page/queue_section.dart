@@ -87,7 +87,7 @@ class _QueueSection extends StatelessWidget {
   const _QueueSection({
     required this.snapshot,
     required this.isLoading,
-    required this.cachedComicMap,
+    required this.cachedComicKeys,
     required this.onClearQueue,
     required this.onStopComicTasks,
     required this.onRemoveComic,
@@ -97,7 +97,7 @@ class _QueueSection extends StatelessWidget {
 
   final DownloadQueueSnapshot snapshot;
   final bool isLoading;
-  final Map<String, CachedComicLibraryEntry> cachedComicMap;
+  final Set<String> cachedComicKeys;
   final VoidCallback onClearQueue;
   final ValueChanged<DownloadQueueTask> onStopComicTasks;
   final ValueChanged<DownloadQueueTask> onRemoveComic;
@@ -107,17 +107,21 @@ class _QueueSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
-      return const AppSurfaceCard(
-        title: '缓存队列',
-        child: Center(child: CircularProgressIndicator()),
+      return const SliverToBoxAdapter(
+        child: AppSurfaceCard(
+          title: '缓存队列',
+          child: Center(child: CircularProgressIndicator()),
+        ),
       );
     }
     if (snapshot.isEmpty) {
-      return const AppSurfaceCard(title: '缓存队列', child: Text('当前没有待处理章节。'));
+      return const SliverToBoxAdapter(
+        child: AppSurfaceCard(title: '缓存队列', child: Text('当前没有待处理章节。')),
+      );
     }
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
     final List<_QueuedComicGroup> groups = _groupQueue(snapshot.tasks);
-    return AppSurfaceCard(
+    return AppSliverSurface(
       title: '缓存队列',
       action: OutlinedButton.icon(
         onPressed: onClearQueue,
@@ -130,30 +134,28 @@ class _QueueSection extends StatelessWidget {
           visualDensity: VisualDensity.compact,
         ),
       ),
-      child: Column(
-        children: groups
-            .map((_QueuedComicGroup group) {
-              final CachedComicLibraryEntry? cachedComic =
-                  cachedComicMap[group.task.comicKey];
-              return Padding(
-                padding: EdgeInsets.only(
-                  bottom: identical(group, groups.last) ? 0 : 12,
-                ),
-                child: _QueueGroupRow(
-                  group: group,
-                  hasCachedContent: cachedComic != null,
-                  onStopComicTasks: () => onStopComicTasks(group.task),
-                  onRemoveComic: () => onRemoveComic(group.task),
-                  onRemoveTask: group.singleTask == null
-                      ? null
-                      : () => onRemoveTask(group.singleTask!),
-                  onRetryTask: group.failedTask == null
-                      ? null
-                      : () => onRetryTask(group.failedTask!),
-                ),
-              );
-            })
-            .toList(growable: false),
+      sliver: SliverList.builder(
+        itemCount: groups.length,
+        itemBuilder: (context, index) {
+          final group = groups[index];
+          return Padding(
+            padding: EdgeInsets.only(
+              bottom: identical(group, groups.last) ? 0 : 12,
+            ),
+            child: _QueueGroupRow(
+              group: group,
+              hasCachedContent: cachedComicKeys.contains(group.task.comicKey),
+              onStopComicTasks: () => onStopComicTasks(group.task),
+              onRemoveComic: () => onRemoveComic(group.task),
+              onRemoveTask: group.singleTask == null
+                  ? null
+                  : () => onRemoveTask(group.singleTask!),
+              onRetryTask: group.failedTask == null
+                  ? null
+                  : () => onRetryTask(group.failedTask!),
+            ),
+          );
+        },
       ),
     );
   }

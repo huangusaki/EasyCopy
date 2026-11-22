@@ -1,12 +1,5 @@
 import 'package:reader/models/page_models.dart';
 
-class ChapterPickerSection {
-  const ChapterPickerSection({required this.label, required this.chapters});
-
-  final String label;
-  final List<ChapterData> chapters;
-}
-
 class DetailChapterTabData {
   const DetailChapterTabData({
     required this.key,
@@ -19,13 +12,6 @@ class DetailChapterTabData {
   final List<ChapterData> chapters;
 
   bool get enabled => chapters.isNotEmpty;
-}
-
-class AdjacentChapterLinks {
-  const AdjacentChapterLinks({this.prevHref = '', this.nextHref = ''});
-
-  final String prevHref;
-  final String nextHref;
 }
 
 class CachedChapterNavigationContext {

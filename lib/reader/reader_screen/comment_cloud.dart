@@ -70,58 +70,6 @@ extension _ReaderCommentCloud on ReaderScreenState {
     );
   }
 
-  void _handleCommentDragUpdate(DragUpdateDetails details) {
-    final double? primaryDelta = details.primaryDelta;
-    if (primaryDelta == null ||
-        !_controller.commentScrollController.hasClients) {
-      return;
-    }
-    final ScrollPosition position =
-        _controller.commentScrollController.position;
-    final double nextOffset = (position.pixels - primaryDelta)
-        .clamp(0.0, position.maxScrollExtent)
-        .toDouble();
-    if ((nextOffset - position.pixels).abs() < 0.5) return;
-    _controller.commentScrollController.jumpTo(nextOffset);
-  }
-
-  void _handleCommentDragEnd(DragEndDetails details) {
-    if (!_controller.commentScrollController.hasClients) return;
-    final double velocity = -(details.primaryVelocity ?? 0);
-    if (velocity.abs() < 90) return;
-    final ScrollPosition position =
-        _controller.commentScrollController.position;
-    if (position.maxScrollExtent <= 0) return;
-    final double targetOffset = (position.pixels + (velocity * 0.18))
-        .clamp(0.0, position.maxScrollExtent)
-        .toDouble();
-    if ((targetOffset - position.pixels).abs() < 1) return;
-    unawaited(
-      _controller.commentScrollController.animateTo(
-        targetOffset,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      ),
-    );
-  }
-
-  Widget _buildReaderCommentScrollStrip({required bool enabled}) {
-    if (!enabled) return const SizedBox.shrink();
-    return Align(
-      alignment: Alignment.center,
-      child: FractionallySizedBox(
-        widthFactor: 0.3,
-        heightFactor: 1,
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onVerticalDragUpdate: _handleCommentDragUpdate,
-          onVerticalDragEnd: _handleCommentDragEnd,
-          child: const SizedBox.expand(),
-        ),
-      ),
-    );
-  }
-
   Widget _buildReaderCommentCloud(
     BuildContext context,
     ReaderPageData page, {
@@ -157,72 +105,7 @@ extension _ReaderCommentCloud on ReaderScreenState {
     if (comments.isEmpty) {
       return _buildReaderCommentEmptyState(colorScheme);
     }
-    final List<ReaderCommentCluster> clusters = buildReaderCommentClusters(
-      comments,
-    );
-    if (clusters.isEmpty) {
-      return _buildReaderCommentEmptyState(colorScheme);
-    }
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        final ReaderCommentCloudLayout layout = _buildReaderCommentCloudLayout(
-          context,
-          clusters,
-          maxWidth: constraints.maxWidth,
-        );
-        final double contentHeight = layout.height + 8;
-        final double maxViewportHeight = constraints.hasBoundedHeight
-            ? constraints.maxHeight
-            : contentHeight;
-        final double viewportHeight = math.min(
-          contentHeight,
-          maxViewportHeight,
-        );
-        final bool canScroll = contentHeight > viewportHeight + 0.5;
-        final Widget cloud = Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: SizedBox(
-            width: constraints.maxWidth,
-            height: layout.height,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: layout.placements
-                  .map(
-                    (ReaderCommentBubblePlacement placement) => Positioned(
-                      left: placement.left,
-                      top: placement.top,
-                      child: _buildReaderCommentBubble(
-                        context,
-                        clusters[placement.index],
-                        index: placement.index,
-                        width: placement.width,
-                      ),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
-          ),
-        );
-        return SizedBox(
-          height: viewportHeight,
-          child: ClipRect(
-            child: Stack(
-              children: <Widget>[
-                IgnorePointer(
-                  ignoring: true,
-                  child: SingleChildScrollView(
-                    controller: _controller.commentScrollController,
-                    physics: const NeverScrollableScrollPhysics(),
-                    child: cloud,
-                  ),
-                ),
-                _buildReaderCommentScrollStrip(enabled: canScroll),
-              ],
-            ),
-          ),
-        );
-      },
-    );
+    return _CommentCloudBody(reader: this, comments: comments);
   }
 
   Widget _buildReaderCommentEmptyState(ColorScheme colorScheme) {
@@ -291,6 +174,7 @@ extension _ReaderCommentCloud on ReaderScreenState {
           left: left,
           top: bestTop,
           width: metrics.width,
+          height: metrics.height,
         ),
       );
       final double nextHeight = bestTop + metrics.height + runSpacing;
@@ -335,6 +219,7 @@ extension _ReaderCommentCloud on ReaderScreenState {
         (naturalPainter.width + horizontalPadding + avatarWidth + avatarGap)
             .clamp(minBubbleWidth, maxBubbleWidth)
             .toDouble();
+    naturalPainter.dispose();
     final TextPainter painter =
         TextPainter(
           text: textSpan,
@@ -347,6 +232,7 @@ extension _ReaderCommentCloud on ReaderScreenState {
           ),
         );
     final double contentHeight = math.max(22, painter.height);
+    painter.dispose();
     return ReaderCommentBubbleMetrics(
       width: bubbleWidth,
       height: contentHeight + verticalPadding,
@@ -487,6 +373,8 @@ extension _ReaderCommentCloud on ReaderScreenState {
     return ClipOval(
       child: CachedNetworkImage(
         imageUrl: avatarUrl,
+        memCacheWidth: (22 * MediaQuery.devicePixelRatioOf(context)).ceil(),
+        memCacheHeight: (22 * MediaQuery.devicePixelRatioOf(context)).ceil(),
         width: 22,
         height: 22,
         fit: BoxFit.cover,
@@ -498,6 +386,138 @@ extension _ReaderCommentCloud on ReaderScreenState {
           );
         },
       ),
+    );
+  }
+}
+
+class _CommentCloudBody extends StatefulWidget {
+  const _CommentCloudBody({required this.reader, required this.comments});
+  final ReaderScreenState reader;
+  final List<ChapterComment> comments;
+
+  @override
+  State<_CommentCloudBody> createState() => _CommentCloudBodyState();
+}
+
+class _CommentCloudBodyState extends State<_CommentCloudBody> {
+  late List<ReaderCommentCluster> _clusters;
+  (double, TextScaler, TextDirection)? _geometry;
+  late ReaderCommentCloudLayout _layout;
+  Drag? _drag;
+
+  @override
+  void initState() {
+    super.initState();
+    _clusters = buildReaderCommentClusters(widget.comments);
+  }
+
+  @override
+  void didUpdateWidget(covariant _CommentCloudBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(widget.comments, oldWidget.comments)) {
+      _clusters = buildReaderCommentClusters(widget.comments);
+      _geometry = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _drag?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reader = widget.reader;
+    if (_clusters.isEmpty) {
+      return reader._buildReaderCommentEmptyState(
+        Theme.of(context).colorScheme,
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final key = (
+          constraints.maxWidth,
+          MediaQuery.textScalerOf(context),
+          Directionality.of(context),
+        );
+        if (_geometry != key) {
+          _layout = reader._buildReaderCommentCloudLayout(
+            context,
+            _clusters,
+            maxWidth: constraints.maxWidth,
+          );
+          _geometry = key;
+        }
+        final height = _layout.height + 8;
+        final viewport = math.min(height, constraints.maxHeight);
+        final scroll = reader.controller.commentScrollController;
+        return SizedBox(
+          height: viewport,
+          child: Stack(
+            children: [
+              IgnorePointer(
+                child: CustomScrollView(
+                  controller: scroll,
+                  primary: false,
+                  slivers: [
+                    SliverLayoutBuilder(
+                      builder: (context, constraints) {
+                        final start =
+                            constraints.scrollOffset + constraints.cacheOrigin;
+                        final end = start + constraints.remainingCacheExtent;
+                        return SliverToBoxAdapter(
+                          child: SizedBox(
+                            height: height,
+                            child: Stack(
+                              children: [
+                                for (final p in _layout.placements)
+                                  if (p.top + 4 <= end &&
+                                      p.top + p.height + 4 >= start)
+                                    Positioned(
+                                      key: ValueKey(p.index),
+                                      left: p.left,
+                                      top: p.top + 4,
+                                      child: reader._buildReaderCommentBubble(
+                                        context,
+                                        _clusters[p.index],
+                                        index: p.index,
+                                        width: p.width,
+                                      ),
+                                    ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              if (height > viewport + 0.5)
+                Align(
+                  child: FractionallySizedBox(
+                    widthFactor: 0.3,
+                    heightFactor: 1,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onVerticalDragStart: (details) {
+                        _drag = scroll.position.drag(
+                          details,
+                          () => _drag = null,
+                        );
+                      },
+                      onVerticalDragUpdate: (details) => _drag?.update(details),
+                      onVerticalDragEnd: (details) => _drag?.end(details),
+                      onVerticalDragCancel: () => _drag?.cancel(),
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

@@ -91,7 +91,6 @@ class KeyboardShortcutsPage extends StatelessWidget {
                   _ShortcutRow(
                     action: actions[i],
                     binding: prefs.bindingFor(actions[i]),
-                    isDefault: prefs.isDefault(actions[i]),
                     onEdit: () => _editBinding(context, controller, actions[i]),
                     onReset: prefs.isDefault(actions[i])
                         ? null
@@ -164,14 +163,12 @@ class _ShortcutRow extends StatelessWidget {
   const _ShortcutRow({
     required this.action,
     required this.binding,
-    required this.isDefault,
     required this.onEdit,
     this.onReset,
   });
 
   final ShortcutAction action;
   final ShortcutBinding binding;
-  final bool isDefault;
   final VoidCallback onEdit;
   final VoidCallback? onReset;
 

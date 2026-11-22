@@ -54,7 +54,7 @@ class PagerCard extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: <Widget>[
-        _PagerSideButton(
+        _PagerStepButton(
           icon: Icons.arrow_back_rounded,
           onPressed: onPrev == null ? null : () => _runAction(context, onPrev),
         ),
@@ -66,44 +66,11 @@ class PagerCard extends StatelessWidget {
           onTap: jumpable ? () => _openJumpSheet(context) : null,
         ),
         const SizedBox(width: 10),
-        _PagerSideButton(
+        _PagerStepButton(
           icon: Icons.arrow_forward_rounded,
           onPressed: onNext == null ? null : () => _runAction(context, onNext),
         ),
       ],
-    );
-  }
-}
-
-class _PagerSideButton extends StatelessWidget {
-  const _PagerSideButton({required this.icon, this.onPressed});
-
-  final IconData icon;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final bool enabled = onPressed != null;
-    final Color background = enabled
-        ? colorScheme.surfaceContainerHigh
-        : colorScheme.surfaceContainerLow.withValues(alpha: 0.6);
-    final Color foreground = enabled
-        ? colorScheme.onSurface
-        : colorScheme.onSurface.withValues(alpha: 0.32);
-    return Material(
-      color: background,
-      borderRadius: BorderRadius.circular(14),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(14),
-        child: SizedBox(
-          width: 48,
-          height: 44,
-          child: Icon(icon, size: 22, color: foreground),
-        ),
-      ),
     );
   }
 }
@@ -392,14 +359,10 @@ class _PagerJumpSheetState extends State<_PagerJumpSheet> {
 }
 
 class _PagerStepButton extends StatelessWidget {
-  const _PagerStepButton({
-    required this.icon,
-    required this.label,
-    this.onPressed,
-  });
+  const _PagerStepButton({required this.icon, this.label, this.onPressed});
 
   final IconData icon;
-  final String label;
+  final String? label;
   final VoidCallback? onPressed;
 
   @override
@@ -412,31 +375,41 @@ class _PagerStepButton extends StatelessWidget {
     final Color foreground = enabled
         ? colorScheme.onSurface
         : colorScheme.onSurface.withValues(alpha: 0.32);
+    final radius = BorderRadius.circular(label == null ? 14 : 12);
     return Material(
       color: background,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: radius,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onPressed,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(icon, size: 16, color: foreground),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 12,
-                  color: foreground,
+        borderRadius: radius,
+        child: label == null
+            ? SizedBox(
+                width: 48,
+                height: 44,
+                child: Icon(icon, size: 22, color: foreground),
+              )
+            : Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(icon, size: 16, color: foreground),
+                    const SizedBox(width: 4),
+                    Text(
+                      label!,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                        color: foreground,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
-        ),
       ),
     );
   }

@@ -279,21 +279,28 @@ class ReaderBookState extends State<ReaderBook>
     ],
   );
 
+  late ThemeData _paperTheme;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final ThemeData theme = Theme.of(context);
+    _paperTheme = ThemeData(
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: theme.colorScheme.primary,
+        surface: ReaderBook.paper,
+      ),
+      textTheme: theme.textTheme.apply(
+        bodyColor: Colors.black87,
+        displayColor: Colors.black87,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final ThemeData theme = Theme.of(context);
-        final ThemeData paperTheme = ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: theme.colorScheme.primary,
-            surface: ReaderBook.paper,
-          ),
-          textTheme: theme.textTheme.apply(
-            bodyColor: Colors.black87,
-            displayColor: Colors.black87,
-          ),
-        );
         final Size size = applyBoxFit(
           BoxFit.contain,
           const Size(1.44, 1),
@@ -315,21 +322,21 @@ class ReaderBookState extends State<ReaderBook>
         final bool sliding =
             moving && (widget.pages[_index].wide || widget.pages[_to!].wide);
         final bool folding = moving && !sliding;
-        final Widget current = _spread(_index);
+        late final Widget current = _spread(_index);
         final Widget? next = sliding ? _spread(_to!) : null;
-        final Widget front = Stack(
+        late final Widget front = Stack(
           children: <Widget>[if (folding) _page(_index, _right)],
         );
-        final Widget back = Stack(
+        late final Widget back = Stack(
           children: <Widget>[if (folding) _page(_to!, !_right)],
         );
-        final Widget base = Stack(
+        late final Widget base = Stack(
           children: <Widget>[
             _page(_index, folding ? !_right : false),
             _page(folding ? _to! : _index, folding ? _right : true),
           ],
         );
-        final Widget spine = _spine();
+        late final Widget spine = _spine();
         final Widget book = GestureDetector(
           behavior: HitTestBehavior.opaque,
           onHorizontalDragStart: widget.enabled ? _start : null,
@@ -414,7 +421,7 @@ class ReaderBookState extends State<ReaderBook>
         return Center(
           child: SizedBox.fromSize(
             size: size,
-            child: Theme(data: paperTheme, child: book),
+            child: Theme(data: _paperTheme, child: book),
           ),
         );
       },

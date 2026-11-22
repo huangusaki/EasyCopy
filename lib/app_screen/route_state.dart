@@ -21,7 +21,7 @@ class AppRouteState {
     if (page is DetailPageData) {
       return true;
     }
-    return route_utils.isDetailCatalogUri(currentUri);
+    return AppConfig.isDetailCatalogUri(currentUri);
   }
 
   bool get shouldShowSearchBar {
@@ -94,7 +94,7 @@ class AppRouteState {
   }
 
   bool isUserScopedDetailUri(Uri uri) {
-    return isAuthenticated && route_utils.isDetailCatalogUri(uri);
+    return isAuthenticated && AppConfig.isDetailCatalogUri(uri);
   }
 
   List<LinkAction> visibleDiscoverThemeOptions(List<LinkAction> options) {

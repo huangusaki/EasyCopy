@@ -9,12 +9,7 @@ extension _AppScreenNavigation on _AppScreenState {
 
   Uri get _currentUri => _currentEntry.uri;
 
-  SitePage? get _page {
-    final SitePage? page = _currentEntry.page;
-    return page == null
-        ? null
-        : BlockedContentFilter(_services.blockedContentStore).apply(page);
-  }
+  SitePage? get _page => _currentEntry.page;
 
   bool get _isLoading => _currentEntry.isLoading;
 
@@ -55,18 +50,15 @@ extension _AppScreenNavigation on _AppScreenState {
   NavigationRequestContext _createNavigationRequestContext(
     Uri uri, {
     required int targetTabIndex,
-    required NavigationIntent intent,
+
     required bool preserveVisiblePage,
-    required NavigationRequestSourceKind sourceKind,
   }) {
     final Uri targetUri = AppConfig.rewriteToCurrentHost(uri);
     return NavigationRequestContext(
       requestId: ++_nav.nextNavigationRequestId,
       targetTabIndex: targetTabIndex,
       routeKey: AppConfig.routeKeyForUri(targetUri),
-      intent: intent,
       preserveVisiblePage: preserveVisiblePage,
-      sourceKind: sourceKind,
     );
   }
 
@@ -83,10 +75,10 @@ extension _AppScreenNavigation on _AppScreenState {
     NavigationRequestContext request, {
     required String phase,
   }) {
-    _nav.supersededRequestCount += 1;
     if (!kDebugMode) {
       return;
     }
+    _nav.supersededRequestCount += 1;
     debugPrint(
       '[nav] superseded request=${request.requestId} '
       'tab=${request.targetTabIndex} route=${request.routeKey} phase=$phase '
@@ -98,10 +90,10 @@ extension _AppScreenNavigation on _AppScreenState {
     NavigationRequestContext request, {
     required String phase,
   }) {
-    _nav.discardedNavigationCommitCount += 1;
     if (!kDebugMode) {
       return;
     }
+    _nav.discardedNavigationCommitCount += 1;
     debugPrint(
       '[nav] discarded commit request=${request.requestId} '
       'tab=${request.targetTabIndex} route=${request.routeKey} phase=$phase '
@@ -113,10 +105,10 @@ extension _AppScreenNavigation on _AppScreenState {
     NavigationRequestContext request, {
     required String phase,
   }) {
-    _nav.discardedCallbackCount += 1;
     if (!kDebugMode) {
       return;
     }
+    _nav.discardedCallbackCount += 1;
     debugPrint(
       '[nav] discarded callback request=${request.requestId} '
       'tab=${request.targetTabIndex} route=${request.routeKey} phase=$phase '
@@ -134,9 +126,8 @@ extension _AppScreenNavigation on _AppScreenState {
         requestId: entry.activeRequestId,
         targetTabIndex: tabIndex,
         routeKey: entry.routeKey,
-        intent: NavigationIntent.preserve,
+
         preserveVisiblePage: true,
-        sourceKind: NavigationRequestSourceKind.navigation,
       ),
       phase: phase,
     );

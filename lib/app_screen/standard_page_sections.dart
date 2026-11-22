@@ -440,15 +440,13 @@ extension _AppScreenPageSections on _AppScreenState {
                 padding: EdgeInsets.only(
                   bottom: index == page.items.length - 1 ? 0 : 12,
                 ),
-                child: RepaintBoundary(
-                  child: StaggerIn(
-                    key: ValueKey<String>(item.href),
-                    index: index,
-                    enabled: usesWideLayout(context),
-                    child: RankCard(
-                      item: item,
-                      onTap: () => _navigateToHref(item.href),
-                    ),
+                child: StaggerIn(
+                  key: ValueKey<String>(item.href),
+                  index: index,
+                  enabled: usesWideLayout(context),
+                  child: RankCard(
+                    item: item,
+                    onTap: () => _navigateToHref(item.href),
                   ),
                 ),
               );
@@ -470,15 +468,11 @@ extension _AppScreenPageSections on _AppScreenState {
     final String lastReadChapterPathKey = _chapterKeys.lastReadKey(page);
     final List<DetailChapterTabData> chapterTabs = _detailChapters.tabs(page);
     final DetailChapterTabData? activeChapterTab = _detailChapters.activeTab(
-      page,
+      chapterTabs,
     );
     final List<ChapterData> visibleChapters = _detailChapters.visibleChapters(
       page,
-    );
-    _detailChapters.scheduleAutoPosition(
-      page,
-      visibleChapters,
-      lastReadChapterPathKey,
+      activeChapterTab,
     );
     final List<Widget> sections = <Widget>[
       _hPaddedBox(
@@ -500,48 +494,63 @@ extension _AppScreenPageSections on _AppScreenState {
     ];
 
     sections.add(
-      _hPaddedBox(
-        AppSurfaceCard(
-          child: chapterTabs.isEmpty
-              ? const Text('章节还在整理中，向下刷新可重试。')
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    DetailChapterToolbar(
-                      tabs: chapterTabs,
-                      selectedKey: activeChapterTab?.key,
-                      isAscending: _detailChapters.sortAscending,
-                      onSelectTab: _detailChapters.selectTab,
-                      onToggleSort: visibleChapters.length > 1
-                          ? _detailChapters.toggleSortOrder
-                          : null,
-                    ),
-                    const SizedBox(height: 14),
-                    if (visibleChapters.isEmpty)
-                      const Text('这个分组暂时没有章节。')
-                    else
-                      DetailSectionSwitcher(
-                        contentKey: _detailChapters.contentKey(
-                          page,
-                          activeChapterTab,
-                          visibleChapters,
-                        ),
-                        child: ChapterGrid(
-                          chapters: visibleChapters,
-                          onTap: (String href) =>
-                              _openDetailChapter(page, href),
-                          downloadedChapterPathKeys: downloadedChapterKeys,
-                          visitedChapterPathKeys: visitedChapterKeys,
-                          lastReadChapterPathKey: lastReadChapterPathKey,
-                          itemKeyBuilder: _detailChapters.itemKeyFor,
-                        ),
+      _hPaddedSliver(
+        AppSliverSurface(
+          sliver: SliverMainAxisGroup(
+            slivers: [
+              SliverToBoxAdapter(
+                child: chapterTabs.isEmpty
+                    ? const Text('章节还在整理中，向下刷新可重试。')
+                    : DetailChapterToolbar(
+                        tabs: chapterTabs,
+                        selectedKey: activeChapterTab?.key,
+                        isAscending: _detailChapters.sortAscending,
+                        onSelectTab: _detailChapters.selectTab,
+                        onToggleSort: visibleChapters.length > 1
+                            ? _detailChapters.toggleSortOrder
+                            : null,
                       ),
-                  ],
+              ),
+              if (chapterTabs.isNotEmpty)
+                const SliverToBoxAdapter(child: SizedBox(height: 14)),
+              if (chapterTabs.isNotEmpty && visibleChapters.isEmpty)
+                const SliverToBoxAdapter(child: Text('这个分组暂时没有章节。')),
+              if (visibleChapters.isNotEmpty)
+                TweenAnimationBuilder<double>(
+                  key: ValueKey(
+                    _detailChapters.contentKey(
+                      page,
+                      activeChapterTab,
+                      visibleChapters,
+                    ),
+                  ),
+                  duration: const Duration(milliseconds: 320),
+                  curve: Curves.easeOutCubic,
+                  tween: Tween(begin: 0, end: 1),
+                  builder: (context, opacity, child) =>
+                      SliverOpacity(opacity: opacity, sliver: child),
+                  child: ChapterGrid(
+                    chapters: visibleChapters,
+                    onTap: (href) => _openDetailChapter(page, href),
+                    downloadedChapterPathKeys: downloadedChapterKeys,
+                    visitedChapterPathKeys: visitedChapterKeys,
+                    lastReadChapterPathKey: lastReadChapterPathKey,
+                    onLayout: (constraints, delegate) =>
+                        _detailChapters.scheduleAutoPosition(
+                          page,
+                          visibleChapters,
+                          lastReadChapterPathKey,
+                          constraints,
+                          delegate,
+                          _ui.standardScrollController,
+                        ),
+                  ),
                 ),
+            ],
+          ),
         ),
       ),
     );
-
     return sections;
   }
 

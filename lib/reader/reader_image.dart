@@ -26,6 +26,7 @@ class ReaderChapterImage extends StatefulWidget {
 }
 
 class _ReaderChapterImageState extends State<ReaderChapterImage> {
+  double? _measuredRatio;
   ImageStream? _imageStream;
   ImageStreamListener? _imageStreamListener;
 
@@ -39,7 +40,15 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
   void didUpdateWidget(covariant ReaderChapterImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.imageProvider != widget.imageProvider) {
+      _detachImageStream();
+      _measuredRatio = null;
       _resolveImage();
+    } else if (oldWidget.aspectRatio != widget.aspectRatio) {
+      if (widget.aspectRatio == null) {
+        _resolveImage();
+      } else {
+        _detachImageStream();
+      }
     }
   }
 
@@ -50,6 +59,7 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
   }
 
   void _resolveImage() {
+    if (widget.aspectRatio != null || _measuredRatio != null) return;
     final ImageStream newStream = widget.imageProvider.resolve(
       createLocalImageConfiguration(context),
     );
@@ -64,16 +74,25 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
         final int height = imageInfo.image.height;
         imageInfo.dispose();
         if (!mounted || width <= 0 || height <= 0) return;
+        _detachImageStream();
+        final ratio = width / height;
+        if (synchronousCall) {
+          _measuredRatio = ratio;
+        } else {
+          setState(() => _measuredRatio = ratio);
+        }
+        final provider = widget.imageProvider;
         final ValueChanged<double> onResolved = widget.onResolvedAspectRatio;
         if (synchronousCall) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) onResolved(width / height);
+            if (mounted && widget.imageProvider == provider) onResolved(ratio);
           });
         } else {
-          onResolved(width / height);
+          onResolved(ratio);
         }
       },
       onError: (Object error, StackTrace? stackTrace) {
+        _detachImageStream();
         if (!mounted) {
           return;
         }
@@ -110,7 +129,8 @@ class _ReaderChapterImageState extends State<ReaderChapterImage> {
 
   @override
   Widget build(BuildContext context) {
-    final double resolvedAspectRatio = widget.aspectRatio ?? 0.72;
+    final double resolvedAspectRatio =
+        widget.aspectRatio ?? _measuredRatio ?? 0.72;
     final Widget image = Image(
       image: widget.imageProvider,
       fit: widget.fit,

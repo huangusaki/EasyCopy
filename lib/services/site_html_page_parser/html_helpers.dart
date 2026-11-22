@@ -10,10 +10,8 @@ extension _SiteHtmlHelpers on SiteHtmlPageParser {
           final List<LinkAction> options =
               _querySelectorAll(group, '.classify-right a')
                   .map((dom.Element anchor) {
-                    final String optionLabel =
-                        _queryText(anchor, 'dd').isNotEmpty
-                        ? _queryText(anchor, 'dd')
-                        : _text(anchor);
+                    final dd = _queryText(anchor, 'dd');
+                    final optionLabel = dd.isNotEmpty ? dd : _text(anchor);
                     final String href = _linkUrl(uri, anchor);
                     if (optionLabel.isEmpty || href.isEmpty) {
                       return null;
@@ -42,8 +40,7 @@ extension _SiteHtmlHelpers on SiteHtmlPageParser {
         final String href = _linkUrl(uri, anchor);
         if (label.isEmpty ||
             href.isEmpty ||
-            label.contains('開始閱讀') ||
-            label.contains('开始阅读')) {
+            SiteHtmlRules.startReading.any(label.contains)) {
           return null;
         }
         return ChapterData(label: label, href: href);
@@ -107,10 +104,8 @@ extension _SiteHtmlHelpers on SiteHtmlPageParser {
     required String keyMaterial,
     required String encrypted,
   }) {
-    final Uint8List key = Uint8List.fromList(utf8.encode(keyMaterial));
-    final Uint8List iv = Uint8List.fromList(
-      utf8.encode(encrypted.substring(0, 16)),
-    );
+    final Uint8List key = utf8.encode(keyMaterial);
+    final Uint8List iv = utf8.encode(encrypted.substring(0, 16));
     final Uint8List cipherBytes = _decodeCipherText(encrypted.substring(16));
     final PaddedBlockCipher cipher = PaddedBlockCipherImpl(
       PKCS7Padding(),
@@ -130,18 +125,24 @@ extension _SiteHtmlHelpers on SiteHtmlPageParser {
     final String normalized = _cleanText(payload);
     if (SiteHtmlPageParser._hexPattern.hasMatch(normalized) &&
         normalized.length.isEven) {
-      return Uint8List.fromList(_hexDecode(normalized));
+      return _hexDecode(normalized);
     }
-    return Uint8List.fromList(base64Decode(normalized));
+    return base64Decode(normalized);
   }
 
-  List<int> _hexDecode(String value) {
-    final List<int> bytes = <int>[];
-    for (int index = 0; index < value.length; index += 2) {
-      bytes.add(int.parse(value.substring(index, index + 2), radix: 16));
+  Uint8List _hexDecode(String value) {
+    int digit(int unit) => unit <= 57 ? unit - 48 : (unit | 0x20) - 87;
+    final bytes = Uint8List(value.length ~/ 2);
+    for (int i = 0; i < bytes.length; i++) {
+      bytes[i] =
+          digit(value.codeUnitAt(i * 2)) * 16 +
+          digit(value.codeUnitAt(i * 2 + 1));
     }
     return bytes;
   }
+
+  String _firstNonempty(Iterable<String> values, {String Function()? orElse}) =>
+      values.firstWhere((s) => s.isNotEmpty, orElse: orElse ?? () => '');
 
   String _stringValue(Object? value) {
     return value is String ? _cleanText(value) : '';
@@ -214,17 +215,12 @@ extension _SiteHtmlHelpers on SiteHtmlPageParser {
 
   List<dom.Element> _querySelectorAll(Object? root, String selector) {
     if (root is dom.Document) {
-      return root.querySelectorAll(selector).toList(growable: false);
+      return root.querySelectorAll(selector);
     }
     if (root is dom.Element) {
-      return root.querySelectorAll(selector).toList(growable: false);
+      return root.querySelectorAll(selector);
     }
     return const <dom.Element>[];
-  }
-
-  dom.Element? _parentElement(dom.Element element) {
-    final dom.Node? parent = element.parent;
-    return parent is dom.Element ? parent : null;
   }
 
   dom.Element? _findAncestorWithAnyClass(
@@ -237,7 +233,7 @@ extension _SiteHtmlHelpers on SiteHtmlPageParser {
       if (matches) {
         return current;
       }
-      current = _parentElement(current);
+      current = current.parent;
     }
     return null;
   }
@@ -246,13 +242,14 @@ extension _SiteHtmlHelpers on SiteHtmlPageParser {
     if (node == null) {
       return '';
     }
-    final String source = _attr(node, 'data-src').isNotEmpty
-        ? _attr(node, 'data-src')
-        : _attr(node, 'data-original').isNotEmpty
-        ? _attr(node, 'data-original')
-        : _attr(node, 'data').isNotEmpty
-        ? _attr(node, 'data')
-        : _cleanText(node.attributes['src']);
+    final String source = _firstNonempty(
+      const [
+        'data-src',
+        'data-original',
+        'data',
+        'src',
+      ].map((key) => _attr(node, key)),
+    );
     if (source.isEmpty || source == '#') {
       return '';
     }
@@ -279,16 +276,14 @@ extension _SiteHtmlHelpers on SiteHtmlPageParser {
       return '';
     }
 
+    final spans = row.querySelectorAll('span');
     final dom.Element valueNode =
         _querySelector(row, '.comicParticulars-right-txt') ??
         _querySelector(row, 'p') ??
-        (row.querySelectorAll('span').length > 1
-            ? row.querySelectorAll('span')[1]
-            : null) ??
+        (spans.length > 1 ? spans[1] : null) ??
         row;
-    final String fullText = _text(valueNode).isNotEmpty
-        ? _text(valueNode)
-        : _text(row);
+    final valueText = _text(valueNode);
+    final fullText = valueText.isNotEmpty ? valueText : _text(row);
     return _cleanText(
       fullText.replaceAll('$prefix：', '').replaceAll('$prefix:', ''),
     );

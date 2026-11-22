@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:flutter/foundation.dart';
 import 'package:reader/config/app_config.dart';
 import 'package:reader/models/page_models.dart';
@@ -58,10 +60,12 @@ class PrimaryTabRouteEntry {
     double? standardScrollOffset,
     int? activeRequestId,
   }) {
-    final Uri nextUri = _normalizeSessionUri(uri ?? this.uri);
+    final Uri nextUri = uri == null ? this.uri : _normalizeSessionUri(uri);
     return PrimaryTabRouteEntry(
       uri: nextUri,
-      routeKey: routeKey ?? AppConfig.routeKeyForUri(nextUri),
+      routeKey:
+          routeKey ??
+          (uri == null ? this.routeKey : AppConfig.routeKeyForUri(nextUri)),
       page: clearPage ? null : (page ?? this.page),
       isLoading: isLoading ?? this.isLoading,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
@@ -95,10 +99,6 @@ class PrimaryTabSessionStore {
   /// 当前 Tab 路由栈深度。
   int depth(int tabIndex) {
     return _stackFor(tabIndex).length;
-  }
-
-  bool canPop(int tabIndex) {
-    return _stackFor(tabIndex).length > 1;
   }
 
   void push(int tabIndex, Uri uri) {
@@ -207,7 +207,7 @@ class PrimaryTabSessionStore {
   }
 
   List<PrimaryTabRouteEntry> stackForTab(int tabIndex) {
-    return List<PrimaryTabRouteEntry>.unmodifiable(_stackFor(tabIndex));
+    return UnmodifiableListView(_stackFor(tabIndex));
   }
 
   void _updateMatchingRoute(

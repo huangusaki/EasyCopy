@@ -25,7 +25,7 @@ extension _AppScreenHostActions on _AppScreenState {
       'checkedAt': previousCheckedAt?.toIso8601String(),
     });
     try {
-      await _services.hostManager.refreshProbes(force: true);
+      await _services.hostManager.refreshProbes();
       final String nextHost = _services.hostManager.currentHost;
       final DateTime? nextCheckedAt =
           _services.hostManager.probeSnapshot?.checkedAt;
@@ -342,6 +342,7 @@ extension _AppScreenHostActions on _AppScreenState {
     if (_web.isFailingOver) {
       return;
     }
+    final previousProbe = _services.hostManager.probeSnapshot;
     if (await _tryRecoverHost(message)) {
       _web.consecutiveFrameFailures = 0;
       return;
@@ -355,6 +356,7 @@ extension _AppScreenHostActions on _AppScreenState {
       final String previousHost = _services.hostManager.currentHost;
       final String nextHost = await _services.hostManager.failover(
         exclude: <String>[previousHost],
+        refresh: identical(previousProbe, _services.hostManager.probeSnapshot),
       );
       if (nextHost == previousHost) {
         return;
@@ -454,46 +456,29 @@ extension _AppScreenHostActions on _AppScreenState {
   }
 
   Future<void> _syncHostCookies() async {
-    await _services.session.ensureInitialized();
-    if (_services.session.cookies.isEmpty) {
-      return;
-    }
-    if (!PlatformCapabilities.usesMobileWebView) {
-      return;
-    }
+    if (!PlatformCapabilities.usesMobileWebView) return;
     final WebViewCookieManager? cookieManager = _ui.cookieManager;
-    if (cookieManager == null) {
-      return;
-    }
+    if (cookieManager == null) return;
+    await _services.session.ensureInitialized();
+    final cookies = _services.session.cookies;
+    if (cookies.isEmpty) return;
+    final host = _services.hostManager.currentHost;
     // 未变化时跳过 CookieManager 平台调用。
-    final String fingerprint = _hostCookieFingerprint();
+    final fingerprint = '$host::${SiteSession.cookieFingerprint(cookies)}';
     if (fingerprint == _shell.syncedHostCookieFingerprint) {
       return;
     }
-    for (final MapEntry<String, String> cookie
-        in _services.session.cookies.entries) {
+    for (final MapEntry<String, String> cookie in cookies.entries) {
       await cookieManager.setCookie(
         WebViewCookie(
           name: cookie.key,
           value: cookie.value,
-          domain: _services.hostManager.currentHost,
+          domain: host,
           path: '/',
         ),
       );
     }
     _shell.syncedHostCookieFingerprint = fingerprint;
-  }
-
-  String _hostCookieFingerprint() {
-    final List<String> entries =
-        _services.session.cookies.entries
-            .map(
-              (MapEntry<String, String> cookie) =>
-                  '${cookie.key}=${cookie.value}',
-            )
-            .toList()
-          ..sort();
-    return '${_services.hostManager.currentHost}::${entries.join(';')}';
   }
 
   Future<void> _clearPlatformCookies() async {

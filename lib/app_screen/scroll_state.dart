@@ -33,8 +33,6 @@ class AppScrollState {
   final DeferredViewportCoordinator _restore = DeferredViewportCoordinator();
 
   bool _suspendTracking = false;
-  double? _lastOffset;
-  String _lastRouteKey = '';
 
   bool handleScrollNotification(
     ScrollNotification notification, {
@@ -71,29 +69,20 @@ class AppScrollState {
     }
     final PrimaryTabRouteEntry entry = currentEntry();
     final double offset = standardScrollController.offset;
-    if (_lastRouteKey == entry.routeKey &&
-        _lastOffset != null &&
-        (offset - _lastOffset!).abs() < standardScrollSessionStep) {
-      return;
-    }
-    _lastRouteKey = entry.routeKey;
-    _lastOffset = offset;
+    if (entry.standardScrollOffset == offset) return;
     tabSessionStore.updateScroll(selectedIndex(), entry.routeKey, offset);
   }
 
   void handleStandardScroll() {
-    if (_suspendTracking ||
-        !standardScrollController.hasClients ||
-        page() == null ||
-        isReaderMode()) {
+    if (_suspendTracking || !standardScrollController.hasClients) return;
+    final PrimaryTabRouteEntry entry = currentEntry();
+    if (entry.page == null || entry.page is ReaderPageData) return;
+    final offset = standardScrollController.offset;
+    if ((offset - entry.standardScrollOffset).abs() <
+        standardScrollSessionStep) {
       return;
     }
-    final PrimaryTabRouteEntry entry = currentEntry();
-    tabSessionStore.updateScroll(
-      selectedIndex(),
-      entry.routeKey,
-      standardScrollController.offset,
-    );
+    tabSessionStore.updateScroll(selectedIndex(), entry.routeKey, offset);
   }
 
   void resetStandardScrollPosition() {
@@ -150,8 +139,6 @@ class AppScrollState {
       curve: Curves.easeOutCubic,
     );
     final PrimaryTabRouteEntry entry = currentEntry();
-    _lastRouteKey = entry.routeKey;
-    _lastOffset = 0;
     tabSessionStore.updateScroll(selectedIndex(), entry.routeKey, 0);
   }
 
@@ -253,8 +240,6 @@ class AppScrollState {
 
     standardScrollController.jumpTo(clampedOffset);
     _finishRestore(ticket);
-    _lastRouteKey = routeKey;
-    _lastOffset = clampedOffset;
     tabSessionStore.updateScroll(tabIndex, routeKey, clampedOffset);
   }
 

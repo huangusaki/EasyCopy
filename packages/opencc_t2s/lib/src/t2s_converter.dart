@@ -20,23 +20,23 @@ class T2SConverter {
   /// Pass `0` to disable memoization.
   T2SConverter({int cacheSize = 4096}) : _cacheCapacity = cacheSize;
 
-  static final Map<String, String> _normalization = _decodePairs(
-    kNormalization,
-  );
+  static final Map<int, String> _normalization = _decodePairs(kNormalization);
   static final Map<String, String> _phrases = _decodePhrases(kPhrases);
-  static final Map<String, String> _charactersExt = _decodePairs(
-    kCharactersExt,
-  );
-  static final Map<String, String> _characters = _decodePairs(kCharacters);
+  static final Map<int, String> _charactersExt = _decodePairs(kCharactersExt);
+  static final Map<int, String> _characters = _decodePairs(kCharacters);
 
-  static final int _maxPhraseUnits = _phrases.keys.fold<int>(
-    0,
-    (int longest, String key) => key.length > longest ? key.length : longest,
-  );
-  static final int _minPhraseUnits = _phrases.keys.fold<int>(
-    _maxPhraseUnits,
-    (int shortest, String key) => key.length < shortest ? key.length : shortest,
-  );
+  static final Map<int, List<int>> _phraseLengths = _indexPhraseLengths();
+
+  static Map<int, List<int>> _indexPhraseLengths() {
+    final lengths = <int, Set<int>>{};
+    for (final phrase in _phrases.keys) {
+      (lengths[phrase.codeUnitAt(0)] ??= <int>{}).add(phrase.length);
+    }
+    return lengths.map(
+      (first, sizes) =>
+          MapEntry(first, sizes.toList()..sort((a, b) => b.compareTo(a))),
+    );
+  }
 
   final int _cacheCapacity;
 
@@ -72,88 +72,81 @@ class T2SConverter {
   static String _convert(String text) => _convertGroup(_normalize(text));
 
   static String _normalize(String text) {
-    final int length = text.length;
-    final StringBuffer buffer = StringBuffer();
-    bool changed = false;
+    StringBuffer? output;
+    int unchangedStart = 0;
     int index = 0;
-
-    while (index < length) {
-      final int units = _codePointUnits(text, index);
-      final String source = text.substring(index, index + units);
-      final String? replacement = _normalization[source];
-      if (replacement == null) {
-        buffer.write(source);
-      } else {
-        buffer.write(replacement);
-        changed = true;
+    while (index < text.length) {
+      final rune = _codePointAt(text, index);
+      final next = index + (rune > 0xffff ? 2 : 1);
+      final replacement = _normalization[rune];
+      if (replacement != null) {
+        (output ??= StringBuffer())
+          ..write(text.substring(unchangedStart, index))
+          ..write(replacement);
+        unchangedStart = next;
       }
-      index += units;
+      index = next;
     }
-
-    return changed ? buffer.toString() : text;
+    if (output == null) return text;
+    return (output..write(text.substring(unchangedStart))).toString();
   }
 
   static String _convertGroup(String text) {
-    final int length = text.length;
-    final StringBuffer buffer = StringBuffer();
-    bool changed = false;
+    StringBuffer? output;
+    int unchangedStart = 0;
     int index = 0;
-
-    while (index < length) {
+    while (index < text.length) {
       String? replacement;
       int consumed = 0;
-
-      int upper = _maxPhraseUnits;
-      if (index + upper > length) {
-        upper = length - index;
-      }
-      for (int units = upper; units >= _minPhraseUnits; units--) {
-        final String? phrase = _phrases[text.substring(index, index + units)];
-        if (phrase != null) {
-          replacement = phrase;
-          consumed = units;
-          break;
+      final lengths = _phraseLengths[text.codeUnitAt(index)];
+      if (lengths != null) {
+        for (final units in lengths) {
+          if (index + units > text.length) continue;
+          replacement = _phrases[text.substring(index, index + units)];
+          if (replacement != null) {
+            consumed = units;
+            break;
+          }
         }
       }
-
       if (replacement == null) {
-        consumed = _codePointUnits(text, index);
-        final String source = text.substring(index, index + consumed);
-        replacement = _charactersExt[source] ?? _characters[source];
-        if (replacement == null) {
-          buffer.write(source);
-          index += consumed;
-          continue;
-        }
+        final rune = _codePointAt(text, index);
+        consumed = rune > 0xffff ? 2 : 1;
+        replacement = _charactersExt[rune] ?? _characters[rune];
       }
-
-      buffer.write(replacement);
-      changed = true;
+      if (replacement != null &&
+          (replacement.length != consumed ||
+              !text.startsWith(replacement, index))) {
+        (output ??= StringBuffer())
+          ..write(text.substring(unchangedStart, index))
+          ..write(replacement);
+        unchangedStart = index + consumed;
+      }
+      // Identity phrases still consume the entire match before character lookup.
       index += consumed;
     }
-
-    return changed ? buffer.toString() : text;
+    if (output == null) return text;
+    return (output..write(text.substring(unchangedStart))).toString();
   }
 
-  /// Length in UTF-16 code units of the code point starting at [index].
-  static int _codePointUnits(String text, int index) {
-    final int unit = text.codeUnitAt(index);
-    if (unit >= 0xD800 && unit <= 0xDBFF && index + 1 < text.length) {
-      final int next = text.codeUnitAt(index + 1);
-      if (next >= 0xDC00 && next <= 0xDFFF) {
-        return 2;
+  static int _codePointAt(String text, int index) {
+    final first = text.codeUnitAt(index);
+    if (first >= 0xd800 && first <= 0xdbff && index + 1 < text.length) {
+      final second = text.codeUnitAt(index + 1);
+      if (second >= 0xdc00 && second <= 0xdfff) {
+        return 0x10000 + ((first - 0xd800) << 10) + second - 0xdc00;
       }
     }
-    return 1;
+    return first;
   }
 
-  static Map<String, String> _decodePairs(String data) {
-    final Map<String, String> entries = <String, String>{};
-    final List<int> runes = data.runes.toList(growable: false);
-    for (int i = 0; i < runes.length; i += 2) {
-      entries[String.fromCharCode(runes[i])] = String.fromCharCode(
-        runes[i + 1],
-      );
+  static Map<int, String> _decodePairs(String data) {
+    final entries = <int, String>{};
+    final runes = data.runes.iterator;
+    while (runes.moveNext()) {
+      final source = runes.current;
+      runes.moveNext();
+      entries[source] = String.fromCharCode(runes.current);
     }
     return entries;
   }

@@ -41,6 +41,41 @@ class AppConfig {
 
   static Uri get profileUri => buildProfileUri();
 
+  static PagerData buildProfilePager({
+    required ProfileSubview view,
+    required int currentPage,
+    required int totalPages,
+    required int totalItems,
+    ProfileCollectionSort collectionSort =
+        AppConfig.defaultProfileCollectionSort,
+  }) {
+    final int normalizedCurrentPage = currentPage < 1 ? 1 : currentPage;
+    final int normalizedTotalPages = totalPages < 1 ? 1 : totalPages;
+    final String itemUnit = view == ProfileSubview.collections ? '部' : '条';
+    return PagerData(
+      currentLabel: '$normalizedCurrentPage',
+      totalLabel: '共$normalizedTotalPages页 · $totalItems$itemUnit',
+      prevHref: normalizedCurrentPage > 1
+          ? AppConfig.buildProfileUri(
+              view: view,
+              page: normalizedCurrentPage - 1,
+              collectionSort: view == ProfileSubview.collections
+                  ? collectionSort
+                  : null,
+            ).toString()
+          : '',
+      nextHref: normalizedCurrentPage < normalizedTotalPages
+          ? AppConfig.buildProfileUri(
+              view: view,
+              page: normalizedCurrentPage + 1,
+              collectionSort: view == ProfileSubview.collections
+                  ? collectionSort
+                  : null,
+            ).toString()
+          : '',
+    );
+  }
+
   static Uri buildProfileUri({
     ProfileSubview view = ProfileSubview.root,
     int page = 1,
@@ -132,13 +167,9 @@ class AppConfig {
     }
   }
 
-  static List<AppDestination> buildDestinations() {
-    return <AppDestination>[
-      const AppDestination(label: '首页', icon: Icons.home, path: '/'),
-      const AppDestination(label: '发现', icon: Icons.explore, path: '/comics'),
-      const AppDestination(label: '排行', icon: Icons.bar_chart, path: '/rank'),
-      const AppDestination(label: '我的', icon: Icons.person, path: profilePath),
-    ];
+  static bool isDetailCatalogUri(Uri uri) {
+    final path = uri.path.toLowerCase();
+    return path.startsWith('/comic/') && !path.contains('/chapter/');
   }
 
   static bool isAllowedNavigationUri(Uri? uri) {
@@ -308,7 +339,12 @@ class AppDestination {
   Uri get uri => AppConfig.resolvePath(path);
 }
 
-List<AppDestination> get appDestinations => AppConfig.buildDestinations();
+const List<AppDestination> appDestinations = <AppDestination>[
+  AppDestination(label: '首页', icon: Icons.home, path: '/'),
+  AppDestination(label: '发现', icon: Icons.explore, path: '/comics'),
+  AppDestination(label: '排行', icon: Icons.bar_chart, path: '/rank'),
+  AppDestination(label: '我的', icon: Icons.person, path: AppConfig.profilePath),
+];
 
 int tabIndexForUri(Uri? uri) {
   if (uri == null) {

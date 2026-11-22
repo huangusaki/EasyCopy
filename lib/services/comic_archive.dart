@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:archive/archive_io.dart';
+import 'package:reader/services/comic_image_files.dart';
 
 class ComicArchiveChapter {
   const ComicArchiveChapter(this.title, this.entries);
@@ -53,6 +54,9 @@ class ComicArchive {
     void Function(int, int)? onProgress,
     bool Function()? isCancelled,
   }) async {
+    if (onProgress == null && isCancelled == null) {
+      return _extractIsolated(path, preview, outputDirectory, null);
+    }
     final progress = ReceivePort();
     final subscription = _listenProgress(progress, onProgress, isCancelled);
     try {
@@ -74,6 +78,9 @@ class ComicArchive {
     void Function(int, int)? onProgress,
     bool Function()? isCancelled,
   }) async {
+    if (onProgress == null && isCancelled == null) {
+      return _encodeIsolated(chapters, outputPath, null);
+    }
     final progress = ReceivePort();
     final subscription = _listenProgress(progress, onProgress, isCancelled);
     try {
@@ -90,28 +97,60 @@ StreamSubscription<dynamic> _listenProgress(
   void Function(int, int)? onProgress,
   bool Function()? isCancelled,
 ) {
+  SendPort? control;
+  bool stopped = false;
   return port.listen((message) {
-    final (completed, total, reply) = message as (int, int, SendPort);
+    if (message is SendPort) {
+      control = message;
+      return;
+    }
+    if (stopped) return;
+    final (completed, total) = message as (int, int);
     try {
       onProgress?.call(completed, total);
-      reply.send(isCancelled?.call() ?? false);
+      if (isCancelled?.call() == true) throw const ComicArchiveCancelled();
+      if (completed == 0 || completed == total) control!.send(completed);
     } catch (error, stack) {
-      reply.send((error, stack));
+      stopped = true;
+      control!.send((completed, error, stack));
     }
   });
 }
 
-Future<void> _checkpoint(SendPort progress, int completed, int total) async {
-  final reply = ReceivePort();
-  try {
-    progress.send((completed, total, reply.sendPort));
-    final response = await reply.first;
-    if (response == true) throw const ComicArchiveCancelled();
-    if (response is (Object, StackTrace)) {
-      Error.throwWithStackTrace(response.$1, response.$2);
+class _ArchiveProgress {
+  _ArchiveProgress(this.events) {
+    control.listen((message) {
+      if (message is (int, Object, StackTrace)) {
+        stop = message;
+        if (!started.isCompleted) started.complete();
+        if (!finished.isCompleted) finished.complete();
+      } else if (message == 0 && !started.isCompleted) {
+        started.complete();
+      } else if (!finished.isCompleted) {
+        finished.complete();
+      }
+    });
+    events.send(control.sendPort);
+  }
+
+  final SendPort events;
+  final control = ReceivePort();
+  final started = Completer<void>();
+  final finished = Completer<void>();
+  (int, Object, StackTrace)? stop;
+
+  Future<void> report(int completed, int total) async {
+    events.send((completed, total));
+    if (completed == 0) {
+      await started.future;
+    } else if (completed == total) {
+      await finished.future;
+    } else {
+      // Give cancellation a chance to arrive while ordinary progress remains one-way.
+      await Future<void>.delayed(Duration.zero);
     }
-  } finally {
-    reply.close();
+    final failure = stop;
+    if (failure != null) Error.throwWithStackTrace(failure.$2, failure.$3);
   }
 }
 
@@ -120,24 +159,14 @@ Future<List<ComicArchiveChapterFiles>> _extractIsolated(
   String path,
   ComicArchivePreview preview,
   String outputDirectory,
-  SendPort progress,
+  SendPort? progress,
 ) => Isolate.run(() => _extract(path, preview, outputDirectory, progress));
 
 Future<void> _encodeIsolated(
   List<ComicArchiveChapterFiles> chapters,
   String outputPath,
-  SendPort progress,
+  SendPort? progress,
 ) => Isolate.run(() => _encode(chapters, outputPath, progress));
-
-const _imageExtensions = <String>{
-  '.jpg',
-  '.jpeg',
-  '.png',
-  '.webp',
-  '.gif',
-  '.bmp',
-  '.avif',
-};
 
 String _extension(String name) {
   final leaf = name.replaceAll('\\', '/').split('/').last;
@@ -164,7 +193,9 @@ Map<String, ZipFileHeader> _imageHeaders(
             header.externalFileAttributes & 0x10 != 0) ||
         parts.any((part) => part.toLowerCase() == '__macosx') ||
         parts.last.startsWith('._') ||
-        !_imageExtensions.contains(_extension(name))) {
+        !comicImageExtensions.contains(
+          _extension(name).replaceFirst('.', ''),
+        )) {
       continue;
     }
     if (header.generalPurposeBitFlag & 1 != 0) {
@@ -189,7 +220,8 @@ ComicArchivePreview _inspect(String path, String title) {
       final folder = slash < 0 ? '' : normalized.substring(0, slash);
       groups.putIfAbsent(folder, () => <String>[]).add(name);
     }
-    final folders = groups.keys.toList()..sort(comicArchiveNaturalCompare);
+    final compare = comicArchiveNaturalComparator();
+    final folders = groups.keys.toList()..sort(compare);
     final segments = folders
         .map((folder) => folder.isEmpty ? <String>[] : folder.split('/'))
         .toList();
@@ -223,7 +255,7 @@ ComicArchivePreview _inspect(String path, String title) {
               : titles[i].isEmpty
               ? title
               : titles[i],
-          groups[folders[i]]!..sort(comicArchiveNaturalCompare),
+          groups[folders[i]]!..sort(compare),
         ),
     ]);
   } finally {
@@ -233,36 +265,36 @@ ComicArchivePreview _inspect(String path, String title) {
 
 final _sortParts = RegExp(r'\d+(?:\.\d+)?|\D+');
 
-int comicArchiveNaturalCompare(String left, String right) {
-  final a = _sortParts
-      .allMatches(left.toLowerCase())
-      .map((m) => m[0]!)
-      .toList();
-  final b = _sortParts
-      .allMatches(right.toLowerCase())
-      .map((m) => m[0]!)
-      .toList();
-  for (var i = 0; i < math.min(a.length, b.length); i++) {
-    final x = num.tryParse(a[i]);
-    final y = num.tryParse(b[i]);
-    final order = x != null && y != null
-        ? x.compareTo(y)
-        : a[i].compareTo(b[i]);
-    if (order != 0) return order;
-  }
-  final lengthOrder = a.length.compareTo(b.length);
-  return lengthOrder != 0 ? lengthOrder : left.compareTo(right);
+Comparator<String> comicArchiveNaturalComparator() {
+  final cache = <String, List<(String, num?)>>{};
+  List<(String, num?)> tokens(String value) => cache.putIfAbsent(
+    value,
+    () => [
+      for (final m in _sortParts.allMatches(value.toLowerCase()))
+        (m[0]!, num.tryParse(m[0]!)),
+    ],
+  );
+  return (left, right) {
+    final a = tokens(left);
+    final b = tokens(right);
+    for (var i = 0; i < math.min(a.length, b.length); i++) {
+      final (partA, x) = a[i];
+      final (partB, y) = b[i];
+      final order = x != null && y != null
+          ? x.compareTo(y)
+          : partA.compareTo(partB);
+      if (order != 0) return order;
+    }
+    final lengthOrder = a.length.compareTo(b.length);
+    return lengthOrder != 0 ? lengthOrder : left.compareTo(right);
+  };
 }
 
 String _number(int index, int total) =>
     (index + 1).toString().padLeft(math.max(3, total.toString().length), '0');
 
 String _chapterFolder(int index, int total, String title) {
-  final clean = title
-      .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1f]'), '_')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim()
-      .replaceAll(RegExp(r'[. ]+$'), '');
+  final clean = cleanComicPathSegment(title);
   final label = clean.isEmpty
       ? '章节'
       : String.fromCharCodes(clean.runes.take(80));
@@ -273,104 +305,126 @@ Future<List<ComicArchiveChapterFiles>> _extract(
   String path,
   ComicArchivePreview preview,
   String outputDirectory,
-  SendPort progress,
+  SendPort? progress,
 ) async {
   final total = preview.imageCount;
-  await _checkpoint(progress, 0, total);
-  final input = InputFileStream(path);
+  final updates = progress == null ? null : _ArchiveProgress(progress);
+  final written = <String>[];
   try {
-    final entries = _imageHeaders(input, files: true);
-    final root = Directory(outputDirectory).absolute;
-    root.createSync(recursive: true);
-    final chapters = <ComicArchiveChapterFiles>[];
-    var completed = 0;
-    for (
-      var chapterIndex = 0;
-      chapterIndex < preview.chapters.length;
-      chapterIndex++
-    ) {
-      final chapter = preview.chapters[chapterIndex];
-      final directory = Directory(
-        '${root.path}/${_chapterFolder(chapterIndex, preview.chapters.length, chapter.title)}',
-      )..createSync();
-      final files = <String>[];
-      for (var i = 0; i < chapter.entries.length; i++) {
-        final name = chapter.entries[i];
-        final header = entries[name];
-        if (header == null) {
-          throw const FormatException('压缩包内容已变化，请重新选择');
+    await updates?.report(0, total);
+    final input = InputFileStream(path);
+    try {
+      final entries = _imageHeaders(input, files: true);
+      final root = Directory(outputDirectory).absolute;
+      root.createSync(recursive: true);
+      final chapters = <ComicArchiveChapterFiles>[];
+      var completed = 0;
+      for (
+        var chapterIndex = 0;
+        chapterIndex < preview.chapters.length;
+        chapterIndex++
+      ) {
+        final chapter = preview.chapters[chapterIndex];
+        final directory = Directory(
+          '${root.path}/${_chapterFolder(chapterIndex, preview.chapters.length, chapter.title)}',
+        )..createSync();
+        final files = <String>[];
+        for (var i = 0; i < chapter.entries.length; i++) {
+          final name = chapter.entries[i];
+          final header = entries[name];
+          if (header == null) {
+            throw const FormatException('压缩包内容已变化，请重新选择');
+          }
+          final file = header.file!
+            ..verify = true
+            ..throwOnError = true;
+          final outputPath =
+              '${directory.path}/${_number(i, chapter.entries.length)}${_extension(name)}';
+          final output = OutputFileStream(outputPath);
+          try {
+            file.decompress(output);
+          } finally {
+            output.closeSync();
+          }
+          files.add(outputPath);
+          if (updates != null) written.add(outputPath);
+          await updates?.report(++completed, total);
         }
-        final file = header.file!
-          ..verify = true
-          ..throwOnError = true;
-        final outputPath =
-            '${directory.path}/${_number(i, chapter.entries.length)}${_extension(name)}';
-        final output = OutputFileStream(outputPath);
-        try {
-          file.decompress(output);
-        } finally {
-          output.closeSync();
-        }
-        files.add(outputPath);
-        await _checkpoint(progress, ++completed, total);
+        chapters.add(ComicArchiveChapterFiles(chapter.title, files));
       }
-      chapters.add(ComicArchiveChapterFiles(chapter.title, files));
+      return chapters;
+    } finally {
+      input.closeSync();
     }
-    return chapters;
   } finally {
-    input.closeSync();
+    updates?.control.close();
+    final stop = updates?.stop;
+    if (stop != null) {
+      for (final path in written.skip(stop.$1)) {
+        File(path).deleteSync();
+      }
+    }
   }
 }
 
 Future<void> _encode(
   List<ComicArchiveChapterFiles> chapters,
   String outputPath,
-  SendPort progress,
+  SendPort? progress,
 ) async {
   final total = chapters.fold(
     0,
     (count, chapter) => count + chapter.files.length,
   );
-  await _checkpoint(progress, 0, total);
-  File(outputPath).parent.createSync(recursive: true);
-  final output = OutputFileStream(outputPath);
+  final updates = progress == null ? null : _ArchiveProgress(progress);
   try {
-    final encoder = ZipEncoder(streamed: true)..startEncode(output);
-    var completed = 0;
-    for (var chapterIndex = 0; chapterIndex < chapters.length; chapterIndex++) {
-      final chapter = chapters[chapterIndex];
-      final folder = _chapterFolder(
-        chapterIndex,
-        chapters.length,
-        chapter.title,
-      );
-      for (var i = 0; i < chapter.files.length; i++) {
-        final path = chapter.files[i];
-        final extension = _extension(path);
-        if (!_imageExtensions.contains(extension)) {
-          throw FormatException('不支持的图片格式：$extension');
+    await updates?.report(0, total);
+    File(outputPath).parent.createSync(recursive: true);
+    final output = OutputFileStream(outputPath);
+    try {
+      final encoder = ZipEncoder(streamed: true)..startEncode(output);
+      var completed = 0;
+      for (
+        var chapterIndex = 0;
+        chapterIndex < chapters.length;
+        chapterIndex++
+      ) {
+        final chapter = chapters[chapterIndex];
+        final folder = _chapterFolder(
+          chapterIndex,
+          chapters.length,
+          chapter.title,
+        );
+        for (var i = 0; i < chapter.files.length; i++) {
+          final path = chapter.files[i];
+          final extension = _extension(path);
+          if (!comicImageExtensions.contains(extension.replaceFirst('.', ''))) {
+            throw FormatException('不支持的图片格式：$extension');
+          }
+          if (FileSystemEntity.typeSync(path, followLinks: false) ==
+              FileSystemEntityType.link) {
+            throw const FormatException('图片不能是符号链接');
+          }
+          final input = InputFileStream(path);
+          try {
+            encoder.add(
+              ArchiveFile.stream(
+                '$folder/${_number(i, chapter.files.length)}$extension',
+                input,
+              )..compression = CompressionType.none,
+              autoClose: false,
+            );
+          } finally {
+            input.closeSync();
+          }
+          await updates?.report(++completed, total);
         }
-        if (FileSystemEntity.typeSync(path, followLinks: false) ==
-            FileSystemEntityType.link) {
-          throw const FormatException('图片不能是符号链接');
-        }
-        final input = InputFileStream(path);
-        try {
-          encoder.add(
-            ArchiveFile.stream(
-              '$folder/${_number(i, chapter.files.length)}$extension',
-              input,
-            )..compression = CompressionType.none,
-            autoClose: false,
-          );
-        } finally {
-          input.closeSync();
-        }
-        await _checkpoint(progress, ++completed, total);
       }
+      encoder.endEncode();
+    } finally {
+      output.closeSync();
     }
-    encoder.endEncode();
   } finally {
-    output.closeSync();
+    updates?.control.close();
   }
 }

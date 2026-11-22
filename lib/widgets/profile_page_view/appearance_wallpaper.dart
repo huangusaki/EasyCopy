@@ -523,10 +523,7 @@ class _WallpaperPreviewTile extends StatelessWidget {
           Positioned(
             left: 12,
             top: 12,
-            child: _PreviewHintChip(
-              colorScheme: colorScheme,
-              label: wallpaper.enabled ? '当前壁纸' : '已隐藏',
-            ),
+            child: _PreviewHintChip(label: wallpaper.enabled ? '当前壁纸' : '已隐藏'),
           ),
         ],
       );
@@ -673,9 +670,8 @@ class _PreviewSampleCard extends StatelessWidget {
 }
 
 class _PreviewHintChip extends StatelessWidget {
-  const _PreviewHintChip({required this.colorScheme, required this.label});
+  const _PreviewHintChip({required this.label});
 
-  final ColorScheme colorScheme;
   final String label;
 
   @override

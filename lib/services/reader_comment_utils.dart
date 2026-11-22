@@ -1,4 +1,3 @@
-import 'dart:collection';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -53,26 +52,9 @@ List<ChapterComment> normalizeCommentPage(List<ChapterComment> comments) {
   return List<ChapterComment>.unmodifiable(comments.reversed);
 }
 
-List<ChapterComment> mergeReaderCommentsByIdentity(
-  List<ChapterComment> existing,
-  List<ChapterComment> incoming,
-) {
-  final Set<String> seen = <String>{};
-  final List<ChapterComment> merged = <ChapterComment>[];
-  for (final ChapterComment comment in <ChapterComment>[
-    ...existing,
-    ...incoming,
-  ]) {
-    final String identity = comment.id.isNotEmpty
-        ? comment.id
-        : '${comment.avatarUrl}\n${comment.message}';
-    if (!seen.add(identity)) {
-      continue;
-    }
-    merged.add(comment);
-  }
-  return List<ChapterComment>.unmodifiable(merged);
-}
+String readerCommentIdentity(ChapterComment comment) => comment.id.isNotEmpty
+    ? comment.id
+    : '${comment.avatarUrl}\n${comment.message}';
 
 @immutable
 class ReaderCommentCluster {
@@ -92,25 +74,21 @@ class ReaderCommentCluster {
 List<ReaderCommentCluster> buildReaderCommentClusters(
   List<ChapterComment> comments,
 ) {
-  final LinkedHashMap<String, List<ChapterComment>> grouped =
-      LinkedHashMap<String, List<ChapterComment>>();
-  for (final ChapterComment comment in comments) {
-    final String message = comment.message.trim();
-    if (message.isEmpty) {
-      continue;
-    }
-    grouped.putIfAbsent(message, () => <ChapterComment>[]).add(comment);
+  final groups = <String, ({int count, List<String> avatars})>{};
+  for (final comment in comments) {
+    final message = comment.message.trim();
+    if (message.isEmpty) continue;
+    final group = groups[message] ?? (count: 0, avatars: <String>[]);
+    if (group.avatars.length < 3) group.avatars.add(comment.avatarUrl);
+    groups[message] = (count: group.count + 1, avatars: group.avatars);
   }
-
-  return List<ReaderCommentCluster>.unmodifiable(
-    grouped.entries.map((MapEntry<String, List<ChapterComment>> entry) {
-      return ReaderCommentCluster(
+  return List.unmodifiable(
+    groups.entries.map(
+      (entry) => ReaderCommentCluster(
         message: entry.key,
-        avatarUrls: List<String>.unmodifiable(
-          entry.value.map((ChapterComment comment) => comment.avatarUrl),
-        ),
-        count: entry.value.length,
-      );
-    }),
+        avatarUrls: List.unmodifiable(entry.value.avatars),
+        count: entry.value.count,
+      ),
+    ),
   );
 }

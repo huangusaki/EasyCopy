@@ -62,27 +62,40 @@ if(POLICY CMP0175)
   set(CMAKE_POLICY_DEFAULT_CMP0175 OLD)
 endif()
 
-set(NUGET_URL https://dist.nuget.org/win-x86-commandline/v5.10.0/nuget.exe)
-set(NUGET_SHA256 852b71cc8c8c2d40d09ea49d321ff56fd2397b9d6ea9f96e532530307bbbafd3)
-
-find_program(NUGET nuget)
+if(NUGET AND NOT EXISTS "${NUGET}")
+  unset(NUGET CACHE)
+endif()
+find_program(NUGET nuget HINTS "${CMAKE_BINARY_DIR}")
 if(NOT NUGET)
   set(NUGET "${CMAKE_BINARY_DIR}/nuget.exe")
-  set(NUGET_HASH "")
-  if(EXISTS "${NUGET}")
-    file(SHA256 "${NUGET}" NUGET_HASH)
+  message(STATUS "Downloading NuGet for Windows plugin dependencies.")
+  set(nuget_previous_no_proxy "$ENV{NO_PROXY}")
+  set(ENV{NO_PROXY} "*")
+  file(DOWNLOAD "https://dist.nuget.org/win-x86-commandline/v5.10.0/nuget.exe"
+    "${NUGET}.tmp" TLS_VERIFY ON STATUS nuget_status)
+  set(ENV{NO_PROXY} "${nuget_previous_no_proxy}")
+  list(GET nuget_status 0 nuget_exit_code)
+  if(NOT nuget_exit_code EQUAL 0)
+    file(REMOVE "${NUGET}.tmp")
+    list(GET nuget_status 1 nuget_error)
+    message(FATAL_ERROR "NuGet download failed: ${nuget_error}")
   endif()
-  if((NOT EXISTS "${NUGET}") OR (NOT "${NUGET_HASH}" STREQUAL "${NUGET_SHA256}"))
-    message(STATUS "Downloading NuGet for Windows plugin dependencies.")
-    file(DOWNLOAD "${NUGET_URL}" "${NUGET}"
-      EXPECTED_HASH SHA256=${NUGET_SHA256}
-      TLS_VERIFY ON)
-  endif()
+  file(RENAME "${NUGET}.tmp" "${NUGET}")
   set(NUGET "${NUGET}" CACHE FILEPATH "NuGet executable for Windows plugin dependencies" FORCE)
 endif()
 
+# Only the Android implementation of path_provider uses JNI. Its transitive
+# Flutter FFI plugin also probes for a desktop JVM when a JDK is installed.
+set(CMAKE_DISABLE_FIND_PACKAGE_JNI TRUE)
 include(flutter/generated_plugins.cmake)
 
+# Use our corrected dispose handler with webview_windows 0.4.0 (EasyCopy #21).
+get_target_property(webview_dir webview_windows_plugin SOURCE_DIR)
+get_target_property(webview_sources webview_windows_plugin SOURCES)
+list(TRANSFORM webview_sources REPLACE "^webview_windows_plugin[.]cc$"
+  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview_windows/webview_windows_plugin.cc")
+set_property(TARGET webview_windows_plugin PROPERTY SOURCES "${webview_sources}")
+target_include_directories(webview_windows_plugin PRIVATE "${webview_dir}")
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can

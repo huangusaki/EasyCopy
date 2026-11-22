@@ -295,23 +295,6 @@ class DownloadPreferences {
         usePickedDirectoryAsRoot == other.usePickedDirectoryAsRoot;
   }
 
-  DownloadPreferences copyWith({
-    DownloadStorageMode? mode,
-    String? customBasePath,
-    String? customTreeUri,
-    String? customDisplayPath,
-    bool? usePickedDirectoryAsRoot,
-  }) {
-    return DownloadPreferences(
-      mode: mode ?? this.mode,
-      customBasePath: customBasePath ?? this.customBasePath,
-      customTreeUri: customTreeUri ?? this.customTreeUri,
-      customDisplayPath: customDisplayPath ?? this.customDisplayPath,
-      usePickedDirectoryAsRoot:
-          usePickedDirectoryAsRoot ?? this.usePickedDirectoryAsRoot,
-    );
-  }
-
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'mode': _enumName(mode),

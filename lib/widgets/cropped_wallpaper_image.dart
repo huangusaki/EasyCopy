@@ -3,6 +3,13 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+ImageProvider<Object> wallpaperImageProvider(String path) => ResizeImage(
+  FileImage(File(path)),
+  width: 2560,
+  height: 2560,
+  policy: ResizeImagePolicy.fit,
+);
+
 /// 按归一化选区裁剪壁纸并 cover 填充。
 ///
 /// 选区相对原图，取值 0~1。
@@ -31,10 +38,6 @@ class CroppedWallpaperImage extends StatefulWidget {
 }
 
 class _CroppedWallpaperImageState extends State<CroppedWallpaperImage> {
-  /// 壁纸只做全屏背景，解码上限足够覆盖平板分辨率与常见裁剪比例；
-  /// 原图直接解码一张 12MP 照片就要常驻约 48MB。
-  static const int _maxDecodeExtent = 2560;
-
   ImageStream? _stream;
   ImageStreamListener? _listener;
   ui.Image? _image;
@@ -56,12 +59,15 @@ class _CroppedWallpaperImageState extends State<CroppedWallpaperImage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.path != widget.path) {
       _resolveImage();
+    } else if (widget.blurSigma <= 0.01 && _blurred != null) {
+      _replaceBlurred(null, null);
     }
   }
 
   @override
   void dispose() {
     _detachStream();
+    _image?.dispose();
     _replaceBlurred(null, null);
     super.dispose();
   }
@@ -84,22 +90,22 @@ class _CroppedWallpaperImageState extends State<CroppedWallpaperImage> {
   void _resolveImage() {
     _detachStream();
     setState(() {
+      _image?.dispose();
       _image = null;
       _failed = false;
       _replaceBlurred(null, null);
     });
-    final ImageStream stream = ResizeImage(
-      FileImage(File(widget.path)),
-      width: _maxDecodeExtent,
-      height: _maxDecodeExtent,
-      policy: ResizeImagePolicy.fit,
+    final ImageStream stream = wallpaperImageProvider(
+      widget.path,
     ).resolve(ImageConfiguration.empty);
     final ImageStreamListener listener = ImageStreamListener(
       (ImageInfo info, bool _) {
         if (!mounted) {
+          info.dispose();
           return;
         }
         setState(() {
+          _image?.dispose();
           _image = info.image;
           _failed = false;
         });

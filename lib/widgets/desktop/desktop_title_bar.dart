@@ -58,8 +58,9 @@ class DesktopTitleBar extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: <Widget>[
                       if (onOpenShortcuts != null) ...<Widget>[
-                        _HoverIconButton(
+                        DesktopTitleBarButton(
                           icon: Icons.keyboard_rounded,
+                          iconSize: 18,
                           tooltip: '键盘快捷键',
                           foreground: colorScheme.onSurface,
                           onTap: onOpenShortcuts,
@@ -104,20 +105,12 @@ class DesktopTitleBar extends StatelessWidget {
 class _DragToMoveSurface extends StatelessWidget {
   const _DragToMoveSurface();
 
-  Future<void> _toggleMaximize() async {
-    if (await windowManager.isMaximized()) {
-      await windowManager.unmaximize();
-    } else {
-      await windowManager.maximize();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onPanStart: (_) => windowManager.startDragging(),
-      onDoubleTap: _toggleMaximize,
+      onDoubleTap: toggleDesktopMaximize,
     );
   }
 }
@@ -145,8 +138,9 @@ class _AnimatedBackButton extends StatelessWidget {
           child: visible
               ? Padding(
                   padding: const EdgeInsets.only(right: 10),
-                  child: _HoverIconButton(
+                  child: DesktopTitleBarButton(
                     icon: Icons.arrow_back_rounded,
+                    iconSize: 18,
                     tooltip: '返回 (Alt+←)',
                     foreground: colorScheme.onSurface,
                     onTap: onBack,
@@ -210,81 +204,15 @@ class _RefreshButtonState extends State<_RefreshButton>
   @override
   Widget build(BuildContext context) {
     final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    return _HoverIconButton(
+    return DesktopTitleBarButton(
       icon: Icons.refresh_rounded,
+      iconSize: 18,
       tooltip: '刷新 (F5)',
       foreground: colorScheme.primary,
       onTap: widget.isLoading ? null : widget.onRefresh,
       iconBuilder: (Widget icon) {
         return RotationTransition(turns: _spinController, child: icon);
       },
-    );
-  }
-}
-
-class _HoverIconButton extends StatefulWidget {
-  const _HoverIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.foreground,
-    required this.onTap,
-    this.iconBuilder,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final Color foreground;
-  final VoidCallback? onTap;
-  final Widget Function(Widget icon)? iconBuilder;
-
-  @override
-  State<_HoverIconButton> createState() => _HoverIconButtonState();
-}
-
-class _HoverIconButtonState extends State<_HoverIconButton> {
-  bool _isHovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colorScheme = Theme.of(context).colorScheme;
-    final bool enabled = widget.onTap != null;
-    Widget icon = Icon(
-      widget.icon,
-      size: 18,
-      color: widget.foreground.withValues(alpha: enabled ? 1 : 0.55),
-    );
-    if (widget.iconBuilder != null) {
-      icon = widget.iconBuilder!(icon);
-    }
-
-    return Tooltip(
-      message: widget.tooltip,
-      excludeFromSemantics: true,
-      waitDuration: const Duration(milliseconds: 600),
-      child: MouseRegion(
-        cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
-        onEnter: (_) => setState(() => _isHovered = true),
-        onExit: (_) => setState(() => _isHovered = false),
-        child: GestureDetector(
-          onTap: widget.onTap,
-          // 尺寸／圆角／悬停底色都对齐 DesktopWindowControls 里的 _CaptionButton，
-          // 让标题栏右侧这一排看起来是同一套按钮。
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            curve: Curves.easeOut,
-            width: 42,
-            height: 32,
-            margin: const EdgeInsets.symmetric(horizontal: 1),
-            decoration: BoxDecoration(
-              color: _isHovered && enabled
-                  ? colorScheme.onSurface.withValues(alpha: 0.08)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Center(child: icon),
-          ),
-        ),
-      ),
     );
   }
 }

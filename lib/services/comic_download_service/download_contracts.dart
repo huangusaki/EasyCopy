@@ -1,3 +1,5 @@
+import 'dart:io';
+
 typedef ChapterDownloadProgressCallback =
     Future<void> Function(ChapterDownloadProgress progress);
 typedef ChapterDownloadPauseChecker = bool Function();
@@ -13,13 +15,6 @@ class ChapterDownloadProgress {
   final int completedCount;
   final int totalCount;
   final String currentLabel;
-
-  double get fraction {
-    if (totalCount <= 0) {
-      return 0;
-    }
-    return completedCount / totalCount;
-  }
 }
 
 class DownloadPausedException implements Exception {
@@ -38,4 +33,8 @@ class DownloadCancelledException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class LocalChapterChangedException extends FileSystemException {
+  const LocalChapterChangedException() : super('本地章节缓存已变化，请重试下载。');
 }

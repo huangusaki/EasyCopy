@@ -56,19 +56,24 @@ class _WallpaperCropEditorPageState extends State<WallpaperCropEditorPage> {
     }
     _stream = null;
     _streamListener = null;
+    _image?.dispose();
     super.dispose();
   }
 
   void _resolveImage() {
-    final ImageStream stream = FileImage(
-      File(widget.imagePath),
+    final ImageStream stream = wallpaperImageProvider(
+      widget.imagePath,
     ).resolve(ImageConfiguration.empty);
     final ImageStreamListener listener = ImageStreamListener(
       (ImageInfo info, bool _) {
         if (!mounted) {
+          info.dispose();
           return;
         }
-        setState(() => _image = info.image);
+        setState(() {
+          _image?.dispose();
+          _image = info.image;
+        });
       },
       onError: (Object error, StackTrace? stackTrace) {
         if (!mounted) {

@@ -1,20 +1,21 @@
 part of '../comic_download_service.dart';
 
 extension ComicCacheDetailsOps on ComicDownloadService {
-  Future<void> upsertCachedComicDetailSnapshot(DetailPageData page) async {
+  Future<bool> upsertCachedComicDetailSnapshot(
+    DetailPageData page,
+  ) => _indexOperations.run(() async {
     final CachedComicDetailSnapshot snapshot = page.toCachedDetailSnapshot();
     if (snapshot.isEmpty) {
-      return;
+      return false;
     }
     final DownloadStorageState storageState = await resolveStorageState(
       verifyWritable: false,
     );
     final String storageKey = _storageService.storageKeyForState(storageState);
-    final List<CachedComicLibraryEntry> library = await _readCachedLibraryIndex(
-      storageKey,
-    );
+    final List<CachedComicLibraryEntry> library =
+        await _loadCachedLibraryForState(storageState);
     if (library.isEmpty) {
-      return;
+      return false;
     }
 
     final String targetComicKey = _comicKeyForUri(page.uri);
@@ -26,18 +27,28 @@ extension ComicCacheDetailsOps on ComicDownloadService {
       return entry.comicTitle == page.title;
     });
     if (comicIndex == -1) {
-      return;
+      return false;
     }
 
     final CachedComicLibraryEntry current = library[comicIndex];
-    library[comicIndex] = current.copyWith(
+    if (current.detailSnapshot != null &&
+        jsonEncode(current.detailSnapshot!.toJson()) ==
+            jsonEncode(snapshot.toJson()) &&
+        (page.title.isEmpty || current.comicTitle == page.title) &&
+        (page.uri.isEmpty || current.comicHref == page.uri) &&
+        (page.coverUrl.isEmpty || current.coverUrl == page.coverUrl)) {
+      return false;
+    }
+    final next = library.toList();
+    next[comicIndex] = current.copyWith(
       comicTitle: page.title.isEmpty ? current.comicTitle : page.title,
       comicHref: page.uri.isEmpty ? current.comicHref : page.uri,
       coverUrl: page.coverUrl.isEmpty ? current.coverUrl : page.coverUrl,
       detailSnapshot: snapshot,
     );
-    await _writeCachedLibraryIndex(storageKey, library);
-  }
+    await _writeCachedLibraryIndex(storageKey, next);
+    return true;
+  });
 
   DetailPageData buildCachedDetailPage(CachedComicLibraryEntry entry) {
     final List<ChapterData> chapters = entry.chapters
@@ -45,11 +56,7 @@ extension ComicCacheDetailsOps on ComicDownloadService {
           final String chapterHref = chapter.chapterHref.isNotEmpty
               ? chapter.chapterHref
               : chapter.sourceUri;
-          return ChapterData(
-            label: chapter.chapterTitle,
-            href: chapterHref,
-            subtitle: _formatCachedChapterSubtitle(chapter),
-          );
+          return ChapterData(label: chapter.chapterTitle, href: chapterHref);
         })
         .toList(growable: false);
     final CachedComicDetailSnapshot? snapshot = entry.detailSnapshot;
@@ -119,7 +126,7 @@ extension ComicCacheDetailsOps on ComicDownloadService {
           downloadedAt: locator.downloadedAt,
         );
       } else {
-        entry = await _findCachedChapter(chapterHref);
+        entry = await _findCachedChapter(chapterHref, storageState);
       }
       if (entry == null || entry.directoryPath.isEmpty) {
         return null;
@@ -138,7 +145,11 @@ extension ComicCacheDetailsOps on ComicDownloadService {
           );
           locator = null;
         }
-        entry = await _findCachedChapter(chapterHref, forceRescan: true);
+        entry = await _findCachedChapter(
+          chapterHref,
+          storageState,
+          forceRescan: true,
+        );
         if (entry == null || entry.directoryPath.isEmpty) {
           return null;
         }
@@ -153,19 +164,8 @@ extension ComicCacheDetailsOps on ComicDownloadService {
               targetPathKey) {
         return null;
       }
-      final Object? rawFiles = manifest['files'];
-      if (rawFiles is! List ||
-          rawFiles.isEmpty ||
-          manifest['imageCount'] != rawFiles.length ||
-          rawFiles.any(
-            (Object? value) => value is! String || !_isCacheFileName(value),
-          )) {
-        return null;
-      }
-      final List<String> fileNames = rawFiles.cast<String>();
-      if (fileNames.toSet().length != fileNames.length) {
-        return null;
-      }
+      final List<String>? fileNames = _manifestImageFiles(manifest);
+      if (fileNames == null) return null;
       final List<String> sourceImageUrls = forDownload
           ? ((manifest['sourceImageUrls'] as List<Object?>?) ??
                     const <Object?>[])
@@ -182,29 +182,20 @@ extension ComicCacheDetailsOps on ComicDownloadService {
                 uri.host.isNotEmpty;
           });
       if (!hasDownloadSources) {
-        if (forDownload) {
-          if (!await _isChapterCompleted(
-            root: root,
-            manifestRelativePath: _joinRelativePath(<String>[
-              entry.directoryPath,
-              'manifest.json',
-            ]),
-            chapterDirectoryPath: entry.directoryPath,
-            expectedImageCount: fileNames.length,
-          )) {
-            return null;
-          }
-        } else {
-          final Set<String> existingFiles =
-              (await root.listEntries(entry.directoryPath, recursive: false))
-                  .where(
-                    (_StorageEntry file) => !file.isDirectory && file.size > 0,
-                  )
-                  .map((_StorageEntry file) => file.name)
-                  .toSet();
-          if (!fileNames.every(existingFiles.contains)) {
-            return null;
-          }
+        final Set<String> existingFiles =
+            (await root.listEntries(
+                  entry.directoryPath,
+                  recursive: false,
+                  includeSize: true,
+                ))
+                .where(
+                  (DocumentTreeEntry file) =>
+                      !file.isDirectory && file.size > 0,
+                )
+                .map((DocumentTreeEntry file) => file.name)
+                .toSet();
+        if (!fileNames.every(existingFiles.contains)) {
+          return null;
         }
       }
       final Stopwatch imageRefStopwatch = Stopwatch()..start();
@@ -321,48 +312,38 @@ extension ComicCacheDetailsOps on ComicDownloadService {
       directoryPath,
       'manifest.json',
     ]);
-    if (!await root.exists(manifestRelativePath)) {
-      return null;
+    try {
+      final decoded = jsonDecode(await root.readString(manifestRelativePath));
+      return decoded is Map<String, Object?> ? decoded : null;
+    } catch (_) {
+      if (!await root.exists(manifestRelativePath)) return null;
+      rethrow;
     }
-    final Object? decoded = jsonDecode(
-      await root.readString(manifestRelativePath),
-    );
-    if (decoded is! Map) {
-      return null;
-    }
-    return decoded.map(
-      (Object? key, Object? value) => MapEntry(key.toString(), value),
-    );
-  }
-
-  CachedChapterEntry? _findCachedChapterInLibrary(
-    Iterable<CachedComicLibraryEntry> library,
-    String targetPathKey,
-  ) {
-    for (final CachedComicLibraryEntry comic in library) {
-      for (final CachedChapterEntry chapter in comic.chapters) {
-        final String chapterPathKey = _pathKeyForUri(chapter.chapterHref);
-        final String sourcePathKey = _pathKeyForUri(chapter.sourceUri);
-        if (chapterPathKey == targetPathKey || sourcePathKey == targetPathKey) {
-          return chapter;
-        }
-      }
-    }
-    return null;
   }
 
   Future<CachedChapterEntry?> _findCachedChapter(
-    String chapterHref, {
+    String chapterHref,
+    DownloadStorageState state, {
     bool forceRescan = false,
   }) async {
     final String targetPathKey = _pathKeyForUri(chapterHref);
     if (targetPathKey.isEmpty) {
       return null;
     }
-    final List<CachedComicLibraryEntry> library = await loadCachedLibrary(
-      forceRescan: forceRescan,
+    final library = await _indexOperations.run(
+      () => _loadCachedLibraryForState(state, forceRescan: forceRescan),
     );
-    return _findCachedChapterInLibrary(library, targetPathKey);
+    final current = identical(library, _library);
+    final lookup =
+        (current ? _chaptersByPath : null) ??
+        {
+          for (final comic in library.reversed)
+            for (final chapter in comic.chapters.reversed)
+              for (final href in [chapter.chapterHref, chapter.sourceUri])
+                if (href.isNotEmpty) _pathKeyForUri(href): chapter,
+        };
+    if (current) _chaptersByPath = lookup;
+    return lookup[targetPathKey];
   }
 
   Future<void> deleteComicCache({
@@ -386,17 +367,22 @@ extension ComicCacheDetailsOps on ComicDownloadService {
     final Set<String> deletedChapterDirectories = <String>{};
     try {
       for (final String comicDirectory in comicDirectories) {
-        final List<String> paths = await _cacheFilePaths(
+        final entries = await root.listEntries(
+          comicDirectory,
+          recursive: true,
+          includeSize: false,
+        );
+        final paths = await _cacheFilePaths(
           root,
           relativePath: comicDirectory,
           comicKey: comicKey,
+          listedEntries: entries,
         );
         if (paths.isEmpty) continue;
-        final Set<String> existingFiles =
-            (await root.listEntries(comicDirectory, recursive: true))
-                .where((_StorageEntry entry) => !entry.isDirectory)
-                .map((_StorageEntry entry) => entry.relativePath)
-                .toSet();
+        final existingFiles = {
+          for (final entry in entries)
+            if (!entry.isDirectory) entry.relativePath,
+        };
         final Set<String> chapterDirectories = <String>{};
         for (final String path in paths) {
           if (!existingFiles.contains(path)) continue;
@@ -477,20 +463,21 @@ extension ComicCacheDetailsOps on ComicDownloadService {
     }
     final int imageCount = (identity['imageCount'] as num?)?.toInt() ?? 0;
     if (imageCount <= 0) return;
-    final List<_StorageEntry> entries = await root.listEntries(
+    final List<DocumentTreeEntry> entries = await root.listEntries(
       chapterDirectoryPath,
       recursive: false,
     );
-    final RegExp imagePattern = RegExp(
-      r'^(\d+)\.(?:avif|bmp|gif|jpe?g|png|webp)(?:\.\d+\.part|\.part)?$',
-      caseSensitive: false,
-    );
-    for (final _StorageEntry entry in entries) {
+    final partSuffix = RegExp(r'(?:\.\d+)?\.part$', caseSensitive: false);
+    for (final DocumentTreeEntry entry in entries) {
       if (entry.isDirectory || (hasManifest && !entry.name.endsWith('.part'))) {
         continue;
       }
-      final RegExpMatch? match = imagePattern.firstMatch(entry.name);
-      if (match == null) continue;
+      final name = entry.name.replaceFirst(partSuffix, '');
+      final match = _numberedCacheImagePattern.firstMatch(name);
+      if (match == null ||
+          !comicImageExtensions.contains(match[2]!.toLowerCase())) {
+        continue;
+      }
       final int index = int.tryParse(match.group(1)!) ?? 0;
       if (index <= 0 || index > imageCount) continue;
       await root.deletePath(entry.relativePath);
