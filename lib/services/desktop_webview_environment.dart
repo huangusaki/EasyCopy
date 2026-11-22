@@ -27,6 +27,22 @@ class DesktopWebViewEnvironment {
     return _initialization ??= _initialize();
   }
 
+  static Future<void> disposeControllerSafely(
+    WebviewController controller,
+  ) async {
+    try {
+      await controller.dispose();
+    } on PlatformException catch (error) {
+      // webview_windows 0.4.0's C++ dispose handler uses std::get_if<int64_t>
+      // on the textureId argument, which fails with `invalid_id` when Flutter's
+      // StandardMessageCodec encodes small texture IDs as int32_t.
+      if (error.code == 'invalid_id') {
+        return;
+      }
+      rethrow;
+    }
+  }
+
   Future<void> clearCookies() async {
     if (!PlatformCapabilities.supportsDesktopWebView) {
       return;
@@ -42,7 +58,7 @@ class DesktopWebViewEnvironment {
         await controller.clearCache();
       } finally {
         if (initialized) {
-          await controller.dispose();
+          await disposeControllerSafely(controller);
         }
       }
     } on DesktopWebViewUnavailableException {

@@ -102,7 +102,7 @@ class DesktopSearchApiBridge {
         await subscription.cancel();
       }
       if (initialized) {
-        await controller.dispose();
+        await DesktopWebViewEnvironment.disposeControllerSafely(controller);
       }
     }
   }

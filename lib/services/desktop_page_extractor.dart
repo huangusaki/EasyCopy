@@ -96,7 +96,7 @@ class DesktopPageExtractor {
         await subscription.cancel();
       }
       if (initialized) {
-        await controller.dispose();
+        await DesktopWebViewEnvironment.disposeControllerSafely(controller);
       }
     }
   }

@@ -67,6 +67,8 @@ dev_dependencies:
 
 dependency_overrides:
   path_provider_android: 2.3.1
+  webview_windows:
+    path: packages/webview_windows
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

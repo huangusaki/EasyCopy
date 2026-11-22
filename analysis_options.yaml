@@ -3,6 +3,7 @@ include: package:flutter_lints/flutter.yaml
 analyzer:
   exclude:
     - docs/**
+    - packages/webview_windows/**
 
 linter:
   rules:

@@ -47,7 +47,7 @@ class _DesktopAuthWebViewScreenState extends State<DesktopAuthWebViewScreen> {
     }
     final WebviewController? controller = _controller;
     if (_controllerInitialized && controller != null) {
-      unawaited(controller.dispose());
+      unawaited(DesktopWebViewEnvironment.disposeControllerSafely(controller));
     }
     super.dispose();
   }
@@ -92,6 +92,9 @@ class _DesktopAuthWebViewScreenState extends State<DesktopAuthWebViewScreen> {
       );
       await controller.loadUrl(widget.loginUri.toString());
       if (!mounted) {
+        if (_controllerInitialized) {
+          await DesktopWebViewEnvironment.disposeControllerSafely(controller);
+        }
         return;
       }
       setState(() {
@@ -100,7 +103,7 @@ class _DesktopAuthWebViewScreenState extends State<DesktopAuthWebViewScreen> {
       });
     } catch (error) {
       if (_controllerInitialized) {
-        await controller.dispose();
+        await DesktopWebViewEnvironment.disposeControllerSafely(controller);
       }
       if (!mounted) {
         return;
